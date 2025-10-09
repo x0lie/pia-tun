@@ -17,8 +17,8 @@ print_banner() {
     clear
     echo "${cyn}╔════════════════════════════════════════════════╗${nc}"
     echo "${cyn}║                                                ║${nc}"
-    echo "${cyn}║${nc}    ${bold}PIA WireGuard VPN Container${nc}            ${cyn}║${nc}"
-    echo "${cyn}║${nc}    ${grn}@olsonalexw${nc}                              ${cyn}║${nc}"
+    echo "${cyn}║${nc}    ${bold}PIA WireGuard VPN Container${nc}                 ${cyn}║${nc}"
+    echo "${cyn}║${nc}    ${grn}olsonalexw${nc}                                  ${cyn}║${nc}"
     echo "${cyn}║                                                ║${nc}"
     echo "${cyn}╚════════════════════════════════════════════════╝${nc}"
     echo ""
@@ -77,8 +77,7 @@ main() {
     # Generate WireGuard config
     show_step "Configuring WireGuard tunnel..."
     if /app/scripts/generate_config.sh > /tmp/wg_config_output.log 2>&1; then
-        PEER_IP=$(grep "Address =" /etc/wireguard/pia.conf | awk '{print $3}' | cut -d/ -f1)
-        show_success "Tunnel configured (IP: ${grn}${PEER_IP}${nc})"
+        show_success "Tunnel configured"
     else
         show_error "Configuration failed"
         cat /tmp/wg_config_output.log
