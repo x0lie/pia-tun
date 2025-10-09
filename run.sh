@@ -255,7 +255,6 @@ main() {
     # Port Forward if enabled
     if [ "${PORT_FORWARDING}" = "true" ]; then
         show_step "Initializing port forwarding..."
-        echo ""
         /app/scripts/port_forwarding.sh
     else
         echo "${grn}╔════════════════════════════════════════════════╗${nc}"
