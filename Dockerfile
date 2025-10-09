@@ -8,8 +8,8 @@ RUN apk update && \
         curl \
         bash \
         iptables \
-        ip6tables \
-        iptables-legacy \
+        # ip6tables \           # for IPv6
+        # iptables-legacy \     # for legacy systems (no nftables support)
         speedtest-cli \
         wireguard-tools \
         ca-certificates && \

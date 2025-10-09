@@ -47,67 +47,17 @@ echo "$PF_GATEWAY" > /tmp/pf_gateway
 
 echo "addKey success: Peer IP $PEER_IP, Port $SERVER_PORT, PF Gateway $PF_GATEWAY"
 
-# Improved killswitch that works with Cilium/K8s
-# Uses specific table number to avoid conflicts
-KILLSWITCH_TABLE=7821
-
-# Build robust killswitch rules
-read -r -d '' KILLSWITCH_UP << 'EOF' || true
-# Use specific routing table to avoid CNI conflicts
-ip -4 route add 0.0.0.0/0 dev %i table ${KILLSWITCH_TABLE}
-ip -4 rule add not fwmark 51820 table ${KILLSWITCH_TABLE} priority 9999
-
-# Allow local network (Docker/K8s)
-iptables -I OUTPUT -d 10.0.0.0/8 -j ACCEPT
-iptables -I OUTPUT -d 172.16.0.0/12 -j ACCEPT
-iptables -I OUTPUT -d 192.168.0.0/16 -j ACCEPT
-iptables -I OUTPUT -d 127.0.0.0/8 -j ACCEPT
-
-# Allow DNS to tunnel DNS servers
-iptables -I OUTPUT -o %i -p udp --dport 53 -j ACCEPT
-iptables -I OUTPUT -o %i -p tcp --dport 53 -j ACCEPT
-
-# Allow established connections
-iptables -I OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-
-# Block everything else not on tunnel
-iptables -A OUTPUT ! -o %i ! -o lo -m mark ! --mark 51820 -j REJECT
-EOF
-
-read -r -d '' KILLSWITCH_DOWN << 'EOF' || true
-# Clean up routing table
-ip -4 rule del not fwmark 51820 table ${KILLSWITCH_TABLE} priority 9999 2>/dev/null || true
-ip -4 route del 0.0.0.0/0 dev %i table ${KILLSWITCH_TABLE} 2>/dev/null || true
-
-# Clean up iptables rules
-iptables -D OUTPUT -d 10.0.0.0/8 -j ACCEPT 2>/dev/null || true
-iptables -D OUTPUT -d 172.16.0.0/12 -j ACCEPT 2>/dev/null || true
-iptables -D OUTPUT -d 192.168.0.0/16 -j ACCEPT 2>/dev/null || true
-iptables -D OUTPUT -d 127.0.0.0/8 -j ACCEPT 2>/dev/null || true
-iptables -D OUTPUT -o %i -p udp --dport 53 -j ACCEPT 2>/dev/null || true
-iptables -D OUTPUT -o %i -p tcp --dport 53 -j ACCEPT 2>/dev/null || true
-iptables -D OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
-iptables -D OUTPUT ! -o %i ! -o lo -m mark ! --mark 51820 -j REJECT 2>/dev/null || true
-EOF
-
 # Apply killswitch based on PORT_FORWARDING setting
 if [ "${PORT_FORWARDING}" = "true" ]; then
   # For port forwarding: use minimal killswitch that allows incoming connections
-  FINAL_KILLSWITCH_UP="# Minimal killswitch for port forwarding
-iptables -I OUTPUT -d 10.0.0.0/8 -j ACCEPT
-iptables -I OUTPUT -d 172.16.0.0/12 -j ACCEPT
-iptables -I OUTPUT -d 192.168.0.0/16 -j ACCEPT
-iptables -I OUTPUT -d 127.0.0.0/8 -j ACCEPT
-iptables -A OUTPUT ! -o %i ! -o lo -j REJECT"
+  FINAL_KILLSWITCH_UP="iptables -I OUTPUT -d 10.0.0.0/8 -j ACCEPT; iptables -I OUTPUT -d 172.16.0.0/12 -j ACCEPT; iptables -I OUTPUT -d 192.168.0.0/16 -j ACCEPT; iptables -I OUTPUT -d 127.0.0.0/8 -j ACCEPT; iptables -A OUTPUT ! -o %i ! -o lo -j REJECT"
   
-  FINAL_KILLSWITCH_DOWN="iptables -D OUTPUT -d 10.0.0.0/8 -j ACCEPT 2>/dev/null || true
-iptables -D OUTPUT -d 172.16.0.0/12 -j ACCEPT 2>/dev/null || true
-iptables -D OUTPUT -d 192.168.0.0/16 -j ACCEPT 2>/dev/null || true
-iptables -D OUTPUT -d 127.0.0.0/8 -j ACCEPT 2>/dev/null || true
-iptables -D OUTPUT ! -o %i ! -o lo -j REJECT 2>/dev/null || true"
+  FINAL_KILLSWITCH_DOWN="iptables -D OUTPUT -d 10.0.0.0/8 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT -d 172.16.0.0/12 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT -d 192.168.0.0/16 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT -d 127.0.0.0/8 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT ! -o %i ! -o lo -j REJECT 2>/dev/null || true"
 else
-  FINAL_KILLSWITCH_UP="$KILLSWITCH_UP"
-  FINAL_KILLSWITCH_DOWN="$KILLSWITCH_DOWN"
+  # Full killswitch with routing table isolation
+  FINAL_KILLSWITCH_UP="iptables -I OUTPUT -d 10.0.0.0/8 -j ACCEPT; iptables -I OUTPUT -d 172.16.0.0/12 -j ACCEPT; iptables -I OUTPUT -d 192.168.0.0/16 -j ACCEPT; iptables -I OUTPUT -d 127.0.0.0/8 -j ACCEPT; iptables -I OUTPUT -o %i -p udp --dport 53 -j ACCEPT; iptables -I OUTPUT -o %i -p tcp --dport 53 -j ACCEPT; iptables -I OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT; iptables -A OUTPUT ! -o %i ! -o lo -m mark ! --mark 51820 -j REJECT"
+  
+  FINAL_KILLSWITCH_DOWN="iptables -D OUTPUT -d 10.0.0.0/8 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT -d 172.16.0.0/12 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT -d 192.168.0.0/16 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT -d 127.0.0.0/8 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT -o %i -p udp --dport 53 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT -o %i -p tcp --dport 53 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT ! -o %i ! -o lo -m mark ! --mark 51820 -j REJECT 2>/dev/null || true"
 fi
 
 # Build config with improved routing and killswitch
