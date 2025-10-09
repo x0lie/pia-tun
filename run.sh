@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# Define colors
+red=$'\033[0;31m'
+grn=$'\033[0;32m'
+nc=$'\033[0m'
+
 # Exit on error
 set -e
 
@@ -9,11 +14,6 @@ export_vars() {
     export DISABLE_IPV6=${DISABLE_IPV6:-true}
     export PIA_USER PIA_PASS PIA_LOCATION PORT_FORWARDING LOCAL_NETWORK PIA_DNS MTU
 }
-
-# Define colors
-red='\033[0;31m'
-grn='\033[0;32m'
-nc='\033[0m'  # No color
 
 # Main flow
 main() {

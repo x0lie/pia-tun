@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Define colors
-red='\033[0;31m'
-grn='\033[0;32m'
-nc='\033[0m'  # No color
+red=$'\033[0;31m'
+grn=$'\033[0;32m'
+nc=$'\033[0m'
 
 # Load required data
 TOKEN=$(cat /tmp/pia_token)
