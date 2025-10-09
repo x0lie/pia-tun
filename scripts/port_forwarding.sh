@@ -94,9 +94,9 @@ done
 if [ $retry -ge $MAX_RETRIES ]; then
   echo "  ${red}✗${nc} Port forwarding failed after $MAX_RETRIES attempts"
   echo ""
-  echo "${cyn}╔════════════════════════════════════════════════╗${nc}"
-  echo "${cyn}║${nc}  ${ylw}⚠${nc} ${bold}VPN Active (No Port Forwarding)${nc}          ${cyn}║${nc}"
-  echo "${cyn}╚════════════════════════════════════════════════╝${nc}"
+  echo "${ylw}╔════════════════════════════════════════════════╗${nc}"
+  echo "${ylw}║${nc}                ${ylw}⚠${nc} ${bold}VPN Connected${nc}                 ${ylw}║${nc}"
+  echo "${ylw}╚════════════════════════════════════════════════╝${nc}"
   echo ""
   tail -f /dev/null
   exit 0
@@ -111,9 +111,9 @@ EXPIRES_AT=$(jq -r '.payload' /tmp/pf_response | base64 -d | jq -r '.expires_at'
 if [ -z "$PORT" ] || [ "$PORT" = "null" ]; then
   echo "  ${red}✗${nc} Failed to extract port from response"
   echo ""
-  echo "${cyn}╔════════════════════════════════════════════════╗${nc}"
-  echo "${cyn}║${nc}  ${ylw}⚠${nc} ${bold}VPN Connected${nc}          ${cyn}║${nc}"
-  echo "${cyn}╚════════════════════════════════════════════════╝${nc}"
+  echo "${ylw}╔════════════════════════════════════════════════╗${nc}"
+  echo "${ylw}║${nc}                ${ylw}⚠${nc} ${bold}VPN Connected${nc}                 ${ylw}║${nc}"
+  echo "${ylw}╚════════════════════════════════════════════════╝${nc}"
   echo ""
   tail -f /dev/null
   exit 0
@@ -130,7 +130,7 @@ echo "  ${grn}✓${nc} Port: ${grn}${bold}${PORT}${nc}"
 echo ""
 
 echo "${grn}╔════════════════════════════════════════════════╗${nc}"
-echo "${grn}║${nc}  ${grn}✓${nc} ${bold}VPN Connected${nc}            ${grn}║${nc}"
+echo "${grn}║${nc}                ${grn}✓${nc} ${bold}VPN Connected${nc}                 ${grn}║${nc}"
 echo "${grn}╚════════════════════════════════════════════════╝${nc}"
 echo ""
 
