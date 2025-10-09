@@ -47,17 +47,70 @@ echo "$PF_GATEWAY" > /tmp/pf_gateway
 
 echo "addKey success: Peer IP $PEER_IP, Port $SERVER_PORT, PF Gateway $PF_GATEWAY"
 
-# Determine killswitch rules
+# Improved killswitch that works with Cilium/K8s
+# Uses specific table number to avoid conflicts
+KILLSWITCH_TABLE=7821
+
+# Build robust killswitch rules
+read -r -d '' KILLSWITCH_UP << 'EOF' || true
+# Use specific routing table to avoid CNI conflicts
+ip -4 route add 0.0.0.0/0 dev %i table ${KILLSWITCH_TABLE}
+ip -4 rule add not fwmark 51820 table ${KILLSWITCH_TABLE} priority 9999
+
+# Allow local network (Docker/K8s)
+iptables -I OUTPUT -d 10.0.0.0/8 -j ACCEPT
+iptables -I OUTPUT -d 172.16.0.0/12 -j ACCEPT
+iptables -I OUTPUT -d 192.168.0.0/16 -j ACCEPT
+iptables -I OUTPUT -d 127.0.0.0/8 -j ACCEPT
+
+# Allow DNS to tunnel DNS servers
+iptables -I OUTPUT -o %i -p udp --dport 53 -j ACCEPT
+iptables -I OUTPUT -o %i -p tcp --dport 53 -j ACCEPT
+
+# Allow established connections
+iptables -I OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# Block everything else not on tunnel
+iptables -A OUTPUT ! -o %i ! -o lo -m mark ! --mark 51820 -j REJECT
+EOF
+
+read -r -d '' KILLSWITCH_DOWN << 'EOF' || true
+# Clean up routing table
+ip -4 rule del not fwmark 51820 table ${KILLSWITCH_TABLE} priority 9999 2>/dev/null || true
+ip -4 route del 0.0.0.0/0 dev %i table ${KILLSWITCH_TABLE} 2>/dev/null || true
+
+# Clean up iptables rules
+iptables -D OUTPUT -d 10.0.0.0/8 -j ACCEPT 2>/dev/null || true
+iptables -D OUTPUT -d 172.16.0.0/12 -j ACCEPT 2>/dev/null || true
+iptables -D OUTPUT -d 192.168.0.0/16 -j ACCEPT 2>/dev/null || true
+iptables -D OUTPUT -d 127.0.0.0/8 -j ACCEPT 2>/dev/null || true
+iptables -D OUTPUT -o %i -p udp --dport 53 -j ACCEPT 2>/dev/null || true
+iptables -D OUTPUT -o %i -p tcp --dport 53 -j ACCEPT 2>/dev/null || true
+iptables -D OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+iptables -D OUTPUT ! -o %i ! -o lo -m mark ! --mark 51820 -j REJECT 2>/dev/null || true
+EOF
+
+# Apply killswitch based on PORT_FORWARDING setting
 if [ "${PORT_FORWARDING}" = "true" ]; then
-  # For port forwarding: allow all tunnel traffic (no NEW state restriction)
-  KILLSWITCH_UP=""
-  KILLSWITCH_DOWN=""
+  # For port forwarding: use minimal killswitch that allows incoming connections
+  FINAL_KILLSWITCH_UP="# Minimal killswitch for port forwarding
+iptables -I OUTPUT -d 10.0.0.0/8 -j ACCEPT
+iptables -I OUTPUT -d 172.16.0.0/12 -j ACCEPT
+iptables -I OUTPUT -d 192.168.0.0/16 -j ACCEPT
+iptables -I OUTPUT -d 127.0.0.0/8 -j ACCEPT
+iptables -A OUTPUT ! -o %i ! -o lo -j REJECT"
+  
+  FINAL_KILLSWITCH_DOWN="iptables -D OUTPUT -d 10.0.0.0/8 -j ACCEPT 2>/dev/null || true
+iptables -D OUTPUT -d 172.16.0.0/12 -j ACCEPT 2>/dev/null || true
+iptables -D OUTPUT -d 192.168.0.0/16 -j ACCEPT 2>/dev/null || true
+iptables -D OUTPUT -d 127.0.0.0/8 -j ACCEPT 2>/dev/null || true
+iptables -D OUTPUT ! -o %i ! -o lo -j REJECT 2>/dev/null || true"
 else
-  KILLSWITCH_UP="iptables -I OUTPUT ! -o %i -m mark ! --mark \$(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT"
-  KILLSWITCH_DOWN="iptables -D OUTPUT ! -o %i -m mark ! --mark \$(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT || true"
+  FINAL_KILLSWITCH_UP="$KILLSWITCH_UP"
+  FINAL_KILLSWITCH_DOWN="$KILLSWITCH_DOWN"
 fi
 
-# Build config with proper routing and killswitch
+# Build config with improved routing and killswitch
 cat > /etc/wireguard/pia.conf << EOF
 [Interface]
 PrivateKey = $PRIVATE_KEY
@@ -67,9 +120,9 @@ ${PIA_DNS:+DNS = 209.222.18.222, 209.222.18.218}
 MTU = ${MTU:-1420}
 Table = auto
 
-# Killswitch: Allow only tunnel, loopback, and initial connection to VPN server
-PostUp = $KILLSWITCH_UP
-PostDown = $KILLSWITCH_DOWN
+# Killswitch: Prevent leaks outside tunnel
+PostUp = $FINAL_KILLSWITCH_UP
+PostDown = $FINAL_KILLSWITCH_DOWN
 
 [Peer]
 PublicKey = $SERVER_PUBKEY
