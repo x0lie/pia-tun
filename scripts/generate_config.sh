@@ -11,8 +11,8 @@ for file in server_endpoint meta_cn client_ip pia_token; do
 done
 
 ENDPOINT_IP=$(cat /tmp/server_endpoint)
-META_CN=$(cat /tmp/meta_cn)  # WG CN for addKey/PF
-CLIENT_IP=$(cat /tmp/client_ip)  # Fallback; override with peer_ip
+META_CN=$(cat /tmp/meta_cn)
+CLIENT_IP=$(cat /tmp/client_ip)
 TOKEN=$(cat /tmp/pia_token)
 
 # Generate client keys
@@ -47,20 +47,7 @@ echo "$PF_GATEWAY" > /tmp/pf_gateway
 
 echo "addKey success: Peer IP $PEER_IP, Port $SERVER_PORT, PF Gateway $PF_GATEWAY"
 
-# Apply killswitch based on PORT_FORWARDING setting
-if [ "${PORT_FORWARDING}" = "true" ]; then
-  # For port forwarding: use minimal killswitch that allows incoming connections
-  FINAL_KILLSWITCH_UP="iptables -I OUTPUT -d 10.0.0.0/8 -j ACCEPT; iptables -I OUTPUT -d 172.16.0.0/12 -j ACCEPT; iptables -I OUTPUT -d 192.168.0.0/16 -j ACCEPT; iptables -I OUTPUT -d 127.0.0.0/8 -j ACCEPT; iptables -A OUTPUT ! -o %i ! -o lo -j REJECT"
-  
-  FINAL_KILLSWITCH_DOWN="iptables -D OUTPUT -d 10.0.0.0/8 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT -d 172.16.0.0/12 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT -d 192.168.0.0/16 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT -d 127.0.0.0/8 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT ! -o %i ! -o lo -j REJECT 2>/dev/null || true"
-else
-  # Full killswitch with routing table isolation
-  FINAL_KILLSWITCH_UP="iptables -I OUTPUT -d 10.0.0.0/8 -j ACCEPT; iptables -I OUTPUT -d 172.16.0.0/12 -j ACCEPT; iptables -I OUTPUT -d 192.168.0.0/16 -j ACCEPT; iptables -I OUTPUT -d 127.0.0.0/8 -j ACCEPT; iptables -I OUTPUT -o %i -p udp --dport 53 -j ACCEPT; iptables -I OUTPUT -o %i -p tcp --dport 53 -j ACCEPT; iptables -I OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT; iptables -A OUTPUT ! -o %i ! -o lo -m mark ! --mark 51820 -j REJECT"
-  
-  FINAL_KILLSWITCH_DOWN="iptables -D OUTPUT -d 10.0.0.0/8 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT -d 172.16.0.0/12 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT -d 192.168.0.0/16 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT -d 127.0.0.0/8 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT -o %i -p udp --dport 53 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT -o %i -p tcp --dport 53 -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true; iptables -D OUTPUT ! -o %i ! -o lo -m mark ! --mark 51820 -j REJECT 2>/dev/null || true"
-fi
-
-# Build config with improved routing and killswitch
+# Build config WITHOUT killswitch for testing
 cat > /etc/wireguard/pia.conf << EOF
 [Interface]
 PrivateKey = $PRIVATE_KEY
@@ -68,11 +55,6 @@ Address = $PEER_IP/32
 ${DNS_SERVERS:+DNS = $DNS_SERVERS}
 ${PIA_DNS:+DNS = 209.222.18.222, 209.222.18.218}
 MTU = ${MTU:-1420}
-Table = auto
-
-# Killswitch: Prevent leaks outside tunnel
-PostUp = $FINAL_KILLSWITCH_UP
-PostDown = $FINAL_KILLSWITCH_DOWN
 
 [Peer]
 PublicKey = $SERVER_PUBKEY

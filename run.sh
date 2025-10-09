@@ -28,7 +28,7 @@ print_banner() {
 export_vars() {
     export DISABLE_IPV6=${DISABLE_IPV6:-true}
     export PIA_USER PIA_PASS PIA_LOCATION PORT_FORWARDING LOCAL_NETWORK PIA_DNS MTU
-    export QUIET_MODE=true  # Signal to child scripts to minimize output
+    export QUIET_MODE=true
 }
 
 # Progress indicator
@@ -74,7 +74,7 @@ main() {
     fi
     echo ""
 
-    # Generate WireGuard config
+    # Generate WireGuard config (without killswitch)
     show_step "Configuring WireGuard tunnel..."
     if /app/scripts/generate_config.sh > /tmp/wg_config_output.log 2>&1; then
         show_success "Tunnel configured"
@@ -111,7 +111,7 @@ main() {
     sleep 2
     echo ""
 
-    # Verify connectivity
+    # Verify connectivity BEFORE applying killswitch
     show_step "Verifying connection..."
     EXTERNAL_IP=$(timeout 10 curl -s ifconfig.me 2>/dev/null || echo "")
     if [ -n "$EXTERNAL_IP" ]; then
@@ -121,15 +121,41 @@ main() {
     fi
     echo ""
 
+    # NOW apply the killswitch after we know it's working
+    # Use fwmark instead of interface to work with WireGuard's policy routing
+    show_step "Activating killswitch..."
+    
+    # Get the fwmark that WireGuard is using
+    FWMARK=$(wg show pia fwmark)
+    
+    # Allow traffic marked by WireGuard (will go through tunnel)
+    iptables -I OUTPUT 1 -m mark --mark $FWMARK -j ACCEPT 2>/dev/null || true
+    # Allow established/related connections (helps with K8s services)
+    iptables -I OUTPUT 2 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+    # Allow loopback
+    iptables -I OUTPUT 3 -o lo -j ACCEPT 2>/dev/null || true
+    # Allow local networks (Docker/K8s)
+    iptables -I OUTPUT 4 -d 10.0.0.0/8 -j ACCEPT 2>/dev/null || true
+    iptables -I OUTPUT 5 -d 172.16.0.0/12 -j ACCEPT 2>/dev/null || true
+    iptables -I OUTPUT 6 -d 192.168.0.0/16 -j ACCEPT 2>/dev/null || true
+    iptables -I OUTPUT 7 -d 169.254.0.0/16 -j ACCEPT 2>/dev/null || true
+    # Allow traffic on the tunnel interface itself
+    iptables -I OUTPUT 8 -o pia -j ACCEPT 2>/dev/null || true
+    # Block everything else (prevents leaks)
+    iptables -A OUTPUT -j REJECT --reject-with icmp-net-unreachable 2>/dev/null || true
+    
+    show_success "Killswitch active (fwmark: $FWMARK)"
+    echo ""
+
     # Port Forward if enabled
     if [ "${PORT_FORWARDING}" = "true" ]; then
         show_step "Initializing port forwarding..."
         echo ""
         /app/scripts/port_forwarding.sh
     else
-echo "${grn}╔════════════════════════════════════════════════╗${nc}"
-echo "${grn}║${nc}                ${grn}✓${nc} ${bold}VPN Connected${nc}                 ${grn}║${nc}"
-echo "${grn}╚════════════════════════════════════════════════╝${nc}"
+        echo "${grn}╔════════════════════════════════════════════════╗${nc}"
+        echo "${grn}║${nc}                ${grn}✓${nc} ${bold}VPN Connected${nc}                 ${grn}║${nc}"
+        echo "${grn}╚════════════════════════════════════════════════╝${nc}"
         echo ""
         tail -f /dev/null
     fi
