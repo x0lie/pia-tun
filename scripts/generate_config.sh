@@ -80,5 +80,6 @@ EOF
 
 # Echo Results
 echo "Config generated at /etc/wireguard/pia.conf"
-echo "Preview:"
+echo ""
 cat /etc/wireguard/pia.conf
+echo ""

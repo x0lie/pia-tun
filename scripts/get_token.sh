@@ -23,3 +23,4 @@ echo -e "${TOKEN}" > /tmp/pia_token
 
 # Announce token success:
 echo -e "Token grabbed"
+echo -e ""

@@ -45,6 +45,7 @@ main() {
 
     # Wait a moment for tunnel to stabilize
     sleep 2
+    echo ""
 
     # Verify connectivity
     echo "Testing connectivity..."
@@ -53,6 +54,7 @@ main() {
     else
         echo "Warning: Could not verify external IP"
     fi
+    echo ""
 
     # Port Forward if =true
     if [ "${PORT_FORWARDING}" = "true" ]; then

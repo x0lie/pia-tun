@@ -141,6 +141,7 @@ bind_port "$PAYLOAD" "$SIGNATURE" || echo "Warning: Initial bind failed, will re
 # Save port to file
 echo "$PORT" > "${PORT_FILE:-/etc/wireguard/port}"
 echo "Port saved to ${PORT_FILE:-/etc/wireguard/port}"
+echo ""
 
 # Refresh loop (every 15 minutes)
 echo "Starting refresh loop..."

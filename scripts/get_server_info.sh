@@ -116,4 +116,5 @@ if [ "$BEST_TIME" = "timeout" ]; then
   echo "Server selected: $BEST_WG_CN (no response, using first available)"
 else
   echo "Server selected: $BEST_WG_CN (${BEST_TIME}ms)"
+  echo ""
 fi
