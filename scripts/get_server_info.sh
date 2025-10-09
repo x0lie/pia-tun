@@ -37,7 +37,7 @@ if [[ ${#all_region_data} -lt 1000 ]]; then
   exit 1
 fi
 
-# Set the region from environment sybnau
+# Set the region from environment
 selectedRegion="$PIA_LOCATION"
 
 # Get data for the selected region
@@ -62,21 +62,6 @@ if [ "$SUPPORTS_PF" != "true" ]; then
   echo "Warning: PF disabled on this server (port_forward=$SUPPORTS_PF)."
 fi
 
-# This function checks the latency you have to a specific server.
-# It will print the variables to stdout
-printServerLatency() {
-  serverIP=$1
-  serverCN=$2
-  time=$(LC_NUMERIC=en_US.utf8 curl -k -o /dev/null -s \
-    --connect-timeout "$MAX_LATENCY" \
-    --write-out "%{time_connect}" \
-    "https://$serverIP:443")
-  if [[ $? -eq 0 && "$time" != "0.000"* ]]; then
-    echo "$time $serverIP $serverCN"
-  fi
-}
-export -f printServerLatency
-
 # Get all valid WG servers for the location
 ALL_WG_SERVERS="$( echo "$regionData" |
   jq -r '.servers.wg[] | .ip + " " + .cn' )"
@@ -87,37 +72,48 @@ if [[ -z $ALL_WG_SERVERS ]]; then
 fi
 
 # Collect latencies
-LATENCIES=""
-echo "Pinging WG servers in $selectedRegion via TCP connect time to port 443 (<${MAX_LATENCY}s timeout)..."
+echo "Selecting best server..."
+LATENCIES_FILE=$(mktemp)
 
-echo "$ALL_WG_SERVERS" | while read -r wg_line; do
-  serverIP=$(echo "$wg_line" | awk '{print $1}')
-  serverCN=$(echo "$wg_line" | awk '{print $2}')
-  time_line=$(bash -c "printServerLatency $serverIP $serverCN")
-  if [[ -n $time_line ]]; then
-    echo "  Connect to $serverIP ($serverCN): $(echo "$time_line" | awk '{print $1}')s"
-    LATENCIES="${LATENCIES}${time_line}\n"
+echo "$ALL_WG_SERVERS" | while read -r serverIP serverCN; do
+  # Test connection time to port 443
+  time_sec=$(LC_NUMERIC=en_US.utf8 curl -k -o /dev/null -s \
+    --connect-timeout "$MAX_LATENCY" \
+    --write-out "%{time_connect}" \
+    "https://$serverIP:443" 2>/dev/null || echo "999")
+  
+  # Skip if timeout or failed
+  if [[ "$time_sec" != "999" && "$time_sec" != "0.000"* ]]; then
+    # Convert to milliseconds
+    time_ms=$(awk "BEGIN {printf \"%.0f\", $time_sec * 1000}")
+    echo "$time_ms $serverIP $serverCN" >> "$LATENCIES_FILE"
   fi
 done
 
-# Select the best
-if [[ -z $LATENCIES ]]; then
-  echo "Warning: No WG servers responded within ${MAX_LATENCY}s in '$selectedRegion'. Picking the first one anyway."
+# Select the best server
+if [ ! -s "$LATENCIES_FILE" ]; then
+  echo "Warning: No servers responded within ${MAX_LATENCY}s. Using first server."
   BEST_WG_IP=$(echo "$regionData" | jq -r '.servers.wg[0].ip')
   BEST_WG_CN=$(echo "$regionData" | jq -r '.servers.wg[0].cn')
+  BEST_TIME="timeout"
 else
-  BEST_LINE=$(echo -e "$LATENCIES" | sort -n | head -1)
+  # Sort by latency and get the best
+  BEST_LINE=$(sort -n "$LATENCIES_FILE" | head -1)
+  BEST_TIME=$(echo "$BEST_LINE" | awk '{print $1}')
   BEST_WG_IP=$(echo "$BEST_LINE" | awk '{print $2}')
   BEST_WG_CN=$(echo "$BEST_LINE" | awk '{print $3}')
-  LOWEST_TIME=$(echo "$BEST_LINE" | awk '{print $1}')
-  echo "Best server selected with connect time: ${LOWEST_TIME}s"
 fi
+
+rm -f "$LATENCIES_FILE"
 
 # Save for config gen
 echo "$BEST_WG_IP" > /tmp/server_endpoint
 echo "$BEST_WG_CN" > /tmp/meta_cn
 echo "${CLIENT_IP_RANGE:-10.0.0.2}" > /tmp/client_ip
 
-echo "Server info grabbed for $selectedRegion:"
-echo "  Endpoint IP: $BEST_WG_IP:1337"
-echo "  WG CN (for addKey/PF): $BEST_WG_CN"
+# Print nice output
+if [ "$BEST_TIME" = "timeout" ]; then
+  echo "Server selected: $BEST_WG_CN (no response, using first available)"
+else
+  echo "Server selected: $BEST_WG_CN (${BEST_TIME}ms)"
+fi

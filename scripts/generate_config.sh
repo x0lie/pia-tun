@@ -47,12 +47,11 @@ echo "$PF_GATEWAY" > /tmp/pf_gateway
 
 echo "addKey success: Peer IP $PEER_IP, Port $SERVER_PORT, PF Gateway $PF_GATEWAY"
 
-# Determine if we should use killswitch
-# If PORT_FORWARDING=true, use a gentler approach that allows internal DNS
+# Determine killswitch rules
 if [ "${PORT_FORWARDING}" = "true" ]; then
-  # Allow established connections and the tunnel, reject non-local new connections
-  KILLSWITCH_UP="iptables -I OUTPUT ! -o %i -m mark ! --mark \$(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -m state --state NEW -j REJECT"
-  KILLSWITCH_DOWN="iptables -D OUTPUT ! -o %i -m mark ! --mark \$(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -m state --state NEW -j REJECT || true"
+  # For port forwarding: allow all tunnel traffic (no NEW state restriction)
+  KILLSWITCH_UP=""
+  KILLSWITCH_DOWN=""
 else
   KILLSWITCH_UP="iptables -I OUTPUT ! -o %i -m mark ! --mark \$(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT"
   KILLSWITCH_DOWN="iptables -D OUTPUT ! -o %i -m mark ! --mark \$(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT || true"
