@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# Define colors
+red='\033[0;31m'
+grn='\033[0;32m'
+nc='\033[0m'  # No color
+
 # Load required data
 TOKEN=$(cat /tmp/pia_token)
 PEER_IP=$(cat /tmp/client_ip)
@@ -132,7 +137,7 @@ if [ -z "$PORT" ] || [ "$PORT" = "null" ]; then
 fi
 
 echo "Port forwarding initialized:"
-echo "  Forwarded Port: $PORT"
+echo "  Forwarded Port: ${grn}$PORT${nc}"
 echo "  Expires at: $(date -d @$EXPIRES_AT 2>/dev/null || date -r $EXPIRES_AT 2>/dev/null || echo $EXPIRES_AT)"
 
 # Bind the port

@@ -2,6 +2,7 @@
 
 # Define colors
 red='\033[0;31m'
+green='\033[0;32m'
 nc='\033[0m'  # No color
 
 # Exit on error

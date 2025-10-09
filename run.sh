@@ -10,6 +10,11 @@ export_vars() {
     export PIA_USER PIA_PASS PIA_LOCATION PORT_FORWARDING LOCAL_NETWORK PIA_DNS MTU
 }
 
+# Define colors
+red='\033[0;31m'
+grn='\033[0;32m'
+nc='\033[0m'  # No color
+
 # Main flow
 main() {
     export_vars
@@ -48,9 +53,9 @@ main() {
     echo ""
 
     # Verify connectivity
-    echo "Testing connectivity..."
+    echo "Testing connectivity...${grn}"
     if timeout 10 curl -s ifconfig.me; then
-        echo " - Connection verified!"
+        echo "${nc} - Connected!"
     else
         echo "Warning: Could not verify external IP"
     fi
