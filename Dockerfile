@@ -1,6 +1,6 @@
 FROM alpine:latest
 
-# Install dependencies: WireGuard tools, curl for API, bash for scripts, iptables for networking, etc.
+# Install dependencies
 RUN apk update && \
     apk add --no-cache \
         jq \
@@ -8,32 +8,38 @@ RUN apk update && \
         curl \
         bash \
         iptables \
-        # ip6tables \           # for IPv6
-        # iptables-legacy \     # for legacy systems (no nftables support)
+        ip6tables \
+        iputils \
+        bind-tools \
         speedtest-cli \
         wireguard-tools \
-        ca-certificates && \
+        ca-certificates \
+        iproute2 \
+        procps && \
     rm -rf /var/cache/apk/*
 
-# grepcidr3 \
-# libcap-utils \
-# openssl \
-# sed \
-# tini \
-
+# Add PIA certificate
 ADD https://raw.githubusercontent.com/pia-foss/desktop/master/daemon/res/ca/rsa_4096.crt /app/ca.rsa.4096.crt
 
-# Create working dir for configs and scripts
+# Create working dir
 WORKDIR /app
 
-# Copy entrypoint and scripts
+# Copy scripts
 COPY run.sh /app/run.sh
 COPY scripts/ /app/scripts/
 RUN chmod +x /app/run.sh /app/scripts/*.sh
 
-# Expose forwarded port info (if enabled, write to this file for host access)
+# Volume for configs and port file
 VOLUME ["/etc/wireguard"]
 ENV PORT_FILE=/etc/wireguard/port
 
-# Entrypoint: Validate env, apply tweaks, run setup
+# Health check to verify VPN is up and not leaking
+HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
+    CMD wg show pia 2>/dev/null | grep -q "latest handshake" || exit 1
+
+# Environment variable for exempt ports (comma-separated)
+# Example: KILLSWITCH_EXEMPT_PORTS=8080,9090
+ENV KILLSWITCH_EXEMPT_PORTS=""
+
+# Entrypoint
 ENTRYPOINT ["/app/run.sh"]

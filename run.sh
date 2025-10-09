@@ -29,6 +29,7 @@ export_vars() {
     export DISABLE_IPV6=${DISABLE_IPV6:-true}
     export PIA_USER PIA_PASS PIA_LOCATION PORT_FORWARDING LOCAL_NETWORK PIA_DNS MTU
     export QUIET_MODE=true
+    export KILLSWITCH_EXEMPT_PORTS=${KILLSWITCH_EXEMPT_PORTS:-""}
 }
 
 # Progress indicator
@@ -48,10 +49,136 @@ show_error() {
     echo "  ${red}✗${nc} $1"
 }
 
+# Setup initial killswitch BEFORE tunnel comes up
+setup_pre_tunnel_killswitch() {
+    show_step "Setting up pre-tunnel firewall..."
+    
+    # Flush existing rules to start clean
+    iptables -F OUTPUT 2>/dev/null || true
+    iptables -F FORWARD 2>/dev/null || true
+    
+    # Create a custom chain for VPN rules
+    iptables -N VPN_OUT 2>/dev/null || iptables -F VPN_OUT
+    
+    # Allow loopback (critical for container health)
+    iptables -A VPN_OUT -o lo -j ACCEPT
+    
+    # Allow established/related (helps with ongoing connections)
+    iptables -A VPN_OUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+    
+    # Allow local/private networks (Docker/K8s/Cilium)
+    iptables -A VPN_OUT -d 10.0.0.0/8 -j ACCEPT
+    iptables -A VPN_OUT -d 172.16.0.0/12 -j ACCEPT
+    iptables -A VPN_OUT -d 192.168.0.0/16 -j ACCEPT
+    iptables -A VPN_OUT -d 169.254.0.0/16 -j ACCEPT  # Link-local
+    iptables -A VPN_OUT -d 224.0.0.0/4 -j ACCEPT     # Multicast (for service discovery)
+    
+    # Allow DNS to PIA servers during setup (will be restricted after tunnel is up)
+    iptables -A VPN_OUT -p udp --dport 53 -j ACCEPT
+    iptables -A VPN_OUT -p tcp --dport 53 -j ACCEPT
+    
+    # Allow HTTPS to PIA endpoints for auth/setup (will be removed after tunnel is up)
+    iptables -A VPN_OUT -p tcp --dport 443 -d 0.0.0.0/0 -j ACCEPT
+    iptables -A VPN_OUT -p tcp --dport 1337 -d 0.0.0.0/0 -j ACCEPT
+    
+    # Default: REJECT everything else during setup
+    iptables -A VPN_OUT -j REJECT --reject-with icmp-net-unreachable
+    
+    # Jump to our chain from OUTPUT
+    iptables -I OUTPUT 1 -j VPN_OUT
+    
+    show_success "Pre-tunnel firewall active"
+}
+
+# Update killswitch after tunnel is established
+finalize_killswitch() {
+    show_step "Finalizing killswitch..."
+    
+    # Get WireGuard fwmark
+    FWMARK=$(wg show pia fwmark 2>/dev/null || echo "")
+    
+    if [ -z "$FWMARK" ] || [ "$FWMARK" = "off" ]; then
+        show_warning "No fwmark detected, using interface-based rules"
+        USE_INTERFACE=true
+    else
+        USE_INTERFACE=false
+    fi
+    
+    # Flush and rebuild our custom chain
+    iptables -F VPN_OUT
+    
+    # Priority 1: Loopback (always allow)
+    iptables -A VPN_OUT -o lo -j ACCEPT
+    
+    # Priority 2: Established connections (performance)
+    iptables -A VPN_OUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+    
+    # Priority 3: Allow local/private networks
+    iptables -A VPN_OUT -d 10.0.0.0/8 -j ACCEPT
+    iptables -A VPN_OUT -d 172.16.0.0/12 -j ACCEPT
+    iptables -A VPN_OUT -d 192.168.0.0/16 -j ACCEPT
+    iptables -A VPN_OUT -d 169.254.0.0/16 -j ACCEPT
+    iptables -A VPN_OUT -d 224.0.0.0/4 -j ACCEPT  # Multicast
+    
+    # Priority 4: Allow traffic marked by WireGuard OR on the WireGuard interface
+    if [ "$USE_INTERFACE" = false ]; then
+        iptables -A VPN_OUT -m mark --mark "$FWMARK" -j ACCEPT
+    fi
+    iptables -A VPN_OUT -o pia -j ACCEPT
+    
+    # Priority 5: Allow any exempt ports (e.g., for health checks)
+    if [ -n "$KILLSWITCH_EXEMPT_PORTS" ]; then
+        IFS=',' read -ra PORTS <<< "$KILLSWITCH_EXEMPT_PORTS"
+        for port in "${PORTS[@]}"; do
+            port=$(echo "$port" | xargs)  # trim whitespace
+            iptables -A VPN_OUT -p tcp --dport "$port" -j ACCEPT
+            show_success "Exempted port: $port"
+        done
+    fi
+    
+    # Priority 6: Block everything else
+    iptables -A VPN_OUT -j REJECT --reject-with icmp-net-unreachable
+    
+    if [ "$USE_INTERFACE" = false ]; then
+        show_success "Killswitch active (fwmark: $FWMARK)"
+    else
+        show_success "Killswitch active (interface-based)"
+    fi
+}
+
+# Cleanup function
+cleanup() {
+    echo ""
+    show_step "Shutting down..."
+    
+    # Bring down tunnel
+    wg-quick down /etc/wireguard/pia.conf 2>/dev/null || true
+    
+    # Restore DNS
+    if [ -f /etc/resolv.conf.bak ]; then
+        mv /etc/resolv.conf.bak /etc/resolv.conf 2>/dev/null || true
+    fi
+    
+    # Clean up iptables
+    iptables -D OUTPUT -j VPN_OUT 2>/dev/null || true
+    iptables -F VPN_OUT 2>/dev/null || true
+    iptables -X VPN_OUT 2>/dev/null || true
+    
+    show_success "Cleanup complete"
+    exit 0
+}
+
+# Trap signals for graceful shutdown
+trap cleanup SIGTERM SIGINT SIGQUIT
+
 # Main flow
 main() {
     print_banner
     export_vars
+
+    # Apply pre-tunnel killswitch first
+    setup_pre_tunnel_killswitch
+    echo ""
 
     # Authenticate and get token
     show_step "Authenticating with PIA..."
@@ -74,7 +201,7 @@ main() {
     fi
     echo ""
 
-    # Generate WireGuard config (without killswitch)
+    # Generate WireGuard config
     show_step "Configuring WireGuard tunnel..."
     if /app/scripts/generate_config.sh > /tmp/wg_config_output.log 2>&1; then
         show_success "Tunnel configured"
@@ -85,7 +212,7 @@ main() {
     fi
     echo ""
 
-    # DNS fallback: Set DNS before bringing up tunnel
+    # Set DNS before bringing up tunnel (critical for leak prevention)
     DNS_LINE=$(grep '^DNS =' /etc/wireguard/pia.conf | cut -d= -f2- | tr -d ' ')
     if [ -n "$DNS_LINE" ]; then
         cp /etc/resolv.conf /etc/resolv.conf.bak 2>/dev/null || true
@@ -97,7 +224,7 @@ main() {
         done
     fi
 
-    # Bring up the tunnel (suppress verbose output)
+    # Bring up the tunnel
     show_step "Establishing VPN connection..."
     if wg-quick up /etc/wireguard/pia.conf > /tmp/wg_up.log 2>&1; then
         show_success "VPN tunnel established"
@@ -108,43 +235,21 @@ main() {
     fi
 
     # Wait for tunnel to stabilize
-    sleep 2
+    sleep 3
     echo ""
 
-    # Verify connectivity BEFORE applying killswitch
+    # Finalize killswitch with fwmark
+    finalize_killswitch
+    echo ""
+
+    # Verify connectivity
     show_step "Verifying connection..."
-    EXTERNAL_IP=$(timeout 10 curl -s ifconfig.me 2>/dev/null || echo "")
+    EXTERNAL_IP=$(timeout 10 curl -s --interface pia ifconfig.me 2>/dev/null || echo "")
     if [ -n "$EXTERNAL_IP" ]; then
         show_success "External IP: ${grn}${bold}${EXTERNAL_IP}${nc}"
     else
         show_warning "Could not verify external IP"
     fi
-    echo ""
-
-    # NOW apply the killswitch after we know it's working
-    # Use fwmark instead of interface to work with WireGuard's policy routing
-    show_step "Activating killswitch..."
-    
-    # Get the fwmark that WireGuard is using
-    FWMARK=$(wg show pia fwmark)
-    
-    # Allow traffic marked by WireGuard (will go through tunnel)
-    iptables -I OUTPUT 1 -m mark --mark $FWMARK -j ACCEPT 2>/dev/null || true
-    # Allow established/related connections (helps with K8s services)
-    iptables -I OUTPUT 2 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
-    # Allow loopback
-    iptables -I OUTPUT 3 -o lo -j ACCEPT 2>/dev/null || true
-    # Allow local networks (Docker/K8s)
-    iptables -I OUTPUT 4 -d 10.0.0.0/8 -j ACCEPT 2>/dev/null || true
-    iptables -I OUTPUT 5 -d 172.16.0.0/12 -j ACCEPT 2>/dev/null || true
-    iptables -I OUTPUT 6 -d 192.168.0.0/16 -j ACCEPT 2>/dev/null || true
-    iptables -I OUTPUT 7 -d 169.254.0.0/16 -j ACCEPT 2>/dev/null || true
-    # Allow traffic on the tunnel interface itself
-    iptables -I OUTPUT 8 -o pia -j ACCEPT 2>/dev/null || true
-    # Block everything else (prevents leaks)
-    iptables -A OUTPUT -j REJECT --reject-with icmp-net-unreachable 2>/dev/null || true
-    
-    show_success "Killswitch active (fwmark: $FWMARK)"
     echo ""
 
     # Port Forward if enabled
@@ -157,7 +262,7 @@ main() {
         echo "${grn}║${nc}                ${grn}✓${nc} ${bold}VPN Connected${nc}                 ${grn}║${nc}"
         echo "${grn}╚════════════════════════════════════════════════╝${nc}"
         echo ""
-        tail -f /dev/null
+        tail -f /dev/null & wait
     fi
 }
 
