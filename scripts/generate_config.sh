@@ -47,6 +47,11 @@ echo "$PF_GATEWAY" > /tmp/pf_gateway
 
 echo "addKey success: Peer IP $PEER_IP, Port $SERVER_PORT, PF Gateway $PF_GATEWAY"
 
+# OPTIMIZATION: Use 1392 as default MTU to avoid fragmentation
+# WireGuard overhead is 60 bytes, so 1392 works through most networks
+# without fragmentation (1392 + 60 + 48 = 1500 total)
+DEFAULT_MTU=1392
+
 # Build config WITHOUT killswitch for testing
 cat > /etc/wireguard/pia.conf << EOF
 [Interface]
@@ -54,7 +59,7 @@ PrivateKey = $PRIVATE_KEY
 Address = $PEER_IP/32
 ${DNS_SERVERS:+DNS = $DNS_SERVERS}
 ${PIA_DNS:+DNS = 209.222.18.222, 209.222.18.218}
-MTU = ${MTU:-1420}
+MTU = ${MTU:-$DEFAULT_MTU}
 
 [Peer]
 PublicKey = $SERVER_PUBKEY

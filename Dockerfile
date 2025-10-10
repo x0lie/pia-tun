@@ -14,7 +14,7 @@ RUN apk update && \
         wireguard-tools \
         ca-certificates \
         iproute2 \
-	speedtest-cli \
+        speedtest-cli \
         procps && \
     rm -rf /var/cache/apk/*
 
@@ -42,5 +42,8 @@ HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
 
 # Environment variables
 ENV KILLSWITCH_EXEMPT_PORTS=""
+
+# Performance-related sysctls should be set via docker run --sysctl
+# Example: --sysctl net.core.rmem_max=26214400 --sysctl net.core.wmem_max=26214400
 
 ENTRYPOINT ["/app/run.sh"]
