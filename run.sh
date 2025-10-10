@@ -7,11 +7,14 @@ set -e
 source /app/scripts/ui.sh
 source /app/scripts/killswitch.sh
 source /app/scripts/wireguard.sh
+source /app/scripts/verify_connection.sh
 
 # Helper to export vars to child scripts
 export_vars() {
     export DISABLE_IPV6=${DISABLE_IPV6:-true}
-    export PIA_USER PIA_PASS PIA_LOCATION PORT_FORWARDING LOCAL_NETWORK PIA_DNS MTU
+    export DNS=${DNS:-pia}
+    export LOCAL_NETWORK=${LOCAL_NETWORK:-""}
+    export PIA_USER PIA_PASS PIA_LOCATION PORT_FORWARDING MTU
     export QUIET_MODE=true
     export KILLSWITCH_EXEMPT_PORTS=${KILLSWITCH_EXEMPT_PORTS:-""}
 }
@@ -38,6 +41,10 @@ trap cleanup SIGTERM SIGINT SIGQUIT
 main() {
     print_banner
     export_vars
+
+    # Capture real IP before VPN connects (for verification)
+    capture_real_ip
+    echo ""
 
     # Apply pre-tunnel killswitch first
     setup_pre_tunnel_killswitch
@@ -70,7 +77,7 @@ main() {
 
     # Generate WireGuard config
     show_step "Configuring WireGuard tunnel..."
-    if /app/scripts/generate_config.sh > /tmp/wg_config_output.log 2>&1; then
+    if /app/scripts/generate_config.sh >/tmp/wg_config_output.log 2>&1; then
         show_success "Tunnel configured"
     else
         show_error "Configuration failed"
@@ -98,13 +105,12 @@ main() {
 
     # Verify connectivity
     show_step "Verifying connection..."
-    EXTERNAL_IP=$(timeout 10 curl -s --interface pia ifconfig.me 2>/dev/null || echo "")
-    if [ -n "$EXTERNAL_IP" ]; then
-        show_success "External IP: ${grn}${bold}${EXTERNAL_IP}${nc}"
+    if verify_connection; then
+        echo ""
     else
-        show_warning "Could not verify external IP"
+        show_warning "Connection verification found potential issues"
+        echo ""
     fi
-    echo ""
 
     # Port Forward if enabled
     if [ "${PORT_FORWARDING}" = "true" ]; then

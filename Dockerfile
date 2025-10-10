@@ -36,12 +36,24 @@ RUN mkdir -p /etc/wireguard
 VOLUME ["/etc/wireguard"]
 ENV PORT_FILE=/etc/wireguard/port
 
-# Health check
+# Health check - enhanced to verify no leaks
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
-    CMD wg show pia 2>/dev/null | grep -q "latest handshake" || exit 1
+    CMD wg show pia 2>/dev/null | grep -q "latest handshake" && \
+        [ -z "$(timeout 3 curl -6 -s --interface pia https://api6.ipify.org 2>/dev/null || echo '')" ] || exit 1
 
 # Environment variables
 ENV KILLSWITCH_EXEMPT_PORTS=""
+ENV DISABLE_IPV6=true
+ENV LOCAL_NETWORK=""
+
+# LOCAL_NETWORK usage (secure by default):
+# Default (empty): All traffic through VPN, no local network access
+# Allow all RFC1918: LOCAL_NETWORK="all"
+# Single network: LOCAL_NETWORK="192.168.1.0/24"
+# Multiple networks: LOCAL_NETWORK="192.168.1.0/24,10.0.0.0/8"
+# 
+# IMPORTANT: Enabling local network access means traffic to those networks
+# will NOT go through the VPN. Only enable if you trust your local network.
 
 # Performance-related sysctls should be set via docker run --sysctl
 # Example: --sysctl net.core.rmem_max=26214400 --sysctl net.core.wmem_max=26214400

@@ -51,14 +51,43 @@ bring_up_wireguard() {
     ip rule add not fwmark 51820 table 51820 || return 1
     ip rule add table main suppress_prefixlength 0 || return 1
     
+    # Add routing exceptions for local networks (so they don't go through VPN)
+    # Only add exceptions if LOCAL_NETWORK is explicitly set
+    if [ "$LOCAL_NETWORK" = "all" ]; then
+        # Exempt all RFC1918 private networks from VPN routing
+        ip rule add to 10.0.0.0/8 table main priority 100 || true
+        ip rule add to 172.16.0.0/12 table main priority 100 || true
+        ip rule add to 192.168.0.0/16 table main priority 100 || true
+        ip rule add to 169.254.0.0/16 table main priority 100 || true
+    elif [ -n "$LOCAL_NETWORK" ]; then
+        # User specified custom local networks - only exempt those
+        IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORK"
+        for network in "${NETWORKS[@]}"; do
+            network=$(echo "$network" | xargs)
+            # Only handle IPv4 for routing exceptions
+            if [[ "$network" != *":"* ]]; then
+                # Suppress the /0 default route for this specific destination
+                ip rule add to "$network" table main priority 100 || true
+            fi
+        done
+    fi
+    # If LOCAL_NETWORK is empty/unset: no exceptions, all traffic through VPN
+    
     # Set DNS if specified
     if [ -n "$dns" ]; then
-        cp /etc/resolv.conf /etc/resolv.conf.bak 2>/dev/null || true
+        # Backup original resolv.conf
+        if [ ! -f /etc/resolv.conf.bak ]; then
+            cp /etc/resolv.conf /etc/resolv.conf.bak 2>/dev/null || true
+        fi
+        
+        # Write new resolv.conf
         echo "# Set by PIA WireGuard" > /etc/resolv.conf
         IFS=',' read -ra DNS_SERVERS <<< "$dns"
         for server in "${DNS_SERVERS[@]}"; do
-            server=$(echo "$server" | xargs)
-            echo "nameserver $server" >> /etc/resolv.conf
+            server=$(echo "$server" | xargs)  # Trim whitespace
+            if [ -n "$server" ]; then
+                echo "nameserver $server" >> /etc/resolv.conf
+            fi
         done
     fi
     

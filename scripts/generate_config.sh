@@ -52,13 +52,28 @@ echo "addKey success: Peer IP $PEER_IP, Port $SERVER_PORT, PF Gateway $PF_GATEWA
 # without fragmentation (1392 + 60 + 48 = 1500 total)
 DEFAULT_MTU=1392
 
+# Determine DNS configuration
+# Priority: User-specified DNS > PIA default
+if [ -n "$DNS" ] && [ "$DNS" != "pia" ] && [ "$DNS" != "none" ]; then
+    # User specified custom DNS - use it
+    DNS_CONFIG="DNS = $DNS"
+    echo "Using custom DNS: $DNS"
+elif [ "$DNS" = "none" ]; then
+    # DNS explicitly disabled
+    DNS_CONFIG=""
+    echo "DNS disabled by user"
+else
+    # Default to PIA DNS
+    DNS_CONFIG="DNS = 10.0.0.243, 10.0.0.242"
+    echo "Using PIA DNS"
+fi
+
 # Build config WITHOUT killswitch for testing
 cat > /etc/wireguard/pia.conf << EOF
 [Interface]
 PrivateKey = $PRIVATE_KEY
 Address = $PEER_IP/32
-${DNS_SERVERS:+DNS = $DNS_SERVERS}
-${PIA_DNS:+DNS = 209.222.18.222, 209.222.18.218}
+${DNS_CONFIG}
 MTU = ${MTU:-$DEFAULT_MTU}
 
 [Peer]
