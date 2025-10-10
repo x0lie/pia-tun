@@ -1,28 +1,12 @@
 #!/bin/bash
 
-# Define colors
-red=$'\033[0;31m'
-grn=$'\033[0;32m'
-blu=$'\033[0;34m'
-cyn=$'\033[0;36m'
-ylw=$'\033[0;33m'
-nc=$'\033[0m'
-bold=$'\033[1m'
-
 # Exit on error
 set -e
 
-# Print startup banner
-print_banner() {
-    clear
-    echo "${cyn}╔════════════════════════════════════════════════╗${nc}"
-    echo "${cyn}║                                                ║${nc}"
-    echo "${cyn}║${nc}    ${bold}PIA WireGuard VPN Container${nc}                 ${cyn}║${nc}"
-    echo "${cyn}║${nc}    ${grn}olsonalexw${nc}                                  ${cyn}║${nc}"
-    echo "${cyn}║                                                ║${nc}"
-    echo "${cyn}╚════════════════════════════════════════════════╝${nc}"
-    echo ""
-}
+# Source helper scripts
+source /app/scripts/ui.sh
+source /app/scripts/killswitch.sh
+source /app/scripts/wireguard.sh
 
 # Helper to export vars to child scripts
 export_vars() {
@@ -32,150 +16,16 @@ export_vars() {
     export KILLSWITCH_EXEMPT_PORTS=${KILLSWITCH_EXEMPT_PORTS:-""}
 }
 
-# Progress indicator
-show_step() {
-    echo "${blu}▶${nc} $1"
-}
-
-show_success() {
-    echo "  ${grn}✓${nc} $1"
-}
-
-show_warning() {
-    echo "  ${ylw}⚠${nc} $1"
-}
-
-show_error() {
-    echo "  ${red}✗${nc} $1"
-}
-
-# Setup initial killswitch BEFORE tunnel comes up
-setup_pre_tunnel_killswitch() {
-    show_step "Setting up pre-tunnel firewall..."
-    
-    # Flush existing rules to start clean
-    iptables -F OUTPUT 2>/dev/null || true
-    iptables -F FORWARD 2>/dev/null || true
-    
-    # Create a custom chain for VPN rules
-    iptables -N VPN_OUT 2>/dev/null || iptables -F VPN_OUT
-    
-    # OPTIMIZATION: Allow loopback first (most frequent for container internals)
-    iptables -A VPN_OUT -o lo -j ACCEPT
-    
-    # OPTIMIZATION: Established connections BEFORE new connection checks
-    # This handles the bulk of traffic with minimal processing
-    iptables -A VPN_OUT -m conntrack --ctstate ESTABLISHED -j ACCEPT
-    iptables -A VPN_OUT -m conntrack --ctstate RELATED -j ACCEPT
-    
-    # Allow local/private networks (Docker/K8s/Cilium)
-    iptables -A VPN_OUT -d 10.0.0.0/8 -j ACCEPT
-    iptables -A VPN_OUT -d 172.16.0.0/12 -j ACCEPT
-    iptables -A VPN_OUT -d 192.168.0.0/16 -j ACCEPT
-    iptables -A VPN_OUT -d 169.254.0.0/16 -j ACCEPT  # Link-local
-    iptables -A VPN_OUT -d 224.0.0.0/4 -j ACCEPT     # Multicast
-    
-    # Allow DNS to PIA servers during setup
-    iptables -A VPN_OUT -p udp --dport 53 -j ACCEPT
-    iptables -A VPN_OUT -p tcp --dport 53 -j ACCEPT
-    
-    # Allow HTTPS to PIA endpoints for auth/setup
-    iptables -A VPN_OUT -p tcp --dport 443 -j ACCEPT
-    iptables -A VPN_OUT -p tcp --dport 1337 -j ACCEPT
-    
-    # OPTIMIZATION: Use DROP instead of REJECT (no ICMP overhead)
-    iptables -A VPN_OUT -j DROP
-    
-    # Jump to our chain from OUTPUT
-    iptables -I OUTPUT 1 -j VPN_OUT
-    
-    show_success "Pre-tunnel firewall active"
-}
-
-# Update killswitch after tunnel is established
-finalize_killswitch() {
-    show_step "Finalizing killswitch..."
-    
-    # Get WireGuard fwmark
-    FWMARK=$(wg show pia fwmark 2>/dev/null || echo "")
-    
-    if [ -z "$FWMARK" ] || [ "$FWMARK" = "off" ]; then
-        show_warning "No fwmark detected, using interface-based rules"
-        USE_INTERFACE=true
-    else
-        USE_INTERFACE=false
-    fi
-    
-    # Flush and rebuild our custom chain
-    iptables -F VPN_OUT
-    
-    # OPTIMIZATION: Order rules by frequency of match for best performance
-    
-    # Priority 1: Loopback (always allow, frequently used)
-    iptables -A VPN_OUT -o lo -j ACCEPT
-    
-    # Priority 2: ESTABLISHED first, then RELATED (handles 90%+ of traffic)
-    # Separating these allows faster matching for bulk data transfers
-    iptables -A VPN_OUT -m conntrack --ctstate ESTABLISHED -j ACCEPT
-    iptables -A VPN_OUT -m conntrack --ctstate RELATED -j ACCEPT
-    
-    # Priority 3: VPN traffic (will be most new connections after tunnel is up)
-    if [ "$USE_INTERFACE" = false ]; then
-        # OPTIMIZATION: fwmark matching is faster than interface matching
-        iptables -A VPN_OUT -m mark --mark "$FWMARK" -j ACCEPT
-    fi
-    iptables -A VPN_OUT -o pia -j ACCEPT
-    
-    # Priority 4: Local/private networks (less frequent than VPN traffic)
-    iptables -A VPN_OUT -d 10.0.0.0/8 -j ACCEPT
-    iptables -A VPN_OUT -d 172.16.0.0/12 -j ACCEPT
-    iptables -A VPN_OUT -d 192.168.0.0/16 -j ACCEPT
-    iptables -A VPN_OUT -d 169.254.0.0/16 -j ACCEPT
-    iptables -A VPN_OUT -d 224.0.0.0/4 -j ACCEPT
-    
-    # Priority 5: Exempt ports (if any)
-    if [ -n "$KILLSWITCH_EXEMPT_PORTS" ]; then
-        IFS=',' read -ra PORTS <<< "$KILLSWITCH_EXEMPT_PORTS"
-        for port in "${PORTS[@]}"; do
-            port=$(echo "$port" | xargs)
-            iptables -A VPN_OUT -p tcp --dport "$port" -j ACCEPT
-            show_success "Exempted port: $port"
-        done
-    fi
-    
-    # OPTIMIZATION: Use DROP instead of REJECT
-    # - No ICMP packet generation = less CPU and bandwidth usage
-    # - Better for security (no information leakage)
-    # - Slightly faster packet processing
-    iptables -A VPN_OUT -j DROP
-    
-    if [ "$USE_INTERFACE" = false ]; then
-        show_success "Killswitch active (fwmark: $FWMARK, optimized)"
-    else
-        show_success "Killswitch active (interface-based, optimized)"
-    fi
-}
-
 # Cleanup function
 cleanup() {
     echo ""
     show_step "Shutting down..."
     
     # Bring down tunnel
-    if wg show pia >/dev/null 2>&1; then
-        ip link set pia down 2>/dev/null || true
-        ip link del pia 2>/dev/null || true
-    fi
-    
-    # Restore DNS
-    if [ -f /etc/resolv.conf.bak ]; then
-        mv /etc/resolv.conf.bak /etc/resolv.conf 2>/dev/null || true
-    fi
+    teardown_wireguard
     
     # Clean up iptables
-    iptables -D OUTPUT -j VPN_OUT 2>/dev/null || true
-    iptables -F VPN_OUT 2>/dev/null || true
-    iptables -X VPN_OUT 2>/dev/null || true
+    cleanup_killswitch
     
     show_success "Cleanup complete"
     exit 0
@@ -183,69 +33,6 @@ cleanup() {
 
 # Trap signals for graceful shutdown
 trap cleanup SIGTERM SIGINT SIGQUIT
-
-# Bring up WireGuard manually (avoiding wg-quick's sysctl attempts)
-bring_up_wireguard() {
-    local config="$1"
-    
-    # Parse config file
-    local private_key=$(grep '^PrivateKey' "$config" | cut -d= -f2- | xargs)
-    local address=$(grep '^Address' "$config" | cut -d= -f2- | xargs)
-    local dns=$(grep '^DNS' "$config" | cut -d= -f2- | xargs)
-    local mtu=$(grep '^MTU' "$config" | cut -d= -f2- | xargs)
-    
-    local peer_pubkey=$(grep '^PublicKey' "$config" | cut -d= -f2- | xargs)
-    local endpoint=$(grep '^Endpoint' "$config" | cut -d= -f2- | xargs)
-    local allowed_ips=$(grep '^AllowedIPs' "$config" | cut -d= -f2- | xargs)
-    local keepalive=$(grep '^PersistentKeepalive' "$config" | cut -d= -f2- | xargs)
-    
-    # Create interface
-    ip link add pia type wireguard || return 1
-    
-    # Set private key
-    wg set pia private-key <(echo "$private_key") || return 1
-    
-    # Add address
-    ip address add "$address" dev pia || return 1
-    
-    # OPTIMIZATION: Set MTU based on path MTU discovery
-    # WireGuard overhead is 60 bytes, so for 1500 byte physical MTU:
-    # Optimal WireGuard MTU = 1440, but use 1392 for problematic paths
-    if [ -n "$mtu" ]; then
-        ip link set mtu "$mtu" dev pia
-    else
-        # Use 1392 as safe default (works through most paths without fragmentation)
-        # Can try 1412 or 1420 if your path supports it
-        ip link set mtu 1392 dev pia
-    fi
-    
-    # Configure peer
-    wg set pia peer "$peer_pubkey" endpoint "$endpoint" allowed-ips "$allowed_ips" persistent-keepalive "$keepalive" || return 1
-    
-    # Set fwmark for policy routing
-    wg set pia fwmark 51820 || return 1
-    
-    # Bring up interface
-    ip link set pia up || return 1
-    
-    # Add routes
-    ip route add 0.0.0.0/0 dev pia table 51820 || return 1
-    ip rule add not fwmark 51820 table 51820 || return 1
-    ip rule add table main suppress_prefixlength 0 || return 1
-    
-    # Set DNS if specified
-    if [ -n "$dns" ]; then
-        cp /etc/resolv.conf /etc/resolv.conf.bak 2>/dev/null || true
-        echo "# Set by PIA WireGuard" > /etc/resolv.conf
-        IFS=',' read -ra DNS_SERVERS <<< "$dns"
-        for server in "${DNS_SERVERS[@]}"; do
-            server=$(echo "$server" | xargs)
-            echo "nameserver $server" >> /etc/resolv.conf
-        done
-    fi
-    
-    return 0
-}
 
 # Main flow
 main() {
