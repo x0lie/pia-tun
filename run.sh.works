@@ -252,17 +252,12 @@ main() {
 
     # Get Server info
     show_step "Finding optimal server for ${bold}${PIA_LOCATION}${nc}..."
-    if SERVER_OUTPUT=$(/app/scripts/get_server_info.sh 2>&1); then
-        SERVER_NAME=$(echo "$SERVER_OUTPUT" | grep "Server selected:" | cut -d: -f2- | xargs)
-        if [ -n "$SERVER_NAME" ]; then
-            show_success "Connected to: ${bold}${SERVER_NAME}${nc}"
-        else
-            show_warning "Server selected (no latency data)"
-        fi
+    SERVER_OUTPUT=$(/app/scripts/get_server_info.sh 2>&1)
+    SERVER_NAME=$(echo "$SERVER_OUTPUT" | grep "Server selected:" | cut -d: -f2- | xargs)
+    if [ -n "$SERVER_NAME" ]; then
+        show_success "Connected to: ${bold}${SERVER_NAME}${nc}"
     else
-        # get_server_info.sh failed - it already printed a nice error message
-        echo "$SERVER_OUTPUT"
-        exit 1
+        show_warning "Server selected (no latency data)"
     fi
     echo ""
 

@@ -2,6 +2,14 @@
 
 set -e
 
+# Define colors for error messages
+red=$'\033[0;31m'
+ylw=$'\033[0;33m'
+grn=$'\033[0;32m'
+blu=$'\033[0;34m'
+nc=$'\033[0m'
+bold=$'\033[1m'
+
 # This function allows you to check if the required tools have been installed.
 check_tool() {
   cmd=$1
@@ -46,18 +54,45 @@ regionData="$( echo "$all_region_data" |
   jq --arg REGION_ID "$selectedRegion" -r \
   '.regions[] | select(.id==$REGION_ID)')"
 if [[ -z $regionData ]]; then
-  echo "The REGION_ID $selectedRegion is not valid."
-  echo "To get a list of regions, you can run:"
-  echo "curl \"$serverlist_url\" | head -1 | jq -r '.regions[].id'"
+  echo ""
+  echo "${red}════════════════════════════════════════════════${nc}"
+  echo "${red}  ERROR: Invalid Location${nc}"
+  echo "${red}════════════════════════════════════════════════${nc}"
+  echo ""
+  echo "Location '${red}${bold}${selectedRegion}${nc}' is not valid."
+  echo ""
+  echo "${ylw}To see all available locations:${nc}"
+  echo "curl -s 'https://serverlist.piaservers.net/vpninfo/servers/v6' | head -1 | jq -r '.regions[].id'"
+  echo ""
+  echo "${ylw}Popular locations:${nc}"
+  echo "  • Canada: ${grn}ca_toronto${nc}, ${grn}ca_montreal${nc}, ${grn}ca_vancouver${nc}"
+  echo "  • US: ${grn}us_east${nc}, ${grn}us_west${nc}, ${grn}us_florida${nc}"
+  echo "  • Europe: ${grn}uk_london${nc}, ${grn}de_frankfurt${nc}, ${grn}nl_amsterdam${nc}"
+  echo ""
   exit 1
 fi
 
 # Check if location supports port forwarding if required
 SUPPORTS_PF=$(echo "$regionData" | jq -r '.port_forward')
 if [ "$PORT_FORWARDING" = "true" ] && [ "$SUPPORTS_PF" != "true" ]; then
-  echo "Error: PORT_FORWARDING=true but location '$selectedRegion' has port_forward=false. Use a supported location (e.g., non-US) or set PORT_FORWARDING=false."
+  echo ""
+  echo "${red}════════════════════════════════════════════════${nc}"
+  echo "${red}  ERROR: Port Forwarding Unavailable${nc}"
+  echo "${red}════════════════════════════════════════════════${nc}"
+  echo ""
+  echo "${ylw}Port forwarding is NOT supported in US locations.${nc}"
+  echo ""
+  echo "${ylw}Solutions:${nc}"
+  echo "  1. Choose a ${grn}non-US location${nc} (recommended):"
+  echo "     • Canada: ${grn}ca_toronto${nc}, ${grn}ca_montreal${nc}, ${grn}ca_vancouver${nc}"
+  echo "     • Europe: ${grn}uk_london${nc}, ${grn}de_frankfurt${nc}, ${grn}nl_amsterdam${nc}"
+  echo "     • Asia: ${grn}jp_tokyo${nc}, ${grn}sg${nc}, ${grn}au_sydney${nc}"
+  echo ""
+  echo "  2. Set ${ylw}PORT_FORWARDING=false${nc} to use this location without PF"
+  echo ""
   exit 1
 fi
+
 if [ "$SUPPORTS_PF" != "true" ]; then
   echo "Warning: PF disabled on this server (port_forward=$SUPPORTS_PF)."
 fi
@@ -67,7 +102,18 @@ ALL_WG_SERVERS="$( echo "$regionData" |
   jq -r '.servers.wg[] | .ip + " " + .cn' )"
 
 if [[ -z $ALL_WG_SERVERS ]]; then
-  echo "Error: No valid WireGuard servers found for '$selectedRegion'. Try a different PIA_LOCATION like 'ca_vancouver'."
+  echo ""
+  echo "${red}════════════════════════════════════════════════${nc}"
+  echo "${red}  ERROR: No WireGuard Servers Found${nc}"
+  echo "${red}════════════════════════════════════════════════${nc}"
+  echo ""
+  echo "No WireGuard servers found for '${red}${bold}${selectedRegion}${nc}'."
+  echo ""
+  echo "${ylw}Try a different location like:${nc}"
+  echo "  • ${grn}ca_vancouver${nc}"
+  echo "  • ${grn}uk_london${nc}"
+  echo "  • ${grn}de_frankfurt${nc}"
+  echo ""
   exit 1
 fi
 
