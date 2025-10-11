@@ -1,41 +1,7 @@
 #!/bin/bash
 
-# Verify VPN connection and check for leaks
-
-# Get external IP through VPN interface
-get_external_ip() {
-    local ip=""
-    
-    # Method 1: Try with --interface pia
-    ip=$(timeout 10 curl -s --interface pia http://ifconfig.me 2>/dev/null)
-    if [ -n "$ip" ]; then
-        echo "$ip"
-        return 0
-    fi
-    
-    # Method 2: Try without interface binding (should still go through VPN due to routing)
-    ip=$(timeout 10 curl -s http://ifconfig.me 2>/dev/null)
-    if [ -n "$ip" ]; then
-        echo "$ip"
-        return 0
-    fi
-    
-    # Method 3: Try alternative service
-    ip=$(timeout 10 curl -s http://icanhazip.com 2>/dev/null)
-    if [ -n "$ip" ]; then
-        echo "$ip"
-        return 0
-    fi
-    
-    # Method 4: Try with IPv4 only
-    ip=$(timeout 10 curl -4 -s http://api.ipify.org 2>/dev/null)
-    if [ -n "$ip" ]; then
-        echo "$ip"
-        return 0
-    fi
-    
-    echo ""
-}
+# Source UI helpers
+source /app/scripts/ui.sh
 
 # Capture real IP before VPN connects (called from run.sh)
 capture_real_ip() {
@@ -53,61 +19,41 @@ capture_real_ip() {
 # Check if PIA DNS is responding (only if using PIA DNS)
 check_pia_dns() {
     # Check if we're using PIA's DNS servers
-    local using_pia_dns=false
-    if grep -q "209.222.18.222\|209.222.18.218" /etc/resolv.conf 2>/dev/null; then
-        using_pia_dns=true
+    if ! grep -q "209.222.18.222\|209.222.18.218" /etc/resolv.conf 2>/dev/null; then
+        return 2  # Not using PIA DNS
     fi
     
-    if [ "$using_pia_dns" = false ]; then
-        # Not using PIA DNS, skip this check
-        return 2  # Return 2 to indicate "skipped"
-    fi
-    
-    # Query PIA's DNS server directly - use TCP for more reliable check
-    if timeout 3 dig @209.222.18.222 google.com +short +tries=1 >/dev/null 2>&1; then
-        return 0
-    fi
-    return 1
+    # Query PIA's DNS server directly
+    timeout 3 dig @209.222.18.222 google.com +short +tries=1 >/dev/null 2>&1
 }
 
-# Check for DNS leaks (non-VPN DNS servers being used)
+# Check for DNS leaks
 check_dns_leak() {
     local dns_servers=$(grep "^nameserver" /etc/resolv.conf | awk '{print $2}')
     local leak_detected=false
     
     for dns in $dns_servers; do
-        # Check if DNS is PIA's DNS
-        if [[ "$dns" == "209.222.18.222" ]] || [[ "$dns" == "209.222.18.218" ]]; then
-            continue
-        fi
+        # Skip PIA DNS
+        [[ "$dns" == "209.222.18.222" ]] || [[ "$dns" == "209.222.18.218" ]] && continue
         
-        # Check if it's a private/local DNS (allowed)
-        if [[ "$dns" =~ ^10\. ]] || \
-           [[ "$dns" =~ ^172\.(1[6-9]|2[0-9]|3[0-1])\. ]] || \
-           [[ "$dns" =~ ^192\.168\. ]] || \
-           [[ "$dns" =~ ^127\. ]]; then
-            continue
-        fi
+        # Skip private/local DNS
+        [[ "$dns" =~ ^10\. ]] || \
+        [[ "$dns" =~ ^172\.(1[6-9]|2[0-9]|3[0-1])\. ]] || \
+        [[ "$dns" =~ ^192\.168\. ]] || \
+        [[ "$dns" =~ ^127\. ]] && continue
         
-        # If we get here, it's a public non-PIA DNS
-        # Check if user set custom DNS
+        # Public non-PIA DNS found
         if [ -z "$DNS" ] || [ "$DNS" = "pia" ]; then
-            # User wants PIA DNS but we found something else
             show_warning "Unexpected DNS server detected: $dns"
             leak_detected=true
         fi
-        # If $DNS is set to custom value, this is expected, so don't warn
     done
     
-    if [ "$leak_detected" = false ]; then
-        return 0
-    fi
-    return 1
+    [ "$leak_detected" = false ]
 }
 
 # Check for IPv6 leaks
 check_ipv6_leak() {
-    # Try to get IPv6 address
     local ipv6=$(timeout 5 curl -6 -s --interface pia https://api6.ipify.org 2>/dev/null || echo "")
     
     if [ -n "$ipv6" ] && [ "${DISABLE_IPV6}" = "true" ]; then
@@ -118,27 +64,23 @@ check_ipv6_leak() {
     return 0
 }
 
-# Main verification function using hybrid approach
+# Main verification function
 verify_connection() {
     local checks_passed=0
     local checks_total=0
     local vpn_ip=""
     
-    # Check 1: Can we get an IP through the VPN interface?
+    # Check 1: Get external IP through VPN
     checks_total=$((checks_total + 1))
+    vpn_ip=$(get_external_ip || echo "")
     
-    # Try to get external IP (but don't block on it)
-    vpn_ip=$(timeout 8 bash -c 'curl -s http://ifconfig.me 2>/dev/null || curl -s http://icanhazip.com 2>/dev/null' || echo "")
-    
-    if [ -n "$vpn_ip" ] && [ "$vpn_ip" != "curl: "* ]; then
+    if [ -n "$vpn_ip" ]; then
         checks_passed=$((checks_passed + 1))
     else
-        # IP check failed, but don't fail entirely - just note it
         show_warning "External IP check timed out (VPN likely working, but verification slow)"
-        vpn_ip=""
     fi
     
-    # Check 2: Is IP different from pre-VPN IP?
+    # Check 2: Verify IP changed from pre-VPN
     if [ -f /tmp/real_ip ]; then
         checks_total=$((checks_total + 1))
         local real_ip=$(cat /tmp/real_ip)
@@ -150,29 +92,23 @@ verify_connection() {
         fi
     fi
     
-    # Check 3: PIA DNS responding? (only if using PIA DNS)
-    local dns_check_result
+    # Check 3: PIA DNS responding (if using PIA DNS)
     check_pia_dns
-    dns_check_result=$?
+    local dns_result=$?
     
-    if [ $dns_check_result -eq 0 ]; then
-        # DNS check passed
+    if [ $dns_result -eq 0 ]; then
         checks_total=$((checks_total + 1))
         checks_passed=$((checks_passed + 1))
-    elif [ $dns_check_result -eq 1 ]; then
-        # DNS check failed (only if using PIA DNS)
+    elif [ $dns_result -eq 1 ]; then
         checks_total=$((checks_total + 1))
         show_warning "PIA DNS query test failed (may be temporary)"
     fi
-    # If dns_check_result is 2, check was skipped (not using PIA DNS)
     
     # Check 4: IPv6 leak test
     checks_total=$((checks_total + 1))
     if check_ipv6_leak; then
         checks_passed=$((checks_passed + 1))
-        if [ "${DISABLE_IPV6}" = "true" ]; then
-            show_success "No IPv6 leaks detected"
-        fi
+        [ "${DISABLE_IPV6}" = "true" ] && show_success "No IPv6 leaks detected"
     fi
     
     # Check 5: DNS leak test
@@ -186,17 +122,14 @@ verify_connection() {
     if [ -z "$vpn_ip" ]; then
         show_warning "Could not verify external IP (check manually if needed)"
         echo "  ${ylw}ℹ${nc} VPN is connected, but IP verification timed out"
-        return 0  # Don't fail - VPN is working, just slow verification
+        return 0
     elif [ $checks_passed -ge $((checks_total - 1)) ]; then
-        # All or all-but-one checks passed
         show_success "External IP: ${grn}${bold}${vpn_ip}${nc}"
         return 0
     elif [ $checks_passed -ge $((checks_total / 2)) ]; then
-        # At least half checks passed
         show_warning "External IP: ${ylw}${bold}${vpn_ip}${nc} ${ylw}(VPN active, some checks failed)${nc}"
         return 0
     else
-        # Most checks failed
         show_error "External IP: ${red}${bold}${vpn_ip}${nc} ${red}(VPN may not be working)${nc}"
         return 1
     fi

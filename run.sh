@@ -1,6 +1,5 @@
 #!/bin/bash
 
-# Exit on error
 set -e
 
 # Source helper scripts
@@ -9,7 +8,7 @@ source /app/scripts/killswitch.sh
 source /app/scripts/wireguard.sh
 source /app/scripts/verify_connection.sh
 
-# Helper to export vars to child scripts
+# Export environment variables
 export_vars() {
     export DISABLE_IPV6=${DISABLE_IPV6:-true}
     export DNS=${DNS:-pia}
@@ -27,32 +26,37 @@ export_vars() {
 cleanup() {
     echo ""
     show_step "Shutting down..."
-
-    # Stop monitor if running
     pkill -f "monitor.sh" 2>/dev/null || true
-
-    # Stop port forwarding if running
     pkill -f "port_forwarding.sh" 2>/dev/null || true
-
-    # Bring down tunnel
     teardown_wireguard
-
-    # Clean up iptables
     cleanup_killswitch
-
     show_success "Cleanup complete"
     exit 0
 }
 
-# Trap signals for graceful shutdown
 trap cleanup SIGTERM SIGINT SIGQUIT
+
+# Wait for port forwarding to complete (up to 30 seconds)
+wait_for_port_forwarding() {
+    local max_wait=30
+    local waited=0
+    
+    while [ $waited -lt $max_wait ]; do
+        if [ -f /tmp/port_forwarding_complete ]; then
+            rm -f /tmp/port_forwarding_complete
+            return 0
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    
+    return 0
+}
 
 # Initial connection function
 initial_connect() {
-    # Only print banner on first connect, not reconnects
-    if [ ! -f /tmp/reconnecting ]; then
-        print_banner
-    fi
+    # Only print banner on first connect
+    [ ! -f /tmp/reconnecting ] && print_banner
 
     export_vars
 
@@ -62,10 +66,10 @@ initial_connect() {
         echo ""
     fi
 
-    # Apply pre-tunnel killswitch first
+    # Apply pre-tunnel killswitch
     setup_pre_tunnel_killswitch
 
-    # Debug: Show what's actually allowed during pre-tunnel phase
+    # Debug output if enabled
     if [ "${MONITOR_DEBUG}" = "true" ]; then
         echo ""
         echo "  ${blu}[DEBUG]${nc} Pre-tunnel firewall rules:"
@@ -73,21 +77,13 @@ initial_connect() {
         echo ""
         echo "  ${blu}[DEBUG]${nc} Testing connectivity:"
         echo -n "    DNS resolution: "
-        if nslookup www.privateinternetaccess.com >/dev/null 2>&1; then
-            echo "${grn}OK${nc}"
-        else
-            echo "${red}FAILED${nc}"
-        fi
+        nslookup www.privateinternetaccess.com >/dev/null 2>&1 && echo "${grn}OK${nc}" || echo "${red}FAILED${nc}"
         echo -n "    HTTPS to PIA: "
-        if curl -s --max-time 5 https://www.privateinternetaccess.com >/dev/null 2>&1; then
-            echo "${grn}OK${nc}"
-        else
-            echo "${red}FAILED${nc}"
-        fi
+        curl -s --max-time 5 https://www.privateinternetaccess.com >/dev/null 2>&1 && echo "${grn}OK${nc}" || echo "${red}FAILED${nc}"
     fi
     echo ""
 
-    # Authenticate and get token
+    # Authenticate
     show_step "Authenticating with PIA..."
     if /app/scripts/get_token.sh > /dev/null 2>&1; then
         show_success "Authentication successful"
@@ -97,22 +93,18 @@ initial_connect() {
     fi
     echo ""
 
-    # Get Server info
+    # Get server info
     show_step "Finding optimal server for ${bold}${PIA_LOCATION}${nc}..."
     if SERVER_OUTPUT=$(/app/scripts/get_server_info.sh 2>&1); then
         SERVER_NAME=$(echo "$SERVER_OUTPUT" | grep "Server selected:" | cut -d: -f2- | xargs)
-        if [ -n "$SERVER_NAME" ]; then
-            show_success "Connected to: ${bold}${SERVER_NAME}${nc}"
-        else
-            show_warning "Server selected (no latency data)"
-        fi
+        [ -n "$SERVER_NAME" ] && show_success "Connected to: ${bold}${SERVER_NAME}${nc}" || show_warning "Server selected (no latency data)"
     else
         echo "$SERVER_OUTPUT"
         return 1
     fi
     echo ""
 
-    # Generate WireGuard config
+    # Generate config
     show_step "Configuring WireGuard tunnel..."
     if /app/scripts/generate_config.sh >/tmp/wg_config_output.log 2>&1; then
         show_success "Tunnel configured"
@@ -123,7 +115,7 @@ initial_connect() {
     fi
     echo ""
 
-    # Bring up the tunnel manually
+    # Bring up tunnel
     show_step "Establishing VPN connection..."
     if bring_up_wireguard /etc/wireguard/pia.conf; then
         show_success "VPN tunnel established"
@@ -132,86 +124,51 @@ initial_connect() {
         return 1
     fi
 
-    # Wait for tunnel to stabilize
     sleep 3
     echo ""
 
-    # Finalize killswitch with fwmark
+    # Finalize killswitch
     finalize_killswitch
     echo ""
 
-    # Verify connectivity
+    # Verify connection
     show_step "Verifying connection..."
-    if verify_connection; then
-        echo ""
-    else
-        show_warning "Connection verification found potential issues"
-        echo ""
-    fi
+    verify_connection && echo "" || { show_warning "Connection verification found potential issues"; echo ""; }
 
     return 0
 }
 
-# Perform reconnection by calling initial_connect
+# Perform reconnection
 perform_reconnection() {
-    echo ""
-    echo "${ylw}╔════════════════════════════════════════════════╗${nc}"
-    echo "${ylw}║${nc}               ${ylw}↻${nc} ${bold}Reconnecting VPN${nc}               ${ylw}║${nc}"
-    echo "${ylw}╚════════════════════════════════════════════════╝${nc}"
-    echo ""
-
-    # Mark that we're reconnecting
+    show_reconnecting
     touch /tmp/reconnecting
 
     # Stop port forwarding if running
-    if [ "${PORT_FORWARDING}" = "true" ]; then
-        pkill -f "port_forwarding.sh" 2>/dev/null || true
-    fi
+    [ "${PORT_FORWARDING}" = "true" ] && pkill -f "port_forwarding.sh" 2>/dev/null || true
 
-    # Tear down existing tunnel
+    # Tear down tunnel
     show_step "Tearing down existing tunnel..."
     teardown_wireguard
     show_success "Tunnel torn down"
     echo ""
 
-    # Call the same initial_connect function
+    # Reconnect
     if initial_connect; then
-        # Restart dependent services if configured
-        if [ -n "$RESTART_SERVICES" ]; then
-            show_step "Restarting dependent services..."
-
-            IFS=',' read -ra SERVICES <<< "$RESTART_SERVICES"
-            for service in "${SERVICES[@]}"; do
-                service=$(echo "$service" | xargs)
-                if [ -n "$service" ]; then
-                    echo "  ${blu}↻${nc} Restarting: $service"
-                    docker restart "$service" 2>/dev/null || echo "  ${ylw}⚠${nc} Could not restart $service"
-                fi
-            done
-
-            show_success "Services restarted"
-            echo ""
-        fi
+        # Restart services if configured
+        [ -n "$RESTART_SERVICES" ] && restart_services "$RESTART_SERVICES" && echo ""
 
         # Restart port forwarding if enabled
         if [ "${PORT_FORWARDING}" = "true" ]; then
             show_step "Restarting port forwarding..."
             /app/scripts/port_forwarding.sh &
-            
-            # Wait for port forwarding to complete and show VPN Connected box
-            # (port_forwarding.sh will display the box when it gets the port)
             wait_for_port_forwarding
         else
-            # Show VPN Connected box when not using port forwarding
-            echo "${grn}╔════════════════════════════════════════════════╗${nc}"
-            echo "${grn}║${nc}                ${grn}✓${nc} ${bold}VPN Connected${nc}                 ${grn}║${nc}"
-            echo "${grn}╚════════════════════════════════════════════════╝${nc}"
-            echo ""
+            show_vpn_connected
         fi
 
-        # Announce health monitor is still running
+        # Announce monitor status
         show_step "Health monitor still running..."
-        echo "  ${grn}✓${nc} Check interval: ${CHECK_INTERVAL}s, Failure threshold: ${MAX_FAILURES}"
+        show_success "Check interval: ${CHECK_INTERVAL}s, Failure threshold: ${MAX_FAILURES}"
         echo ""
 
         return 0
@@ -221,89 +178,46 @@ perform_reconnection() {
     fi
 }
 
-# Wait for port forwarding to complete (up to 30 seconds)
-wait_for_port_forwarding() {
-    local max_wait=30
-    local waited=0
-    
-    # Wait for port forwarding to create the completion flag
-    while [ $waited -lt $max_wait ]; do
-        if [ -f /tmp/port_forwarding_complete ]; then
-            rm -f /tmp/port_forwarding_complete
-            return 0
-        fi
-        sleep 1
-        waited=$((waited + 1))
-    done
-    
-    # Timeout - just continue anyway
-    return 0
-}
-
 # Main monitoring loop
 main_loop() {
     # Start port forwarding if enabled
     if [ "${PORT_FORWARDING}" = "true" ]; then
         show_step "Initializing port forwarding..."
         /app/scripts/port_forwarding.sh &
-        PF_PID=$!
-        
-        # Wait for port forwarding to complete and show VPN Connected box
         wait_for_port_forwarding
     else
-        echo "${grn}╔════════════════════════════════════════════════╗${nc}"
-        echo "${grn}║${nc}                ${grn}✓${nc} ${bold}VPN Connected${nc}                 ${grn}║${nc}"
-        echo "${grn}╚════════════════════════════════════════════════╝${nc}"
-        echo ""
+        show_vpn_connected
     fi
 
-    # Start health monitor in background AFTER port forwarding completes
+    # Start health monitor
     show_step "Starting health monitor..."
-
-    # Give VPN a grace period to stabilize before monitoring
-    # This prevents false positives right after connection
-    sleep 5
-
+    sleep 5  # Grace period
     /app/scripts/monitor.sh &
     MONITOR_PID=$!
     show_success "Health monitor active (PID: $MONITOR_PID)"
-    echo "  ${grn}✓${nc} Check interval: ${CHECK_INTERVAL}s, Failure threshold: ${MAX_FAILURES}"
+    show_success "Check interval: ${CHECK_INTERVAL}s, Failure threshold: ${MAX_FAILURES}"
     echo ""
 
     # Main loop - check for reconnect requests
     while true; do
-        # Check if reconnect was requested by monitor
         if [ -f /tmp/vpn_reconnect_requested ]; then
             rm -f /tmp/vpn_reconnect_requested
 
-            # Perform reconnection
-            if perform_reconnection; then
-                # Success - continue monitoring
-                :
-            else
-                # Failed - request another reconnect attempt
+            if ! perform_reconnection; then
                 show_warning "Retrying reconnection..."
                 sleep 5
                 touch /tmp/vpn_reconnect_requested
             fi
         fi
 
-        # Check every 5 seconds for reconnect requests
         sleep 5
     done
 }
 
-# Main flow
+# Main execution
 main() {
-    # Perform initial connection
-    if ! initial_connect; then
-        show_error "Initial connection failed"
-        exit 1
-    fi
-
-    # Enter main monitoring loop
+    initial_connect || { show_error "Initial connection failed"; exit 1; }
     main_loop
 }
 
-# Run main
 main "$@"

@@ -1,13 +1,7 @@
 #!/bin/bash
 
-# Define colors
-red=$'\033[0;31m'
-grn=$'\033[0;32m'
-blu=$'\033[0;34m'
-cyn=$'\033[0;36m'
-ylw=$'\033[0;33m'
-nc=$'\033[0m'
-bold=$'\033[1m'
+# Source UI helpers
+source /app/scripts/ui.sh
 
 # Load required data
 TOKEN=$(cat /tmp/pia_token)
@@ -16,7 +10,7 @@ META_CN=$(cat /tmp/meta_cn)
 PF_GATEWAY=$(cat /tmp/pf_gateway)
 
 if [ -z "$PF_GATEWAY" ] || [ "$PF_GATEWAY" = "null" ]; then
-  echo "  ${red}✗${nc} No PF gateway available"
+  show_error "No PF gateway available"
   touch /tmp/port_forwarding_complete
   exit 1
 fi
@@ -93,16 +87,9 @@ while [ $retry -lt $MAX_RETRIES ]; do
 done
 
 if [ $retry -ge $MAX_RETRIES ]; then
-  echo "  ${red}✗${nc} Port forwarding failed after $MAX_RETRIES attempts"
-  echo ""
-  echo "${ylw}╔════════════════════════════════════════════════╗${nc}"
-  echo "${ylw}║${nc}                ${ylw}⚠${nc} ${bold}VPN Connected${nc}                 ${ylw}║${nc}"
-  echo "${ylw}╚════════════════════════════════════════════════╝${nc}"
-  echo ""
-  
-  # Signal completion even on failure so health monitor can start
+  show_error "Port forwarding failed after $MAX_RETRIES attempts"
+  show_vpn_connected_warning
   touch /tmp/port_forwarding_complete
-  
   tail -f /dev/null
   exit 0
 fi
@@ -114,16 +101,9 @@ SIGNATURE=$(jq -r '.signature' /tmp/pf_response)
 EXPIRES_AT=$(jq -r '.payload' /tmp/pf_response | base64 -d | jq -r '.expires_at')
 
 if [ -z "$PORT" ] || [ "$PORT" = "null" ]; then
-  echo "  ${red}✗${nc} Failed to extract port from response"
-  echo ""
-  echo "${ylw}╔════════════════════════════════════════════════╗${nc}"
-  echo "${ylw}║${nc}                ${ylw}⚠${nc} ${bold}VPN Connected${nc}                 ${ylw}║${nc}"
-  echo "${ylw}╚════════════════════════════════════════════════╝${nc}"
-  echo ""
-  
-  # Signal completion even on failure so health monitor can start
+  show_error "Failed to extract port from response"
+  show_vpn_connected_warning
   touch /tmp/port_forwarding_complete
-  
   tail -f /dev/null
   exit 0
 fi
@@ -135,20 +115,14 @@ bind_port "$PAYLOAD" "$SIGNATURE" >/dev/null 2>&1
 echo "$PORT" > "${PORT_FILE:-/etc/wireguard/port}"
 
 # Success message
-echo "  ${grn}✓${nc} Port: ${grn}${bold}${PORT}${nc}"
-echo ""
+show_success "Port: ${grn}${bold}${PORT}${nc}"
+show_vpn_connected
 
-echo "${grn}╔════════════════════════════════════════════════╗${nc}"
-echo "${grn}║${nc}                ${grn}✓${nc} ${bold}VPN Connected${nc}                 ${grn}║${nc}"
-echo "${grn}╚════════════════════════════════════════════════╝${nc}"
-echo ""
-
-# Signal that port forwarding setup is complete
-# This allows run.sh to proceed with starting the health monitor
+# Signal completion
 touch /tmp/port_forwarding_complete
 
-# Refresh loop (every 24 hours to keep binding alive)
-echo "${blu}▶${nc} Refreshing port in 24 hours..."
+# Refresh loop (every 24 hours)
+show_step "Refreshing port in 24 hours..."
 echo ""
 
 REFRESH_COUNT=0
@@ -159,7 +133,7 @@ while true; do
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] ${blu}↻${nc} Refreshing port signature (day #${REFRESH_COUNT})..."
 
   if ! get_signature 2>/dev/null; then
-    echo "  ${ylw}⚠${nc} Refresh failed, will retry tomorrow"
+    show_warning "Refresh failed, will retry tomorrow"
     continue
   fi
 
@@ -174,9 +148,9 @@ while true; do
   fi
 
   if bind_port "$PAYLOAD" "$SIGNATURE" >/dev/null 2>&1; then
-    echo "  ${grn}✓${nc} Port ${grn}${PORT}${nc} refreshed successfully"
+    show_success "Port ${grn}${PORT}${nc} refreshed successfully"
   else
-    echo "  ${ylw}⚠${nc} Bind failed, will retry tomorrow"
+    show_warning "Bind failed, will retry tomorrow"
   fi
   echo ""
 done
