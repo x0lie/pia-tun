@@ -53,7 +53,6 @@ apply_local_network_rules() {
 
 # Setup IPv6 leak protection
 setup_ipv6_protection() {
-    show_step "Setting up IPv6 leak protection..."
     
     # Flush existing IPv6 rules
     ip6tables -F OUTPUT 2>/dev/null || true
@@ -93,15 +92,24 @@ setup_ipv6_protection() {
 setup_pre_tunnel_killswitch() {
     show_step "Setting up pre-tunnel firewall..."
     
+    # IMPORTANT: Completely flush existing rules first
+    # This is critical for reconnection to work
+    cleanup_killswitch 2>/dev/null || true
+    
     # Setup IPv6 protection first
     setup_ipv6_protection
     
-    # Flush existing rules to start clean
+    # Ensure OUTPUT policy is ACCEPT before we start
+    iptables -P OUTPUT ACCEPT 2>/dev/null || true
+    iptables -P FORWARD ACCEPT 2>/dev/null || true
+    
+    # Flush existing OUTPUT rules to start completely clean
     iptables -F OUTPUT 2>/dev/null || true
     iptables -F FORWARD 2>/dev/null || true
     
-    # Create a custom chain for VPN rules
-    iptables -N VPN_OUT 2>/dev/null || iptables -F VPN_OUT
+    # Create a custom chain for VPN rules (delete if exists)
+    iptables -X VPN_OUT 2>/dev/null || true
+    iptables -N VPN_OUT
     
     # OPTIMIZATION: Allow loopback first (most frequent for container internals)
     iptables -A VPN_OUT -o lo -j ACCEPT
@@ -114,11 +122,14 @@ setup_pre_tunnel_killswitch() {
     # Allow local/private networks (Docker/K8s/home networks)
     apply_local_network_rules "iptables"
     
-    # Allow DNS to PIA servers during setup
+    # Allow DNS to ANY server during setup (critical for reconnection)
     iptables -A VPN_OUT -p udp --dport 53 -j ACCEPT
     iptables -A VPN_OUT -p tcp --dport 53 -j ACCEPT
     
-    # Allow HTTPS to PIA endpoints for auth/setup
+    # Allow ICMP (for ping health checks and connectivity tests)
+    iptables -A VPN_OUT -p icmp -j ACCEPT
+    
+    # Allow HTTPS to PIA endpoints for auth/setup (0.0.0.0/0 allows reconnection)
     iptables -A VPN_OUT -p tcp --dport 443 -j ACCEPT
     iptables -A VPN_OUT -p tcp --dport 1337 -j ACCEPT
     

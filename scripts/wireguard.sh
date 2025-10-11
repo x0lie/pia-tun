@@ -100,9 +100,11 @@ teardown_wireguard() {
         ip link set pia down 2>/dev/null || true
         ip link del pia 2>/dev/null || true
     fi
-    
-    # Restore DNS
-    if [ -f /etc/resolv.conf.bak ]; then
-        mv /etc/resolv.conf.bak /etc/resolv.conf 2>/dev/null || true
-    fi
+
+    # CRITICAL: Restore working DNS for reconnection
+    # The backed up resolv.conf might have PIA DNS (10.0.0.x) which won't work without the tunnel
+    # Always use public DNS during reconnection to be safe
+    echo "# DNS for reconnection" > /etc/resolv.conf
+    echo "nameserver 1.1.1.1" >> /etc/resolv.conf
+    echo "nameserver 8.8.8.8" >> /etc/resolv.conf
 }

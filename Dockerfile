@@ -15,7 +15,8 @@ RUN apk update && \
         ca-certificates \
         iproute2 \
         speedtest-cli \
-        procps && \
+        procps \
+        docker-cli && \
     rm -rf /var/cache/apk/*
 
 # Add PIA certificate
@@ -36,15 +37,24 @@ RUN mkdir -p /etc/wireguard
 VOLUME ["/etc/wireguard"]
 ENV PORT_FILE=/etc/wireguard/port
 
-# Health check - enhanced to verify no leaks
+# Enhanced health check that validates VPN is working
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
-    CMD wg show pia 2>/dev/null | grep -q "latest handshake" && \
-        [ -z "$(timeout 3 curl -6 -s --interface pia https://api6.ipify.org 2>/dev/null || echo '')" ] || exit 1
+    CMD /app/scripts/healthcheck.sh
 
-# Environment variables
+# Environment variables - VPN Configuration
 ENV KILLSWITCH_EXEMPT_PORTS=""
 ENV DISABLE_IPV6=true
 ENV LOCAL_NETWORK=""
+ENV DNS="pia"
+
+# Environment variables - Auto-Reconnect Configuration
+ENV HANDSHAKE_TIMEOUT=180
+ENV CHECK_INTERVAL=30
+ENV MAX_FAILURES=2
+ENV RECONNECT_DELAY=5
+ENV MAX_RECONNECT_DELAY=300
+ENV RESTART_SERVICES=""
+ENV MONITOR_DEBUG=false
 
 # LOCAL_NETWORK usage (secure by default):
 # Default (empty): All traffic through VPN, no local network access
@@ -54,6 +64,11 @@ ENV LOCAL_NETWORK=""
 # 
 # IMPORTANT: Enabling local network access means traffic to those networks
 # will NOT go through the VPN. Only enable if you trust your local network.
+
+# RESTART_SERVICES usage (for auto-reconnect):
+# Comma-separated list of Docker container names to restart after reconnection
+# Example: RESTART_SERVICES="qbittorrent,transmission"
+# Note: Requires Docker socket mount (-v /var/run/docker.sock:/var/run/docker.sock)
 
 # Performance-related sysctls should be set via docker run --sysctl
 # Example: --sysctl net.core.rmem_max=26214400 --sysctl net.core.wmem_max=26214400
