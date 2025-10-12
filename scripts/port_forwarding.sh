@@ -1,156 +1,98 @@
 #!/bin/bash
 
-# Source UI helpers
 source /app/scripts/ui.sh
 
-# Load required data
 TOKEN=$(cat /tmp/pia_token)
 PEER_IP=$(cat /tmp/client_ip)
 META_CN=$(cat /tmp/meta_cn)
 PF_GATEWAY=$(cat /tmp/pf_gateway)
 
-if [ -z "$PF_GATEWAY" ] || [ "$PF_GATEWAY" = "null" ]; then
-  show_error "No PF gateway available"
-  touch /tmp/port_forwarding_complete
-  exit 1
-fi
+[[ -z "$PF_GATEWAY" || "$PF_GATEWAY" = "null" ]] && {
+    show_error "No PF gateway available"
+    touch /tmp/port_forwarding_complete
+    exit 1
+}
 
-# Function to get port signature
 get_signature() {
-  sleep 2
+    sleep 2
+    curl -s -m 10 -k --interface pia -G \
+        --data-urlencode "token=$TOKEN" \
+        "https://$PF_GATEWAY:19999/getSignature" \
+        -o /tmp/pf_response 2>&1 || return 1
 
-  curl -s -m 10 -k \
-    --interface pia \
-    -G \
-    --data-urlencode "token=$TOKEN" \
-    "https://$PF_GATEWAY:19999/getSignature" \
-    -o /tmp/pf_response 2>&1
-
-  local curl_exit=$?
-
-  if [ $curl_exit -ne 0 ] || [ ! -s /tmp/pf_response ]; then
-    return 1
-  fi
-
-  if ! jq -e '.status' /tmp/pf_response >/dev/null 2>&1; then
-    return 1
-  fi
-
-  local status=$(jq -r '.status' /tmp/pf_response)
-  if [ "$status" != "OK" ]; then
-    return 1
-  fi
-
-  return 0
+    [ ! -s /tmp/pf_response ] && return 1
+    jq -e '.status' /tmp/pf_response >/dev/null 2>&1 || return 1
+    [ "$(jq -r '.status' /tmp/pf_response)" = "OK" ]
 }
 
-# Function to bind port
 bind_port() {
-  local payload="$1"
-  local signature="$2"
+    curl -s -m 10 -k --interface pia -G \
+        --data-urlencode "payload=$1" \
+        --data-urlencode "signature=$2" \
+        "https://$PF_GATEWAY:19999/bindPort" \
+        -o /tmp/pf_bind_response 2>&1 || return 1
 
-  curl -s -m 10 -k \
-    --interface pia \
-    -G \
-    --data-urlencode "payload=$payload" \
-    --data-urlencode "signature=$signature" \
-    "https://$PF_GATEWAY:19999/bindPort" \
-    -o /tmp/pf_bind_response 2>&1
-
-  local curl_exit=$?
-
-  if [ $curl_exit -ne 0 ]; then
-    return 1
-  fi
-
-  local status=$(jq -r '.status // empty' /tmp/pf_bind_response 2>/dev/null)
-  if [ "$status" != "OK" ]; then
-    return 1
-  fi
-
-  return 0
+    [ "$(jq -r '.status // empty' /tmp/pf_bind_response 2>/dev/null)" = "OK" ]
 }
 
-# Retry logic for initial signature
+# Initial signature with retry
 MAX_RETRIES=5
 retry=0
-
 while [ $retry -lt $MAX_RETRIES ]; do
-  if get_signature 2>/dev/null; then
-    break
-  fi
-
-  retry=$((retry + 1))
-  if [ $retry -lt $MAX_RETRIES ]; then
-    sleep $((5 * retry))
-  fi
+    get_signature 2>/dev/null && break
+    retry=$((retry + 1))
+    [ $retry -lt $MAX_RETRIES ] && sleep $((5 * retry))
 done
 
-if [ $retry -ge $MAX_RETRIES ]; then
-  show_error "Port forwarding failed after $MAX_RETRIES attempts"
-  show_vpn_connected_warning
-  touch /tmp/port_forwarding_complete
-  tail -f /dev/null
-  exit 0
-fi
+[ $retry -ge $MAX_RETRIES ] && {
+    show_error "Port forwarding failed after $MAX_RETRIES attempts"
+    show_vpn_connected_warning
+    touch /tmp/port_forwarding_complete
+    tail -f /dev/null
+    exit 0
+}
 
-# Parse response
-PORT=$(jq -r '.payload' /tmp/pf_response | base64 -d | jq -r '.port')
-PAYLOAD=$(jq -r '.payload' /tmp/pf_response)
-SIGNATURE=$(jq -r '.signature' /tmp/pf_response)
-EXPIRES_AT=$(jq -r '.payload' /tmp/pf_response | base64 -d | jq -r '.expires_at')
+# Parse all fields at once (single jq call)
+PF_DATA=$(jq -r '[(.payload | @base64d | fromjson | .port), .payload, .signature, (.payload | @base64d | fromjson | .expires_at)] | @tsv' /tmp/pf_response)
+read -r PORT PAYLOAD SIGNATURE EXPIRES_AT <<< "$PF_DATA"
 
-if [ -z "$PORT" ] || [ "$PORT" = "null" ]; then
-  show_error "Failed to extract port from response"
-  show_vpn_connected_warning
-  touch /tmp/port_forwarding_complete
-  tail -f /dev/null
-  exit 0
-fi
+[[ -z "$PORT" || "$PORT" = "null" ]] && {
+    show_error "Failed to extract port from response"
+    show_vpn_connected_warning
+    touch /tmp/port_forwarding_complete
+    tail -f /dev/null
+    exit 0
+}
 
-# Bind the port
 bind_port "$PAYLOAD" "$SIGNATURE" >/dev/null 2>&1
-
-# Save port to file
 echo "$PORT" > "${PORT_FILE:-/etc/wireguard/port}"
 
-# Success message
 show_success "Port: ${grn}${bold}${PORT}${nc}"
 show_vpn_connected
-
-# Signal completion
 touch /tmp/port_forwarding_complete
 
-# Refresh loop (every 24 hours)
 show_step "Refreshing port in 24 hours..."
 echo ""
 
 REFRESH_COUNT=0
 while true; do
-  sleep 86400  # 24 hours
+    sleep 86400
+    REFRESH_COUNT=$((REFRESH_COUNT + 1))
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ${blu}↻${nc} Refreshing port signature (day #${REFRESH_COUNT})..."
 
-  REFRESH_COUNT=$((REFRESH_COUNT + 1))
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ${blu}↻${nc} Refreshing port signature (day #${REFRESH_COUNT})..."
+    get_signature 2>/dev/null || { show_warning "Refresh failed, will retry tomorrow"; continue; }
 
-  if ! get_signature 2>/dev/null; then
-    show_warning "Refresh failed, will retry tomorrow"
-    continue
-  fi
+    PF_REFRESH=$(jq -r '[.payload, .signature, (.payload | @base64d | fromjson | .port)] | @tsv' /tmp/pf_response)
+    read -r PAYLOAD SIGNATURE NEW_PORT <<< "$PF_REFRESH"
 
-  PAYLOAD=$(jq -r '.payload' /tmp/pf_response)
-  SIGNATURE=$(jq -r '.signature' /tmp/pf_response)
-  NEW_PORT=$(echo "$PAYLOAD" | base64 -d | jq -r '.port')
+    [ "$NEW_PORT" != "$PORT" ] && {
+        echo "  ${ylw}ℹ${nc} Port changed: $PORT → $NEW_PORT"
+        PORT=$NEW_PORT
+        echo "$PORT" > "${PORT_FILE:-/etc/wireguard/port}"
+    }
 
-  if [ "$NEW_PORT" != "$PORT" ]; then
-    echo "  ${ylw}ℹ${nc} Port changed: $PORT → $NEW_PORT"
-    PORT=$NEW_PORT
-    echo "$PORT" > "${PORT_FILE:-/etc/wireguard/port}"
-  fi
-
-  if bind_port "$PAYLOAD" "$SIGNATURE" >/dev/null 2>&1; then
-    show_success "Port ${grn}${PORT}${nc} refreshed successfully"
-  else
-    show_warning "Bind failed, will retry tomorrow"
-  fi
-  echo ""
+    bind_port "$PAYLOAD" "$SIGNATURE" >/dev/null 2>&1 && \
+        show_success "Port ${grn}${PORT}${nc} refreshed successfully" || \
+        show_warning "Bind failed, will retry tomorrow"
+    echo ""
 done

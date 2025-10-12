@@ -2,7 +2,7 @@
 
 # UI and display functions
 
-# Define colors
+# Colors
 red=$'\033[0;31m'
 grn=$'\033[0;32m'
 blu=$'\033[0;34m'
@@ -11,7 +11,14 @@ ylw=$'\033[0;33m'
 nc=$'\033[0m'
 bold=$'\033[1m'
 
-# Print startup banner
+# Trim whitespace using bash built-ins (no subprocess)
+trim() {
+    local var="$1"
+    var="${var#"${var%%[![:space:]]*}"}"  # Remove leading
+    var="${var%"${var##*[![:space:]]}"}"  # Remove trailing
+    echo "$var"
+}
+
 print_banner() {
     clear
     echo "${cyn}╔════════════════════════════════════════════════╗${nc}"
@@ -23,24 +30,11 @@ print_banner() {
     echo ""
 }
 
-# Progress indicators
-show_step() {
-    echo "${blu}▶${nc} $1"
-}
+show_step() { echo "${blu}▶${nc} $1"; }
+show_success() { echo "  ${grn}✓${nc} $1"; }
+show_warning() { echo "  ${ylw}⚠${nc} $1"; }
+show_error() { echo "  ${red}✗${nc} $1"; }
 
-show_success() {
-    echo "  ${grn}✓${nc} $1"
-}
-
-show_warning() {
-    echo "  ${ylw}⚠${nc} $1"
-}
-
-show_error() {
-    echo "  ${red}✗${nc} $1"
-}
-
-# Status boxes
 show_vpn_connected() {
     echo ""
     echo "${grn}╔═══════════════════════════════════════════════╗${nc}"
@@ -65,64 +59,39 @@ show_reconnecting() {
     echo ""
 }
 
-# Common service restart function
 restart_services() {
     local services="$1"
-    
-    if [ -z "$services" ]; then
-        return 0
-    fi
+    [ -z "$services" ] && return 0
 
     show_step "Restarting dependent services..."
-
     IFS=',' read -ra SERVICES <<< "$services"
     for service in "${SERVICES[@]}"; do
-        service=$(echo "$service" | xargs)  # Trim whitespace
-        if [ -n "$service" ]; then
+        service=$(trim "$service")
+        [ -n "$service" ] && {
             echo "  ${blu}↻${nc} Restarting container: $service"
-            docker restart "$service" 2>/dev/null || echo "  ${ylw}⚠${nc} Could not restart $service (not found or no access)"
-        fi
+            docker restart "$service" 2>/dev/null || echo "  ${ylw}⚠${nc} Could not restart $service"
+        }
     done
-
     show_success "Dependent services restarted"
 }
 
-# Common curl retry function
 curl_with_retry() {
-    local url="$1"
-    local max_retries="${2:-3}"
-    local timeout="${3:-10}"
-    local extra_args="${4:-}"
-    local retry=0
-    local result
+    local url="$1" max_retries="${2:-3}" timeout="${3:-10}" extra_args="${4:-}"
+    local retry=0 result
     
     while [ $retry -lt $max_retries ]; do
-        if result=$(curl -s -m "$timeout" $extra_args "$url" 2>&1); then
-            echo "$result"
-            return 0
-        fi
-        
+        result=$(curl -s -m "$timeout" $extra_args "$url" 2>&1) && { echo "$result"; return 0; }
         retry=$((retry + 1))
-        if [ $retry -lt $max_retries ]; then
-            sleep $((2 * retry))
-        fi
+        [ $retry -lt $max_retries ] && sleep $((2 * retry))
     done
-    
     return 1
 }
 
-# Common external IP check function
 get_external_ip() {
     local services=("http://ifconfig.me" "http://icanhazip.com" "http://api.ipify.org")
-    local ip=""
-    
     for service in "${services[@]}"; do
-        ip=$(timeout 8 curl -s "$service" 2>/dev/null || echo "")
-        if [ -n "$ip" ] && [ "$ip" != "curl: "* ]; then
-            echo "$ip"
-            return 0
-        fi
+        local ip=$(timeout 8 curl -s "$service" 2>/dev/null)
+        [[ -n "$ip" && "$ip" != "curl: "* ]] && { echo "$ip"; return 0; }
     done
-    
     return 1
 }
