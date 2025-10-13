@@ -51,6 +51,22 @@ apply_local_network_rules() {
     fi
 }
 
+# Apply proxy port rules (allow incoming connections to proxy ports)
+apply_proxy_rules() {
+    local chain=$1
+    
+    # Only apply if proxy is enabled
+    if [ "${PROXY_ENABLED}" = "true" ]; then
+        # Allow incoming connections to SOCKS5 port
+        iptables -I INPUT 1 -p tcp --dport "${SOCKS5_PORT:-1080}" -j ACCEPT
+        
+        # Allow incoming connections to HTTP proxy port
+        iptables -I INPUT 1 -p tcp --dport "${HTTP_PROXY_PORT:-8888}" -j ACCEPT
+        
+        [ "$chain" = "VPN_OUT" ] && show_success "Proxy ports allowed: SOCKS5=${SOCKS5_PORT:-1080}, HTTP=${HTTP_PROXY_PORT:-8888}"
+    fi
+}
+
 # Setup IPv6 leak protection
 setup_ipv6_protection() {
     ip6tables -F OUTPUT 2>/dev/null || true
@@ -111,6 +127,9 @@ add_standard_rules() {
         fi
         add_fw_rule "VPN_OUT" "-o pia -j ACCEPT"
     fi
+    
+    # Priority 5: Apply proxy rules if enabled
+    apply_proxy_rules "VPN_OUT"
 }
 
 # Setup pre-tunnel killswitch
@@ -162,4 +181,8 @@ cleanup_killswitch() {
     ip6tables -D OUTPUT -j VPN_OUT6 2>/dev/null || true
     ip6tables -F VPN_OUT6 2>/dev/null || true
     ip6tables -X VPN_OUT6 2>/dev/null || true
+    
+    # Clean up proxy INPUT rules
+    iptables -D INPUT -p tcp --dport "${SOCKS5_PORT:-1080}" -j ACCEPT 2>/dev/null || true
+    iptables -D INPUT -p tcp --dport "${HTTP_PROXY_PORT:-8888}" -j ACCEPT 2>/dev/null || true
 }

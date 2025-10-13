@@ -51,7 +51,8 @@ trigger_reconnect() {
     local delay=$((RECONNECT_DELAY * reconnect_attempts))
     [ $delay -gt $MAX_RECONNECT_DELAY ] && delay=$MAX_RECONNECT_DELAY
     
-    echo "▶ Reconnecting in ${delay}s..."
+    echo ""
+    echo "${blu}▶${nc} Reconnecting in ${delay}s..."
     sleep $delay
     touch /tmp/vpn_reconnect_requested
 }

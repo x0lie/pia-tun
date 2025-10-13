@@ -6,6 +6,7 @@ source /app/scripts/ui.sh
 source /app/scripts/killswitch.sh
 source /app/scripts/wireguard.sh
 source /app/scripts/verify_connection.sh
+source /app/scripts/proxy_go.sh
 
 # Bulk export
 export DISABLE_IPV6=${DISABLE_IPV6:-true} \
@@ -16,7 +17,10 @@ export DISABLE_IPV6=${DISABLE_IPV6:-true} \
        HANDSHAKE_TIMEOUT=${HANDSHAKE_TIMEOUT:-180} \
        CHECK_INTERVAL=${CHECK_INTERVAL:-30} \
        MAX_FAILURES=${MAX_FAILURES:-3} \
-       RESTART_SERVICES=${RESTART_SERVICES:-""}
+       RESTART_SERVICES=${RESTART_SERVICES:-""} \
+       PROXY_ENABLED=${PROXY_ENABLED:-false} \
+       SOCKS5_PORT=${SOCKS5_PORT:-1080} \
+       HTTP_PROXY_PORT=${HTTP_PROXY_PORT:-8888}
 
 # Boolean flags (set once, check many times)
 PF_ENABLED=false
@@ -25,9 +29,13 @@ PF_ENABLED=false
 DEBUG_MODE=false
 [ "$MONITOR_DEBUG" = "true" ] && DEBUG_MODE=true
 
+PROXY_ENABLED_FLAG=false
+[ "$PROXY_ENABLED" = "true" ] && PROXY_ENABLED_FLAG=true
+
 cleanup() {
     echo ""
     show_step "Shutting down..."
+    $PROXY_ENABLED_FLAG && stop_proxies
     pkill -f "monitor.sh" 2>/dev/null || true
     pkill -f "port_forwarding.sh" 2>/dev/null || true
     teardown_wireguard
@@ -77,6 +85,7 @@ perform_reconnection() {
     touch /tmp/reconnecting
     
     $PF_ENABLED && pkill -f "port_forwarding.sh" 2>/dev/null || true
+    $PROXY_ENABLED_FLAG && stop_proxies
     
     show_step "Tearing down existing tunnel..."
     teardown_wireguard
@@ -85,6 +94,11 @@ perform_reconnection() {
     
     if initial_connect; then
         [ -n "$RESTART_SERVICES" ] && { restart_services "$RESTART_SERVICES"; echo ""; }
+        
+        # Start proxies after VPN is up
+        if $PROXY_ENABLED_FLAG; then
+            start_proxies
+        fi
         
         if $PF_ENABLED; then
             show_step "Restarting port forwarding..."
@@ -111,6 +125,11 @@ perform_reconnection() {
 }
 
 main_loop() {
+    # Start proxies first if enabled
+    if $PROXY_ENABLED_FLAG; then
+        start_proxies
+    fi
+    
     if $PF_ENABLED; then
         show_step "Initializing port forwarding..."
         /app/scripts/port_forwarding.sh &
