@@ -79,6 +79,13 @@ ENV HTTP_PROXY_PORT=8888
 ENV PROXY_USER=""
 ENV PROXY_PASS=""
 
+# Environment variables - Port Forwarding API
+ENV PORT_API_ENABLED=false
+ENV PORT_API_TYPE=""
+ENV PORT_API_URL=""
+ENV PORT_API_USER=""
+ENV PORT_API_PASS=""
+
 # Environment variables - Auto-Reconnect Configuration
 ENV HANDSHAKE_TIMEOUT=180
 ENV CHECK_INTERVAL=15
@@ -115,6 +122,33 @@ EXPOSE 1080 8888 9090
 #
 # Works perfectly with --cap-drop=ALL --cap-add=NET_ADMIN --cap-add=NET_RAW
 # No additional capabilities required!
+
+# PORT FORWARDING API USAGE:
+# Enable API updates: PORT_API_ENABLED=true
+# Supported clients: qbittorrent, transmission, deluge, rtorrent
+# 
+# qBittorrent example:
+#   PORT_API_TYPE=qbittorrent
+#   PORT_API_URL=http://qbittorrent:8080
+#   PORT_API_USER=admin
+#   PORT_API_PASS=adminpass
+#
+# Transmission example:
+#   PORT_API_TYPE=transmission
+#   PORT_API_URL=http://transmission:9091
+#   PORT_API_USER=admin
+#   PORT_API_PASS=adminpass
+#
+# Deluge example:
+#   PORT_API_TYPE=deluge
+#   PORT_API_URL=http://deluge:8112
+#   PORT_API_PASS=deluge
+#
+# rTorrent example:
+#   PORT_API_TYPE=rtorrent
+#   PORT_API_URL=http://rutorrent:80/RPC2
+#
+# Note: File method (/etc/wireguard/port) is always available regardless of API settings
 
 # RESTART_SERVICES usage (for auto-reconnect):
 # Comma-separated list of Docker container names to restart after reconnection

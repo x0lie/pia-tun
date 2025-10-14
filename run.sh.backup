@@ -92,10 +92,7 @@ perform_reconnection() {
     show_reconnecting
     touch /tmp/reconnecting
     
-    $PF_ENABLED && {
-        pkill -f "port_forwarding.sh" 2>/dev/null || true
-        pkill -f "port_monitor.sh" 2>/dev/null || true
-    }
+    $PF_ENABLED && pkill -f "port_forwarding.sh" 2>/dev/null || true
     $PROXY_ENABLED_FLAG && stop_proxies
     
     show_step "Tearing down existing tunnel..."
@@ -173,8 +170,8 @@ main_loop() {
     
     if [ "$METRICS" = "true" ]; then
         echo "  ${grn}✓${nc} Metrics available on port ${METRICS_PORT:-9090}"
-        echo "      Prometheus:  http://<container-ip>:${METRICS_PORT:-9090}/metrics?format=prometheus"
         echo "      JSON:        http://<container-ip>:${METRICS_PORT:-9090}/metrics"
+        echo "      Prometheus:  http://<container-ip>:${METRICS_PORT:-9090}/metrics?format=prometheus"
         echo "      Health:      http://<container-ip>:${METRICS_PORT:-9090}/health"
     fi
     

@@ -17,12 +17,27 @@ check_pia_dns() {
     timeout 3 dig @209.222.18.222 google.com +short +tries=1 >/dev/null 2>&1
 }
 
+get_current_dns() {
+    # Get the first nameserver from resolv.conf
+    local dns=$(grep "^nameserver" /etc/resolv.conf | head -1 | awk '{print $2}')
+    
+    # Check if it's PIA DNS
+    if [[ "$dns" == "10.0.0.243" || "$dns" == "10.0.0.242" ]]; then
+        echo "PIA ($dns)"
+    elif [[ "$dns" == "209.222.18.222" || "$dns" == "209.222.18.218" ]]; then
+        echo "PIA ($dns)"
+    else
+        echo "$dns"
+    fi
+}
+
 check_dns_leak() {
     local leak_detected=false
     
     while read -r _ dns; do
         # Skip PIA DNS
         [[ "$dns" =~ ^209\.222\.18\.(222|218)$ ]] && continue
+        [[ "$dns" =~ ^10\.0\.0\.(243|242)$ ]] && continue
         
         # Skip private/local DNS (early exit on match)
         [[ "$dns" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.|127\.) ]] && continue
@@ -85,7 +100,9 @@ verify_connection() {
     checks_total=$((checks_total + 1))
     check_dns_leak && {
         checks_passed=$((checks_passed + 1))
-        show_success "DNS properly configured"
+        # Show actual DNS being used
+        local current_dns=$(get_current_dns)
+        show_success "DNS: ${current_dns}"
     }
     
     # Display results (early exit logic)
