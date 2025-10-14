@@ -15,8 +15,8 @@ export DISABLE_IPV6=${DISABLE_IPV6:-true} \
        QUIET_MODE=true \
        KILLSWITCH_EXEMPT_PORTS=${KILLSWITCH_EXEMPT_PORTS:-""} \
        HANDSHAKE_TIMEOUT=${HANDSHAKE_TIMEOUT:-180} \
-       CHECK_INTERVAL=${CHECK_INTERVAL:-30} \
-       MAX_FAILURES=${MAX_FAILURES:-3} \
+       CHECK_INTERVAL=${CHECK_INTERVAL:-15} \
+       MAX_FAILURES=${MAX_FAILURES:-2} \
        RESTART_SERVICES=${RESTART_SERVICES:-""} \
        PROXY_ENABLED=${PROXY_ENABLED:-false} \
        SOCKS5_PORT=${SOCKS5_PORT:-1080} \
@@ -36,7 +36,7 @@ cleanup() {
     echo ""
     show_step "Shutting down..."
     $PROXY_ENABLED_FLAG && stop_proxies
-    pkill -f "monitor.sh" 2>/dev/null || true
+    pkill -f "monitor" 2>/dev/null || true
     pkill -f "port_forwarding.sh" 2>/dev/null || true
     teardown_wireguard
     cleanup_killswitch
@@ -65,6 +65,12 @@ initial_connect() {
     echo ""
     
     /app/scripts/setup_vpn.sh || return 1
+    
+    # Save server latency for metrics
+    if [ -f /tmp/server_latency_temp ]; then
+        mv /tmp/server_latency_temp /tmp/server_latency
+    fi
+    
     echo ""
     
     show_step "Establishing VPN connection..."
@@ -146,9 +152,22 @@ main_loop() {
     
     show_step "Starting health monitor..."
     sleep 5
-    /app/scripts/monitor.sh &
+    /usr/local/bin/monitor &
     show_success "Health monitor active (PID: $!)"
     show_success "Check interval: ${CHECK_INTERVAL}s, Failure threshold: ${MAX_FAILURES}"
+    
+    # Show active detection modes
+    [ "$MONITOR_FAST_FAIL" = "true" ] && show_success "Fast-fail mode: enabled"
+    [ "$MONITOR_PARALLEL_CHECKS" = "true" ] && show_success "Parallel checks: enabled"
+    [ "$MONITOR_WATCH_HANDSHAKE" = "true" ] && show_success "Handshake monitoring: enabled (timeout: ${HANDSHAKE_TIMEOUT}s)"
+    
+    if [ "$METRICS" = "true" ]; then
+        echo "  ${grn}✓${nc} Metrics available on port ${METRICS_PORT:-9090}"
+        echo "      JSON:        http://localhost:${METRICS_PORT:-9090}/metrics"
+        echo "      Prometheus:  http://localhost:${METRICS_PORT:-9090}/metrics?format=prometheus"
+        echo "      Health:      http://localhost:${METRICS_PORT:-9090}/health"
+    fi
+    
     echo ""
     
     while true; do

@@ -65,6 +65,12 @@ apply_proxy_rules() {
         
         [ "$chain" = "VPN_OUT" ] && show_success "Proxy ports allowed: SOCKS5=${SOCKS5_PORT:-1080}, HTTP=${HTTP_PROXY_PORT:-8888}"
     fi
+
+    # Allow metrics port if enabled
+    if [ "${METRICS}" = "true" ]; then
+        iptables -I INPUT 1 -p tcp --dport "${METRICS_PORT:-9090}" -j ACCEPT
+        [ "$chain" = "VPN_OUT" ] && show_success "Metrics port allowed: ${METRICS_PORT:-9090}"
+    fi
 }
 
 # Setup IPv6 leak protection

@@ -52,8 +52,12 @@ find_server() {
         BEST_CN=$(echo "$region_data" | jq -r '.servers.wg[0].cn')
         BEST_TIME="timeout"
     fi
+
+    # Save latency for metrics (NEW LINE)
+    [[ "$BEST_TIME" != "timeout" && "$BEST_TIME" =~ ^[0-9]+$ ]] && echo "$BEST_TIME" > /tmp/server_latency_temp
+
     rm -f "$latencies"
-    
+
     echo "$BEST_IP" > /tmp/server_endpoint
     echo "$BEST_CN" > /tmp/meta_cn
     echo "$BEST_CN|$BEST_TIME"

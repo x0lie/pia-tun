@@ -1,16 +1,26 @@
-# Build stage for Go proxy
-FROM golang:1.21-alpine AS proxy-builder
+# Build stage for Go binaries
+FROM golang:1.21-alpine AS go-builder
 
 WORKDIR /build
-COPY scripts/proxy.go .
 
-# Build static binary
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags="-w -s" -o proxy proxy.go
+# Copy go.mod first (for better caching)
+COPY go.mod ./
+
+# Copy all Go source files
+COPY cmd/ ./cmd/
+
+# Build proxy binary
+RUN cd cmd/proxy && \
+    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags="-w -s" -o /build/proxy .
+
+# Build monitor binary
+RUN cd cmd/monitor && \
+    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags="-w -s" -o /build/monitor .
 
 # Final stage
 FROM alpine:latest
 
-# Install dependencies (no dante-server or tinyproxy needed!)
+# Install dependencies
 RUN apk update && \
     apk add --no-cache \
         jq \
@@ -33,8 +43,9 @@ RUN apk update && \
 # Add PIA certificate
 ADD https://raw.githubusercontent.com/pia-foss/desktop/master/daemon/res/ca/rsa_4096.crt /app/ca.rsa.4096.crt
 
-# Copy Go proxy binary from builder
-COPY --from=proxy-builder /build/proxy /usr/local/bin/proxy
+# Copy Go binaries from builder
+COPY --from=go-builder /build/proxy /usr/local/bin/proxy
+COPY --from=go-builder /build/monitor /usr/local/bin/monitor
 
 # Create working directory
 WORKDIR /app
@@ -42,7 +53,7 @@ WORKDIR /app
 # Copy scripts
 COPY run.sh /app/run.sh
 COPY scripts/ /app/scripts/
-RUN chmod +x /app/run.sh /app/scripts/*.sh /usr/local/bin/proxy
+RUN chmod +x /app/run.sh /app/scripts/*.sh /usr/local/bin/proxy /usr/local/bin/monitor
 
 # Create config directory
 RUN mkdir -p /etc/wireguard
@@ -70,15 +81,20 @@ ENV PROXY_PASS=""
 
 # Environment variables - Auto-Reconnect Configuration
 ENV HANDSHAKE_TIMEOUT=180
-ENV CHECK_INTERVAL=30
+ENV CHECK_INTERVAL=15
 ENV MAX_FAILURES=2
 ENV RECONNECT_DELAY=5
 ENV MAX_RECONNECT_DELAY=300
 ENV RESTART_SERVICES=""
 ENV MONITOR_DEBUG=false
+ENV MONITOR_PARALLEL_CHECKS=true
+ENV MONITOR_FAST_FAIL=false
+ENV MONITOR_WATCH_HANDSHAKE=false
+ENV METRICS=false
+ENV METRICS_PORT=9090
 
-# Expose proxy ports
-EXPOSE 1080 8888
+# Expose proxy ports and metrics port
+EXPOSE 1080 8888 9090
 
 # LOCAL_NETWORK usage (secure by default):
 # Default (empty): All traffic through VPN, no local network access
