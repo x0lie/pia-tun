@@ -45,8 +45,21 @@ setup_dns() {
 add_local_exceptions() {
     local networks=("$@")
     for network in "${networks[@]}"; do
-        [[ "$network" != *":"* ]] && ip rule add to "$network" table main priority 100 2>/dev/null || true
+        # Only process IPv4 networks
+        if [[ "$network" != *":"* ]]; then
+            # Add rule to use main routing table for this network
+            # Priority 100 ensures these take precedence over VPN routing
+            ip rule add to "$network" table main priority 100 2>/dev/null || true
+        fi
     done
+}
+
+# Clean up local network rules
+cleanup_local_exceptions() {
+    # Remove all our custom rules (priorities 100, 200, 300)
+    while ip rule del priority 100 2>/dev/null; do :; done
+    while ip rule del priority 200 2>/dev/null; do :; done
+    while ip rule del priority 300 2>/dev/null; do :; done
 }
 
 # Bring up WireGuard tunnel
@@ -67,20 +80,32 @@ bring_up_wireguard() {
         allowed-ips "${WG_CONFIG[AllowedIPs]}" \
         persistent-keepalive "${WG_CONFIG[PersistentKeepalive]}" || return 1
     
-    # Setup routing
+    # Setup routing with fwmark
     wg set pia fwmark 51820 || return 1
     ip link set pia up || return 1
-    ip route add 0.0.0.0/0 dev pia table 51820 || return 1
-    ip rule add not fwmark 51820 table 51820 || return 1
-    ip rule add table main suppress_prefixlength 0 || return 1
     
-    # Handle local network exceptions
+    # Add VPN routes to separate table
+    ip route add 0.0.0.0/0 dev pia table 51820 || return 1
+    
+    # CRITICAL: Add local network exceptions BEFORE VPN routing rules
+    # This ensures local traffic is evaluated first
     if [ "$LOCAL_NETWORK" = "all" ]; then
-        add_local_exceptions "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16" "169.254.0.0/16"
+        ip rule add to 10.0.0.0/8 table main priority 100 2>/dev/null || true
+        ip rule add to 172.16.0.0/12 table main priority 100 2>/dev/null || true
+        ip rule add to 192.168.0.0/16 table main priority 100 2>/dev/null || true
+        ip rule add to 169.254.0.0/16 table main priority 100 2>/dev/null || true
     elif [ -n "$LOCAL_NETWORK" ]; then
         IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORK"
-        add_local_exceptions "${NETWORKS[@]}"
+        for network in "${NETWORKS[@]}"; do
+            network=$(echo "$network" | xargs)
+            # Only IPv4 networks
+            [[ "$network" != *":"* ]] && ip rule add to "$network" table main priority 100 2>/dev/null || true
+        done
     fi
+    
+    # Now add VPN routing rules (priority 200, after local networks)
+    ip rule add not fwmark 51820 table 51820 priority 200 || return 1
+    ip rule add table main suppress_prefixlength 0 priority 300 || return 1
     
     # Setup DNS
     setup_dns "${WG_CONFIG[DNS]}"
@@ -94,6 +119,9 @@ teardown_wireguard() {
         ip link set pia down 2>/dev/null || true
         ip link del pia 2>/dev/null || true
     fi
+    
+    # Clean up local network exceptions
+    cleanup_local_exceptions
     
     # Restore working DNS
     {
