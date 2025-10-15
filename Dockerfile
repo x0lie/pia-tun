@@ -27,6 +27,7 @@ RUN apk update && \
         bc \
         curl \
         bash \
+	nftables \
         iptables \
         ip6tables \
         iputils \
