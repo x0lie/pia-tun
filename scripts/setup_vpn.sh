@@ -165,7 +165,7 @@ generate_config() {
 PrivateKey = $private_key
 Address = $peer_ip/32
 ${dns_config}
-MTU = ${MTU:-1392}
+MTU = ${MTU:-1420}
 
 [Peer]
 PublicKey = $server_key

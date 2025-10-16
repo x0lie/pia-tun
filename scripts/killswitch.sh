@@ -418,8 +418,7 @@ show_ruleset_stats() {
         
         local total_rules=$((output_rules + input_rules))
         
-        echo ""
-        show_success "Firewall: ${grn}${bold}${total_rules} rules${nc} (${output_rules} output, ${input_rules} input), ${grn}${bold}${set_elements} sets${nc} active, ${grn}${bold}nftables${nc}"
+        show_success "Firewall: ${total_rules} rules (${output_rules} output, ${input_rules} input), ${set_elements} sets active, nftables"
     else
         # Count iptables rules
         local ipv4_rules=$(iptables -L VPN_OUT 2>/dev/null | grep -c "^ACCEPT\|^DROP")
@@ -430,8 +429,7 @@ show_ruleset_stats() {
         local chains=2
         [ $ipv6_rules -gt 0 ] && chains=3
         
-        echo ""
-        show_success "Firewall: ${grn}${bold}${total_rules} rules${nc} (${ipv4_rules} IPv4, ${ipv6_rules} IPv6, ${input_rules} input), ${grn}${bold}${chains} chains${nc}, ${ylw}${bold}iptables${nc}"
+        show_success "Firewall: ${total_rules} rules$ (${ipv4_rules} IPv4, ${ipv6_rules} IPv6, ${input_rules} input), ${chains} chains, ${ylw}${bold}iptables${nc}"
     fi
 }
 
