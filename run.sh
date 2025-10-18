@@ -7,6 +7,7 @@ source /app/scripts/killswitch.sh
 source /app/scripts/wireguard.sh
 source /app/scripts/verify_connection.sh
 source /app/scripts/proxy_go.sh
+source /app/scripts/connectivity_check.sh
 
 # Bulk export
 export DISABLE_IPV6=${DISABLE_IPV6:-true} \

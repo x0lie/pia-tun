@@ -337,7 +337,8 @@ func (m *Monitor) isInterfaceUp() bool {
 }
 
 func (m *Monitor) checkConnectivityPing(ctx context.Context, host string) bool {
-	cmd := exec.CommandContext(ctx, "ping", "-c", "1", "-W", "3", host)
+	// More lenient timeout for heavy load scenarios
+	cmd := exec.CommandContext(ctx, "ping", "-c", "1", "-W", "5", host)
 	return cmd.Run() == nil
 }
 
@@ -348,7 +349,7 @@ func (m *Monitor) checkConnectivityHTTP(ctx context.Context, url string) bool {
 	}
 	
 	client := &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout: 8 * time.Second, // Increased from 5s
 	}
 	resp, err := client.Do(req)
 	if err == nil {
