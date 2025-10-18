@@ -20,7 +20,11 @@ trim() {
 }
 
 print_banner() {
-    clear
+    # Only clear screen if running in an interactive terminal
+    # This prevents 'docker logs' from clearing the user's terminal
+    if [ -t 1 ]; then
+        clear
+    fi
     echo "${cyn}╔════════════════════════════════════════════════╗${nc}"
     echo "${cyn}║                                                ║${nc}"
     echo "${cyn}║${nc}    ${bold}PIA WireGuard VPN Container${nc}                 ${cyn}║${nc}"
