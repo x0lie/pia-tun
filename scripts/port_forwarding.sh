@@ -165,15 +165,31 @@ fi
 echo "$PORT" > "${PORT_FILE:-/etc/wireguard/port}"
 debug_log "Port written to ${PORT_FILE:-/etc/wireguard/port}"
 
-# Try API update if enabled
+# Try API update if enabled (with retry logic)
 if [ "$PORT_API_ENABLED" = "true" ]; then
     debug_log "Attempting API update..."
-    if update_port_api "$PORT"; then
+    
+    # Try up to 3 times with exponential backoff
+    api_success=false
+    for attempt in 1 2 3; do
+        if update_port_api "$PORT"; then
+            api_success=true
+            break
+        fi
+        
+        if [ $attempt -lt 3 ]; then
+            debug_log "API update attempt $attempt failed, retrying in $((attempt * 2))s..."
+            sleep $((attempt * 2))
+        fi
+    done
+    
+    if $api_success; then
         show_success "Port: ${grn}${bold}${PORT}${nc}"
         show_success "Updated via: File + API ($PORT_API_TYPE)"
     else
         show_success "Port: ${grn}${bold}${PORT}${nc}"
         show_success "Updated via: File only (API: $PORT_API_TYPE unreachable)"
+        debug_log "API update failed after 3 attempts, port_monitor.sh will retry"
     fi
 else
     show_success "Port: ${grn}${bold}${PORT}${nc}"
@@ -187,7 +203,11 @@ EXPIRY_DATE=$(format_timestamp "$EXPIRES_AT")
 
 show_success "Port expires: $EXPIRY_DATE (in ${DAYS_UNTIL_EXPIRY} days)"
 show_success "Keep-alive: Bind refresh every $((BIND_INTERVAL / 60)) minutes"
-show_success "Signature refresh: Every $SIGNATURE_REFRESH_DAYS days"
+
+# Only show signature refresh interval if it's not 0 (testing mode)
+if [ "$SIGNATURE_REFRESH_DAYS" -gt 0 ] 2>/dev/null; then
+    show_success "Signature refresh: Every $SIGNATURE_REFRESH_DAYS days"
+fi
 
 if [ "$DEBUG_PF" = "true" ]; then
     echo ""
@@ -244,7 +264,11 @@ while true; do
     # Get new signature if needed
     if [ "$NEED_NEW_SIGNATURE" = "true" ]; then
         SIGNATURE_REFRESH_COUNT=$((SIGNATURE_REFRESH_COUNT + 1))
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ${blu}↻${nc} Getting new signature ($REASON)..."
+        
+        # Only show refresh message if not in rapid test mode (DAYS=0 means testing)
+        if [ "$SIGNATURE_REFRESH_DAYS" -gt 0 ] 2>/dev/null || [ "$DEBUG_PF" = "true" ]; then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ${blu}↻${nc} Getting new signature ($REASON)..."
+        fi
         
         if get_signature; then
             debug_log "New signature obtained successfully"
@@ -258,14 +282,31 @@ while true; do
             
             # Check if port changed
             if [ "$NEW_PORT" != "$PORT" ]; then
-                echo "  ${ylw}ℹ${nc} Port changed: $PORT → $NEW_PORT"
+                # Only show port change message if not in rapid test mode
+                if [ "$SIGNATURE_REFRESH_DAYS" -gt 0 ] 2>/dev/null || [ "$DEBUG_PF" = "true" ]; then
+                    echo "  ${ylw}ℹ${nc} Port changed: $PORT → $NEW_PORT"
+                fi
                 PORT=$NEW_PORT
                 echo "$PORT" > "${PORT_FILE:-/etc/wireguard/port}"
                 
-                # Update API if enabled
+                # Update API if enabled (with retry)
                 if [ "$PORT_API_ENABLED" = "true" ]; then
                     debug_log "Updating API with new port..."
-                    update_port_api "$PORT"
+                    api_success=false
+                    for attempt in 1 2 3; do
+                        if update_port_api "$PORT"; then
+                            api_success=true
+                            break
+                        fi
+                        if [ $attempt -lt 3 ]; then
+                            debug_log "API update attempt $attempt failed, retrying in $((attempt * 2))s..."
+                            sleep $((attempt * 2))
+                        fi
+                    done
+                    
+                    if ! $api_success && [ "$DEBUG_PF" = "true" ]; then
+                        echo "  ${ylw}⚠${nc} API update failed, port_monitor.sh will retry"
+                    fi
                 fi
             fi
             
@@ -283,7 +324,10 @@ while true; do
             # Bind with new signature
             debug_log "Binding with new signature..."
             if bind_port "$PAYLOAD" "$SIGNATURE"; then
-                show_success "New signature acquired, port ${grn}${PORT}${nc} expires: $EXPIRY_DATE"
+                # Only show success message if not in rapid test mode
+                if [ "$SIGNATURE_REFRESH_DAYS" -gt 0 ] 2>/dev/null || [ "$DEBUG_PF" = "true" ]; then
+                    show_success "Signature refreshed, port ${grn}${PORT}${nc} expires: $EXPIRY_DATE"
+                fi
             else
                 show_warning "Got new signature but bind failed"
             fi
@@ -292,7 +336,10 @@ while true; do
             debug_log "Will retry signature refresh in next cycle"
         fi
         
-        echo ""
+        # Only add blank line if we showed messages
+        if [ "$SIGNATURE_REFRESH_DAYS" -gt 0 ] 2>/dev/null || [ "$DEBUG_PF" = "true" ]; then
+            echo ""
+        fi
     else
         # Regular keep-alive bind (no new signature needed)
         BIND_COUNT=$((BIND_COUNT + 1))

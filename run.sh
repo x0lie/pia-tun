@@ -121,6 +121,14 @@ perform_reconnection() {
                 sleep 1
                 waited=$((waited + 1))
             done
+            
+            # Restart port monitor if API is enabled
+            if [ "$PORT_API_ENABLED" = "true" ]; then
+                show_step "Restarting port monitor..."
+                /app/scripts/port_monitor.sh &
+                show_success "Port monitor restarted"
+                echo ""
+            fi
         else
             show_vpn_connected
         fi
