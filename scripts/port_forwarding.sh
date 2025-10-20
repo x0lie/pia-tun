@@ -8,17 +8,16 @@ PEER_IP=$(cat /tmp/client_ip)
 META_CN=$(cat /tmp/meta_cn)
 PF_GATEWAY=$(cat /tmp/pf_gateway)
 
-# Configuration (can be overridden via environment variables for testing)
-BIND_INTERVAL=${PF_BIND_INTERVAL:-600}              # Bind refresh every 10 minutes (keep-alive)
-SIGNATURE_REFRESH_DAYS=${PF_SIGNATURE_REFRESH_DAYS:-7}    # Get new signature every 7 days
-SIGNATURE_SAFETY_HOURS=${PF_SIGNATURE_SAFETY_HOURS:-24}   # If signature expires within 24 hours, refresh immediately
-DEBUG_PF=${DEBUG_PF:-false}  # Enable verbose debugging
+# Configuration
+BIND_INTERVAL=${PF_BIND_INTERVAL:-600}
+SIGNATURE_REFRESH_DAYS=${PF_SIGNATURE_REFRESH_DAYS:-7}
+SIGNATURE_SAFETY_HOURS=${PF_SIGNATURE_SAFETY_HOURS:-24}
+DEBUG_PF=${DEBUG_PF:-false}
 
-# Debug logging
+# OPTIMIZED: Debug logging with early exit to avoid overhead
 debug_log() {
-    if [ "$DEBUG_PF" = "true" ]; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ${blu}[PF-DEBUG]${nc} $*"
-    fi
+    [ "$DEBUG_PF" != "true" ] && return 0  # Early exit - no string processing!
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ${blu}[PF-DEBUG]${nc} $*"
 }
 
 [[ -z "$PF_GATEWAY" || "$PF_GATEWAY" = "null" ]] && {
@@ -89,9 +88,6 @@ bind_port() {
 
 # Parse response and extract all needed fields
 parse_pf_response() {
-    # Single jq call to extract everything we need
-    # PIA returns ISO 8601 with nanoseconds: "2025-12-20T03:34:07.735940327Z"
-    # We need to strip the fractional seconds and convert to Unix epoch
     jq -r '[
         (.payload | @base64d | fromjson | .port),
         .payload,
@@ -243,18 +239,18 @@ while true; do
     debug_log "Time since last signature: ${TIME_SINCE_SIGNATURE}s ($((TIME_SINCE_SIGNATURE / 86400)) days)"
     debug_log "Seconds until expiry: $SECONDS_UNTIL_EXPIRY ($((SECONDS_UNTIL_EXPIRY / 86400)) days)"
     
-    # Check if we need a new signature (either scheduled refresh or approaching expiry)
+    # Check if we need a new signature
     NEED_NEW_SIGNATURE=false
     REASON=""
     
-    # Reason 1: Scheduled refresh (every N days)
+    # Reason 1: Scheduled refresh
     if [ $TIME_SINCE_SIGNATURE -ge $((SIGNATURE_REFRESH_DAYS * 86400)) ]; then
         NEED_NEW_SIGNATURE=true
         REASON="scheduled refresh (${SIGNATURE_REFRESH_DAYS}-day interval)"
         debug_log "Signature refresh needed: $REASON"
     fi
     
-    # Reason 2: Signature expiring soon (within safety threshold)
+    # Reason 2: Signature expiring soon
     if [ -n "$SECONDS_UNTIL_EXPIRY" ] && [ "$SECONDS_UNTIL_EXPIRY" -le $((SIGNATURE_SAFETY_HOURS * 3600)) ]; then
         NEED_NEW_SIGNATURE=true
         REASON="signature expiring soon (within ${SIGNATURE_SAFETY_HOURS}h)"
@@ -265,7 +261,7 @@ while true; do
     if [ "$NEED_NEW_SIGNATURE" = "true" ]; then
         SIGNATURE_REFRESH_COUNT=$((SIGNATURE_REFRESH_COUNT + 1))
         
-        # Only show refresh message if not in rapid test mode (DAYS=0 means testing)
+        # Only show refresh message if not in rapid test mode
         if [ "$SIGNATURE_REFRESH_DAYS" -gt 0 ] 2>/dev/null || [ "$DEBUG_PF" = "true" ]; then
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] ${blu}↻${nc} Getting new signature ($REASON)..."
         fi

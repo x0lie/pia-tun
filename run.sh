@@ -4,25 +4,32 @@ set -e
 
 source /app/scripts/ui.sh
 source /app/scripts/killswitch.sh
-source /app/scripts/wireguard.sh
+source /app/scripts/vpn.sh
 source /app/scripts/verify_connection.sh
 source /app/scripts/proxy_go.sh
-source /app/scripts/connectivity_check.sh
 
-# Bulk export
-export DISABLE_IPV6=${DISABLE_IPV6:-true} \
-       DNS=${DNS:-pia} \
-       LOCAL_NETWORK=${LOCAL_NETWORK:-""} \
-       QUIET_MODE=true \
-       KILLSWITCH_EXEMPT_PORTS=${KILLSWITCH_EXEMPT_PORTS:-""} \
-       HANDSHAKE_TIMEOUT=${HANDSHAKE_TIMEOUT:-180} \
-       CHECK_INTERVAL=${CHECK_INTERVAL:-15} \
-       MAX_FAILURES=${MAX_FAILURES:-2} \
-       RESTART_SERVICES=${RESTART_SERVICES:-""} \
-       PROXY_ENABLED=${PROXY_ENABLED:-false} \
-       SOCKS5_PORT=${SOCKS5_PORT:-1080} \
-       HTTP_PROXY_PORT=${HTTP_PROXY_PORT:-8888} \
-       PORT_API_ENABLED=${PORT_API_ENABLED:-false}
+# OPTIMIZED: Set defaults inline, export only what's needed by child processes
+DISABLE_IPV6=${DISABLE_IPV6:-true}
+DNS=${DNS:-pia}
+LOCAL_NETWORK=${LOCAL_NETWORK:-""}
+QUIET_MODE=true
+KILLSWITCH_EXEMPT_PORTS=${KILLSWITCH_EXEMPT_PORTS:-""}
+HANDSHAKE_TIMEOUT=${HANDSHAKE_TIMEOUT:-180}
+CHECK_INTERVAL=${CHECK_INTERVAL:-15}
+MAX_FAILURES=${MAX_FAILURES:-2}
+RESTART_SERVICES=${RESTART_SERVICES:-""}
+PROXY_ENABLED=${PROXY_ENABLED:-false}
+SOCKS5_PORT=${SOCKS5_PORT:-1080}
+HTTP_PROXY_PORT=${HTTP_PROXY_PORT:-8888}
+PORT_API_ENABLED=${PORT_API_ENABLED:-false}
+
+# Export only what child processes actually need
+export DISABLE_IPV6 DNS LOCAL_NETWORK KILLSWITCH_EXEMPT_PORTS
+export CHECK_INTERVAL MAX_FAILURES HANDSHAKE_TIMEOUT
+export PROXY_ENABLED SOCKS5_PORT HTTP_PROXY_PORT
+export PORT_API_ENABLED PORT_API_TYPE PORT_API_URL PORT_API_USER PORT_API_PASS
+export RESTART_SERVICES MONITOR_DEBUG METRICS METRICS_PORT
+export MONITOR_PARALLEL_CHECKS MONITOR_FAST_FAIL MONITOR_WATCH_HANDSHAKE
 
 # Boolean flags (set once, check many times)
 PF_ENABLED=false
@@ -51,7 +58,12 @@ trap cleanup SIGTERM SIGINT SIGQUIT
 
 initial_connect() {
     [ ! -f /tmp/reconnecting ] && print_banner
-    [ ! -f /tmp/real_ip ] && { capture_real_ip; echo ""; }
+    
+    # OPTIMIZED: Only capture real IP if not already captured
+    if [ ! -f /tmp/real_ip ]; then
+        capture_real_ip
+        echo ""
+    fi
     
     setup_pre_tunnel_killswitch
     
@@ -59,20 +71,21 @@ initial_connect() {
     if $DEBUG_MODE; then
         echo ""
         echo "  ${blu}[DEBUG]${nc} Pre-tunnel firewall rules:"
-        iptables -L VPN_OUT -n -v | head -20 | sed 's/^/    /'
+        iptables -L VPN_OUT -n -v 2>/dev/null | head -20 | sed 's/^/    /' || \
+            nft list chain inet vpn_filter output 2>/dev/null | head -20 | sed 's/^/    /'
         echo ""
         echo "  ${blu}[DEBUG]${nc} Testing connectivity:"
-        printf "    DNS: "; nslookup www.privateinternetaccess.com >/dev/null 2>&1 && echo "${grn}OK${nc}" || echo "${red}FAIL${nc}"
-        printf "    HTTPS: "; curl -s --max-time 5 https://www.privateinternetaccess.com >/dev/null 2>&1 && echo "${grn}OK${nc}" || echo "${red}FAIL${nc}"
+        printf "    DNS: "
+        nslookup www.privateinternetaccess.com >/dev/null 2>&1 && echo "${grn}OK${nc}" || echo "${red}FAIL${nc}"
+        printf "    HTTPS: "
+        curl -s --max-time 5 https://www.privateinternetaccess.com >/dev/null 2>&1 && echo "${grn}OK${nc}" || echo "${red}FAIL${nc}"
     fi
     echo ""
     
-    /app/scripts/setup_vpn.sh || return 1
+    /app/scripts/vpn.sh || return 1
     
     # Save server latency for metrics
-    if [ -f /tmp/server_latency_temp ]; then
-        mv /tmp/server_latency_temp /tmp/server_latency
-    fi
+    [ -f /tmp/server_latency_temp ] && mv /tmp/server_latency_temp /tmp/server_latency
     
     echo ""
     
@@ -108,14 +121,13 @@ perform_reconnection() {
         [ -n "$RESTART_SERVICES" ] && { restart_services "$RESTART_SERVICES"; echo ""; }
         
         # Start proxies after VPN is up
-        if $PROXY_ENABLED_FLAG; then
-            start_proxies
-        fi
+        $PROXY_ENABLED_FLAG && start_proxies
         
         if $PF_ENABLED; then
             show_step "Restarting port forwarding..."
             /app/scripts/port_forwarding.sh &
-            # Inline wait loop (no function overhead)
+            
+            # Wait for port forwarding to complete (max 30s)
             local waited=0
             while [ $waited -lt 30 ]; do
                 [ -f /tmp/port_forwarding_complete ] && { rm -f /tmp/port_forwarding_complete; break; }
@@ -146,14 +158,13 @@ perform_reconnection() {
 
 main_loop() {
     # Start proxies first if enabled
-    if $PROXY_ENABLED_FLAG; then
-        start_proxies
-    fi
+    $PROXY_ENABLED_FLAG && start_proxies
     
     if $PF_ENABLED; then
         show_step "Initializing port forwarding..."
         /app/scripts/port_forwarding.sh &
-        # Inline wait
+        
+        # Wait for port forwarding to complete (max 30s)
         local waited=0
         while [ $waited -lt 30 ]; do
             [ -f /tmp/port_forwarding_complete ] && { rm -f /tmp/port_forwarding_complete; break; }
@@ -162,9 +173,7 @@ main_loop() {
         done
         
         # Start port monitor if API is enabled
-        if [ "$PORT_API_ENABLED" = "true" ]; then
-            /app/scripts/port_monitor.sh &
-        fi
+        [ "$PORT_API_ENABLED" = "true" ] && /app/scripts/port_monitor.sh &
     else
         show_vpn_connected
     fi
@@ -190,10 +199,14 @@ main_loop() {
     echo ""
     
     while true; do
-        [ -f /tmp/vpn_reconnect_requested ] && {
+        if [ -f /tmp/vpn_reconnect_requested ]; then
             rm -f /tmp/vpn_reconnect_requested
-            perform_reconnection || { show_warning "Retrying..."; sleep 5; touch /tmp/vpn_reconnect_requested; }
-        }
+            perform_reconnection || {
+                show_warning "Retrying..."
+                sleep 5
+                touch /tmp/vpn_reconnect_requested
+            }
+        fi
         sleep 5
     done
 }

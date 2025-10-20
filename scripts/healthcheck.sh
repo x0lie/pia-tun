@@ -1,23 +1,51 @@
 #!/bin/bash
 # Docker healthcheck script
-# Uses our existing health endpoint if metrics are enabled, otherwise does basic checks
+# Returns 0 if VPN is healthy, 1 if unhealthy
+#
+# Healthcheck strategy:
+# 1. If metrics enabled: Use the Go monitor's health endpoint (most reliable)
+# 2. Fallback: Basic interface and connectivity checks
 
-# If metrics endpoint is available, use it
-if [ "$METRICS" = "true" ]; then
-    # Check the health endpoint (returns 200 if healthy, 503 if not)
-    curl -f -s http://localhost:${METRICS_PORT:-9090}/health >/dev/null 2>&1
-    exit $?
-fi
+set -euo pipefail
 
-# Fallback: Basic checks if metrics aren't enabled
-# 1. Check if interface exists and is up
-if ! ip link show pia >/dev/null 2>&1; then
+# Check if metrics endpoint is available
+check_metrics_endpoint() {
+    [ "$METRICS" != "true" ] && return 1
+    
+    # Query the health endpoint (returns 200 if healthy, 503 if not)
+    curl -f -s "http://localhost:${METRICS_PORT:-9090}/health" >/dev/null 2>&1
+    return $?
+}
+
+# Fallback: Basic VPN health checks
+check_basic_health() {
+    # Check 1: Interface exists and is up
+    if ! ip link show pia >/dev/null 2>&1; then
+        return 1
+    fi
+    
+    # Check 2: Basic connectivity test
+    if ! ping -c 1 -W 3 1.1.1.1 >/dev/null 2>&1; then
+        return 1
+    fi
+    
+    return 0
+}
+
+# Main healthcheck logic
+main() {
+    # Try metrics endpoint first (most reliable)
+    if check_metrics_endpoint; then
+        exit 0
+    fi
+    
+    # Fallback to basic checks
+    if check_basic_health; then
+        exit 0
+    fi
+    
+    # Unhealthy
     exit 1
-fi
+}
 
-# 2. Check if we can ping (basic connectivity test)
-if ! ping -c 1 -W 3 1.1.1.1 >/dev/null 2>&1; then
-    exit 1
-fi
-
-exit 0
+main

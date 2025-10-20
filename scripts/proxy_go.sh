@@ -1,36 +1,46 @@
 #!/bin/bash
+# Proxy server management using Go-based SOCKS5/HTTP proxy
+# No setuid/setgid required - works with minimal capabilities
+#
+# The Go proxy binary handles both SOCKS5 and HTTP proxy in a single process
+# and supports authentication without requiring special permissions.
 
-# Proxy server management using Go-based proxy (NO SETUID/SETGID NEEDED!)
+set -euo pipefail
 
 source /app/scripts/ui.sh
 
+# Configuration (set by run.sh, so don't override)
 SOCKS5_PORT=${SOCKS5_PORT:-1080}
 HTTP_PROXY_PORT=${HTTP_PROXY_PORT:-8888}
 PROXY_USER=${PROXY_USER:-""}
 PROXY_PASS=${PROXY_PASS:-""}
+
+# Internal constants
+readonly PID_FILE="/tmp/proxy.pid"
+readonly LOG_FILE="/tmp/proxy.log"
 
 # Start proxy server (single Go binary handles both SOCKS5 and HTTP)
 start_proxies() {
     show_step "Starting proxy servers..."
     
     # Kill any existing proxy process
-    pkill -f proxy 2>/dev/null || true
+    stop_proxies_silent
     sleep 1
     
     # Export environment variables for Go proxy
     export SOCKS5_PORT HTTP_PROXY_PORT PROXY_USER PROXY_PASS
     
     # Start the Go proxy in background
-    /usr/local/bin/proxy >/tmp/proxy.log 2>&1 &
+    /usr/local/bin/proxy >"$LOG_FILE" 2>&1 &
     local proxy_pid=$!
     
-    # Wait and check if it started
+    # Wait and verify it started
     sleep 3
     if kill -0 $proxy_pid 2>/dev/null; then
-        echo "$proxy_pid" > /tmp/proxy.pid
+        echo "$proxy_pid" > "$PID_FILE"
         
         if [ -n "$PROXY_USER" ] && [ -n "$PROXY_PASS" ]; then
-	    show_success "Proxy servers ready (authenticated):"
+            show_success "Proxy servers ready (authenticated):"
             echo "      SOCKS5: socks5://$PROXY_USER:****@<container-ip>:$SOCKS5_PORT"
             echo "      HTTP:   http://$PROXY_USER:****@<container-ip>:$HTTP_PROXY_PORT"
         else
@@ -42,41 +52,55 @@ start_proxies() {
         return 0
     else
         show_error "Failed to start proxy servers"
-        if [ -f /tmp/proxy.log ]; then
+        if [ -f "$LOG_FILE" ]; then
             echo "  ${ylw}Debug output:${nc}"
-            tail -10 /tmp/proxy.log | sed 's/^/    /'
+            tail -10 "$LOG_FILE" | sed 's/^/    /'
         fi
         return 1
     fi
 }
 
-# Stop proxy servers
-stop_proxies() {
-    show_step "Stopping proxy servers..."
-    
-    if [ -f /tmp/proxy.pid ]; then
-        kill $(cat /tmp/proxy.pid) 2>/dev/null || true
-        rm -f /tmp/proxy.pid
+# Stop proxy servers (silent version for internal use)
+stop_proxies_silent() {
+    if [ -f "$PID_FILE" ]; then
+        kill $(cat "$PID_FILE") 2>/dev/null || true
+        rm -f "$PID_FILE"
     fi
     pkill -f proxy 2>/dev/null || true
-    
+}
+
+# Stop proxy servers (with output)
+stop_proxies() {
+    show_step "Stopping proxy servers..."
+    stop_proxies_silent
     show_success "Proxy servers stopped"
 }
 
 # Restart proxy servers (used after VPN reconnection)
 restart_proxies() {
     show_step "Restarting proxy servers..."
-    stop_proxies
+    stop_proxies_silent
     sleep 2
     start_proxies
 }
 
 # Check if proxy is running
 is_proxy_running() {
-    [ -f /tmp/proxy.pid ] && kill -0 $(cat /tmp/proxy.pid) 2>/dev/null
+    [ -f "$PID_FILE" ] && kill -0 $(cat "$PID_FILE") 2>/dev/null
 }
 
-# Only run if executed directly (not sourced)
+# Get proxy status
+get_proxy_status() {
+    if is_proxy_running; then
+        echo "running"
+        return 0
+    else
+        echo "stopped"
+        return 1
+    fi
+}
+
+# CLI interface (if script is executed directly)
 if [ "${BASH_SOURCE[0]}" -ef "$0" ]; then
     case "${1:-start}" in
         start)
@@ -89,8 +113,9 @@ if [ "${BASH_SOURCE[0]}" -ef "$0" ]; then
             restart_proxies
             ;;
         status)
-            if is_proxy_running; then
-                echo "Proxy servers are running (PID: $(cat /tmp/proxy.pid))"
+            local status=$(get_proxy_status)
+            if [ "$status" = "running" ]; then
+                echo "Proxy servers are running (PID: $(cat "$PID_FILE"))"
                 exit 0
             else
                 echo "Proxy servers are not running"
