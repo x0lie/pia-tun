@@ -1,7 +1,19 @@
 #!/bin/bash
+# High-performance killswitch (firewall) management for PIA WireGuard VPN
+# Prevents IP leaks by enforcing strict network rules
+#
+# Features:
+# - Auto-detects nftables (modern, O(1) lookups) or iptables (legacy fallback)
+# - Pre-tunnel phase: Only allow DNS/HTTPS/auth before VPN is up
+# - Post-tunnel phase: Force all traffic through VPN interface
+# - Local network exceptions (optional, configurable)
+# - IPv6 leak prevention
+#
+# Two-phase approach:
+# 1. setup_pre_tunnel_killswitch() - Restrictive rules before VPN
+# 2. finalize_killswitch() - Lock to VPN-only after connection
 
-# High-performance Killswitch management for PIA WireGuard VPN
-# Prioritizes nftables (modern, efficient) with iptables fallback
+set -euo pipefail
 
 source /app/scripts/ui.sh
 
@@ -18,6 +30,7 @@ fi
 # NFTABLES IMPLEMENTATION (Modern, O(1) lookups with sets)
 #═══════════════════════════════════════════════════════════════════════════════
 
+# Create base nftables table and chains
 nft_setup_base_table() {
     # Create table and chains with optimal hook priority
     nft add table inet vpn_filter 2>/dev/null || nft flush table inet vpn_filter
@@ -29,6 +42,7 @@ nft_setup_base_table() {
     nft add chain inet vpn_filter input { type filter hook input priority 0 \; policy accept \; }
 }
 
+# Create nftables sets for efficient matching
 nft_create_sets() {
     # Set for RFC1918 + link-local + multicast (IPv4)
     nft add set inet vpn_filter local_nets_v4 { type ipv4_addr \; flags interval \; }
@@ -47,6 +61,7 @@ nft_create_sets() {
     nft add set inet vpn_filter exempt_ports { type inet_service \; }
 }
 
+# Populate local network sets based on configuration
 nft_populate_local_networks() {
     local mode="$1"
     
@@ -85,6 +100,7 @@ nft_populate_local_networks() {
     fi
 }
 
+# Populate proxy/metrics port sets
 nft_populate_ports() {
     local ports=()
     
@@ -109,8 +125,9 @@ nft_populate_ports() {
     fi
 }
 
+# Populate user-configured exempt ports
 nft_populate_exempt_ports() {
-    if [ -n "$KILLSWITCH_EXEMPT_PORTS" ]; then
+    if [ -n "${KILLSWITCH_EXEMPT_PORTS:-}" ]; then
         local ports=()
         IFS=',' read -ra PORTS <<< "$KILLSWITCH_EXEMPT_PORTS"
         for port in "${PORTS[@]}"; do
@@ -126,13 +143,14 @@ nft_populate_exempt_ports() {
     fi
 }
 
+# Setup pre-tunnel killswitch (restrictive rules before VPN is up)
 nft_setup_pre_tunnel_killswitch() {
     show_step "Setting up pre-tunnel firewall..."
     
     nft_cleanup 2>/dev/null || true
     nft_setup_base_table
     nft_create_sets
-    nft_populate_local_networks "$LOCAL_NETWORK"
+    nft_populate_local_networks "${LOCAL_NETWORK:-}"
     
     # Populate pre-tunnel port sets
     nft add element inet vpn_filter pretunnel_tcp_ports { 53, 443, 1337 }
@@ -147,7 +165,7 @@ nft_setup_pre_tunnel_killswitch() {
     nft add rule inet vpn_filter output ct state established,related accept
     
     # 3. Local networks (if configured) - O(1) lookup via set!
-    if [ "$LOCAL_NETWORK" = "all" ] || [ -n "$LOCAL_NETWORK" ]; then
+    if [ "${LOCAL_NETWORK:-}" = "all" ] || [ -n "${LOCAL_NETWORK:-}" ]; then
         nft add rule inet vpn_filter output ip daddr @local_nets_v4 accept
         [ "${DISABLE_IPV6}" != "true" ] && \
             nft add rule inet vpn_filter output ip6 daddr @local_nets_v6 accept
@@ -180,6 +198,7 @@ nft_setup_pre_tunnel_killswitch() {
     show_success "Pre-tunnel firewall active (nftables)"
 }
 
+# Finalize killswitch (lock to VPN-only after connection)
 nft_finalize_killswitch() {
     show_step "Finalizing killswitch..."
     
@@ -198,7 +217,7 @@ nft_finalize_killswitch() {
     nft add rule inet vpn_filter output ct state established,related accept
     
     # 3. Local networks (O(1) lookup)
-    if [ "$LOCAL_NETWORK" = "all" ] || [ -n "$LOCAL_NETWORK" ]; then
+    if [ "${LOCAL_NETWORK:-}" = "all" ] || [ -n "${LOCAL_NETWORK:-}" ]; then
         nft add rule inet vpn_filter output ip daddr @local_nets_v4 accept
         [ "${DISABLE_IPV6}" != "true" ] && \
             nft add rule inet vpn_filter output ip6 daddr @local_nets_v6 accept
@@ -215,7 +234,7 @@ nft_finalize_killswitch() {
     
     # 5. Exempted ports (if any) - O(1) lookup via set
     nft_populate_exempt_ports
-    if [ -n "$KILLSWITCH_EXEMPT_PORTS" ]; then
+    if [ -n "${KILLSWITCH_EXEMPT_PORTS:-}" ]; then
         nft add rule inet vpn_filter output tcp dport @exempt_ports accept
     fi
     
@@ -223,26 +242,29 @@ nft_finalize_killswitch() {
     nft add rule inet vpn_filter output drop
 }
 
+# Cleanup nftables rules
 nft_cleanup() {
     # Flush and delete table (atomic operation)
     nft delete table inet vpn_filter 2>/dev/null || true
 }
 
 #═══════════════════════════════════════════════════════════════════════════════
-# IPTABLES FALLBACK IMPLEMENTATION (Optimized version from before)
+# IPTABLES FALLBACK IMPLEMENTATION (Optimized legacy version)
 #═══════════════════════════════════════════════════════════════════════════════
 
+# Add firewall rule to appropriate chain
 ipt_add_fw_rule() {
     local chain="$1"
     shift
     [ "$chain" = "VPN_OUT" ] && iptables -A VPN_OUT "$@" || ip6tables -A VPN_OUT6 "$@"
 }
 
+# Apply local network rules
 ipt_apply_local_network_rules() {
     local chain=$1
     local is_ipv6=$2
     
-    if [ "$LOCAL_NETWORK" = "all" ]; then
+    if [ "${LOCAL_NETWORK:-}" = "all" ]; then
         if [ "$is_ipv6" = "true" ]; then
             ipt_add_fw_rule "$chain" -d fe80::/10 -j ACCEPT
             ipt_add_fw_rule "$chain" -d fc00::/7 -j ACCEPT
@@ -255,7 +277,7 @@ ipt_apply_local_network_rules() {
             ipt_add_fw_rule "$chain" -d 224.0.0.0/4 -j ACCEPT
             [ "$chain" = "VPN_OUT" ] && show_success "Local network access: All RFC1918 networks"
         fi
-    elif [ -n "$LOCAL_NETWORK" ]; then
+    elif [ -n "${LOCAL_NETWORK:-}" ]; then
         IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORK"
         for network in "${NETWORKS[@]}"; do
             network=$(echo "$network" | xargs)
@@ -272,6 +294,7 @@ ipt_apply_local_network_rules() {
     fi
 }
 
+# Apply proxy/metrics port rules
 ipt_apply_proxy_rules() {
     local chain=$1
     
@@ -289,6 +312,7 @@ ipt_apply_proxy_rules() {
     fi
 }
 
+# Setup IPv6 protection
 ipt_setup_ipv6_protection() {
     ip6tables -F OUTPUT 2>/dev/null || true
     ip6tables -F FORWARD 2>/dev/null || true
@@ -308,6 +332,7 @@ ipt_setup_ipv6_protection() {
         show_success "IPv6 routed through VPN only"
 }
 
+# Setup iptables chain
 ipt_setup_iptables_chain() {
     iptables -P OUTPUT ACCEPT 2>/dev/null || true
     iptables -F OUTPUT 2>/dev/null || true
@@ -315,6 +340,7 @@ ipt_setup_iptables_chain() {
     iptables -N VPN_OUT
 }
 
+# Add standard iptables rules
 ipt_add_standard_rules() {
     local allow_vpn="${1:-false}"
     
@@ -337,6 +363,7 @@ ipt_add_standard_rules() {
     ipt_apply_proxy_rules "VPN_OUT"
 }
 
+# Setup pre-tunnel killswitch with iptables
 ipt_setup_pre_tunnel_killswitch() {
     show_step "Setting up pre-tunnel firewall..."
     
@@ -356,13 +383,14 @@ ipt_setup_pre_tunnel_killswitch() {
     show_success "Pre-tunnel firewall active (iptables)"
 }
 
+# Finalize killswitch with iptables
 ipt_finalize_killswitch() {
     show_step "Finalizing killswitch..."
     
     iptables -F VPN_OUT
     ipt_add_standard_rules "true"
     
-    if [ -n "$KILLSWITCH_EXEMPT_PORTS" ]; then
+    if [ -n "${KILLSWITCH_EXEMPT_PORTS:-}" ]; then
         IFS=',' read -ra PORTS <<< "$KILLSWITCH_EXEMPT_PORTS"
         if [ ${#PORTS[@]} -gt 1 ]; then
             local port_list=$(IFS=','; echo "${PORTS[*]}")
@@ -380,6 +408,7 @@ ipt_finalize_killswitch() {
     ipt_add_fw_rule "VPN_OUT" -j DROP
 }
 
+# Cleanup iptables rules
 ipt_cleanup() {
     iptables -D OUTPUT -j VPN_OUT 2>/dev/null || true
     iptables -F VPN_OUT 2>/dev/null || true
@@ -401,6 +430,7 @@ ipt_cleanup() {
 # RULESET REPORTING
 #═══════════════════════════════════════════════════════════════════════════════
 
+# Display firewall statistics
 show_ruleset_stats() {
     if $USE_NFTABLES; then
         # Count rules in output chain
@@ -429,7 +459,7 @@ show_ruleset_stats() {
         local chains=2
         [ $ipv6_rules -gt 0 ] && chains=3
         
-        show_success "Firewall: ${total_rules} rules$ (${ipv4_rules} IPv4, ${ipv6_rules} IPv6, ${input_rules} input), ${chains} chains, ${ylw}${bold}iptables${nc}"
+        show_success "Firewall: ${total_rules} rules (${ipv4_rules} IPv4, ${ipv6_rules} IPv6, ${input_rules} input), ${chains} chains, ${ylw}${bold}iptables${nc}"
     fi
 }
 
@@ -437,6 +467,7 @@ show_ruleset_stats() {
 # UNIFIED PUBLIC API (Routes to nftables or iptables)
 #═══════════════════════════════════════════════════════════════════════════════
 
+# Setup pre-tunnel killswitch (restrictive rules before VPN)
 setup_pre_tunnel_killswitch() {
     if $USE_NFTABLES; then
         nft_setup_pre_tunnel_killswitch
@@ -445,6 +476,7 @@ setup_pre_tunnel_killswitch() {
     fi
 }
 
+# Finalize killswitch (lock to VPN-only after connection)
 finalize_killswitch() {
     if $USE_NFTABLES; then
         nft_finalize_killswitch
@@ -456,6 +488,7 @@ finalize_killswitch() {
     show_ruleset_stats
 }
 
+# Cleanup all killswitch rules
 cleanup_killswitch() {
     if $USE_NFTABLES; then
         nft_cleanup
