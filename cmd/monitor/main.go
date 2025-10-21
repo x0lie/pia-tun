@@ -67,6 +67,10 @@ type Metrics struct {
 	MaxCheckDuration   time.Duration
 	MinCheckDuration   time.Duration
 	
+	// WAN check metrics
+	WANChecksTotal     int64
+	WANChecksFailed    int64
+	
 	mu                 sync.Mutex
 }
 
@@ -152,6 +156,16 @@ func (m *Metrics) RecordCheck(success bool, duration time.Duration) {
 	}
 }
 
+func (m *Metrics) RecordWANCheck(success bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	
+	m.WANChecksTotal++
+	if !success {
+		m.WANChecksFailed++
+	}
+}
+
 func (m *Metrics) UpdateVPNInfo(server, ip string, rx, tx int64, handshake time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -198,6 +212,11 @@ func (m *Metrics) GetStats() map[string]interface{} {
 		timeSinceHandshake = time.Since(m.LastHandshakeTime)
 	}
 	
+	wanSuccessRate := float64(100)
+	if m.WANChecksTotal > 0 {
+		wanSuccessRate = float64(m.WANChecksTotal-m.WANChecksFailed) / float64(m.WANChecksTotal) * 100
+	}
+	
 	return map[string]interface{}{
 		"total_checks":           m.TotalChecks,
 		"successful_checks":      m.SuccessfulChecks,
@@ -222,6 +241,9 @@ func (m *Metrics) GetStats() map[string]interface{} {
 		"server_latency_ms":      m.ServerLatency,
 		"server_uptime_seconds":  int(m.ServerUptime.Seconds()),
 		"server_uptime_formatted": formatDuration(m.ServerUptime),
+		"wan_checks_total":       m.WANChecksTotal,
+		"wan_checks_failed":      m.WANChecksFailed,
+		"wan_success_rate":       fmt.Sprintf("%.2f%%", wanSuccessRate),
 	}
 }
 
@@ -425,7 +447,195 @@ func (m *Monitor) checkExternalConnectivity() bool {
 	return m.checkExternalConnectivitySerial()
 }
 
-// NEW: Check WireGuard handshake freshness
+// NEW: Temporarily allow WAN connectivity test by bypassing VPN routing
+func (m *Monitor) allowWANTest() error {
+	m.debugLog("Adding temporary killswitch exception for WAN test")
+	
+	// Check if using nftables or iptables
+	cmd := exec.Command("nft", "list", "table", "inet", "vpn_filter")
+	if err := cmd.Run(); err == nil {
+		// Using nftables - add temporary rule at high priority
+		m.debugLog("Using nftables for WAN exception")
+		
+		// Add rule to allow traffic to 1.1.1.1:80 (before DROP rules)
+		cmd = exec.Command("nft", "insert", "rule", "inet", "vpn_filter", "output", 
+			"ip", "daddr", "1.1.1.1", "tcp", "dport", "80", "accept")
+		if err := cmd.Run(); err != nil {
+			m.debugLog("Failed to add nftables WAN rule: %v", err)
+			return err
+		}
+		
+		// Also add 8.8.8.8 as backup
+		cmd = exec.Command("nft", "insert", "rule", "inet", "vpn_filter", "output",
+			"ip", "daddr", "8.8.8.8", "tcp", "dport", "80", "accept")
+		cmd.Run()
+		
+	} else {
+		// Using iptables - add temporary rule at top of chain
+		m.debugLog("Using iptables for WAN exception")
+		
+		cmd = exec.Command("iptables", "-I", "VPN_OUT", "1",
+			"-d", "1.1.1.1", "-p", "tcp", "--dport", "80", "-j", "ACCEPT")
+		if err := cmd.Run(); err != nil {
+			m.debugLog("Failed to add iptables WAN rule: %v", err)
+			return err
+		}
+		
+		// Also add 8.8.8.8 as backup
+		cmd = exec.Command("iptables", "-I", "VPN_OUT", "1",
+			"-d", "8.8.8.8", "-p", "tcp", "--dport", "80", "-j", "ACCEPT")
+		cmd.Run()
+	}
+	
+	// CRITICAL: Add routing rules to bypass VPN table for our test IPs
+	// This ensures packets go to main routing table instead of broken VPN
+	m.debugLog("Adding bypass routing rules for WAN test")
+	
+	// Route 1.1.1.1 via main table (priority 50, before VPN rules at 200)
+	cmd = exec.Command("ip", "rule", "add", "to", "1.1.1.1", "table", "main", "priority", "50")
+	if err := cmd.Run(); err != nil {
+		m.debugLog("Failed to add routing rule for 1.1.1.1: %v", err)
+	}
+	
+	// Route 8.8.8.8 via main table
+	cmd = exec.Command("ip", "rule", "add", "to", "8.8.8.8", "table", "main", "priority", "50")
+	if err := cmd.Run(); err != nil {
+		m.debugLog("Failed to add routing rule for 8.8.8.8: %v", err)
+	}
+	
+	return nil
+}
+
+// NEW: Remove temporary WAN test exception
+func (m *Monitor) removeWANTest() {
+	m.debugLog("Removing temporary killswitch exception for WAN test")
+	
+	// Remove routing rules first
+	m.debugLog("Removing bypass routing rules")
+	
+	cmd := exec.Command("ip", "rule", "del", "to", "1.1.1.1", "table", "main", "priority", "50")
+	cmd.Run()
+	
+	cmd = exec.Command("ip", "rule", "del", "to", "8.8.8.8", "table", "main", "priority", "50")
+	cmd.Run()
+	
+	// Check if using nftables
+	cmd = exec.Command("nft", "list", "table", "inet", "vpn_filter")
+	if err := cmd.Run(); err == nil {
+		// Using nftables - remove the rules we added
+		m.debugLog("Removing nftables WAN exception")
+		
+		// Delete 1.1.1.1 rule
+		cmd = exec.Command("nft", "delete", "rule", "inet", "vpn_filter", "output",
+			"ip", "daddr", "1.1.1.1", "tcp", "dport", "80", "accept")
+		cmd.Run()
+		
+		// Delete 8.8.8.8 rule
+		cmd = exec.Command("nft", "delete", "rule", "inet", "vpn_filter", "output",
+			"ip", "daddr", "8.8.8.8", "tcp", "dport", "80", "accept")
+		cmd.Run()
+		
+		return
+	}
+	
+	// Using iptables
+	m.debugLog("Removing iptables WAN exception")
+	
+	// Delete 1.1.1.1 rule
+	cmd = exec.Command("iptables", "-D", "VPN_OUT",
+		"-d", "1.1.1.1", "-p", "tcp", "--dport", "80", "-j", "ACCEPT")
+	cmd.Run()
+	
+	// Delete 8.8.8.8 rule
+	cmd = exec.Command("iptables", "-D", "VPN_OUT",
+		"-d", "8.8.8.8", "-p", "tcp", "--dport", "80", "-j", "ACCEPT")
+	cmd.Run()
+}
+
+// NEW: Check WAN connectivity using direct connection (with killswitch exception)
+func (m *Monitor) checkWANConnectivity(timeout time.Duration) bool {
+	m.debugLog("Checking WAN connectivity (bypass VPN)")
+	
+	// Try direct connection to Cloudflare
+	dialer := &net.Dialer{
+		Timeout: timeout,
+	}
+	
+	// Try 1.1.1.1 first
+	conn, err := dialer.Dial("tcp", "1.1.1.1:80")
+	if err == nil {
+		conn.Close()
+		m.debugLog("WAN check successful (1.1.1.1)")
+		return true
+	}
+	m.debugLog("1.1.1.1 failed: %v", err)
+	
+	// Try 8.8.8.8 as backup
+	conn, err = dialer.Dial("tcp", "8.8.8.8:80")
+	if err == nil {
+		conn.Close()
+		m.debugLog("WAN check successful (8.8.8.8)")
+		return true
+	}
+	m.debugLog("8.8.8.8 failed: %v", err)
+	
+	m.debugLog("All WAN checks failed")
+	return false
+}
+
+// NEW: Wait for WAN with exponential backoff
+func (m *Monitor) waitForWAN() bool {
+	fmt.Printf("\n%s▶%s Testing WAN before reconnect...\n", colorBlue, colorReset)
+	
+	// Add temporary killswitch exception for testing
+	if err := m.allowWANTest(); err != nil {
+		m.debugLog("Could not add WAN test exception: %v", err)
+	}
+	defer m.removeWANTest()
+	
+	// Give the firewall rules a moment to apply
+	time.Sleep(500 * time.Millisecond)
+	
+	// Initial quick check
+	if m.checkWANConnectivity(5 * time.Second) {
+		m.showSuccess("Internet up, reconnecting")
+		if m.metrics != nil {
+			m.metrics.RecordWANCheck(true)
+		}
+		return true
+	}
+	
+	// WAN is down, wait with exponential backoff
+	m.showError("Internet down, waiting...")
+	if m.metrics != nil {
+		m.metrics.RecordWANCheck(false)
+	}
+	
+	delays := []int{5, 10, 20, 40, 80, 160, 160, 160} // Exponential up to 160s
+	
+	for i, delay := range delays {
+		fmt.Printf("  %s⏳%s Checking again in %ds (attempt %d/%d)...\n", 
+			colorYellow, colorReset, delay, i+1, len(delays))
+		time.Sleep(time.Duration(delay) * time.Second)
+		
+		if m.checkWANConnectivity(5 * time.Second) {
+			m.showSuccess("Internet restored, reconnecting")
+			if m.metrics != nil {
+				m.metrics.RecordWANCheck(true)
+			}
+			return true
+		}
+		
+		if m.metrics != nil {
+			m.metrics.RecordWANCheck(false)
+		}
+	}
+	
+	// After all retries, proceed anyway
+	m.showWarning("Max wait reached, attempting reconnect anyway")
+	return false
+}
+
 func (m *Monitor) getLastHandshakeTime() (time.Time, error) {
 	cmd := exec.Command("wg", "show", "pia", "latest-handshakes")
 	output, err := cmd.Output()
@@ -459,7 +669,6 @@ func (m *Monitor) getLastHandshakeTime() (time.Time, error) {
 	return time.Unix(timestamp, 0), nil
 }
 
-// NEW: Get transfer bytes (better indicator than handshake alone)
 func (m *Monitor) getTransferBytes() (rx, tx int64, err error) {
 	cmd := exec.Command("wg", "show", "pia", "transfer")
 	output, err := cmd.Output()
@@ -490,7 +699,6 @@ func (m *Monitor) getTransferBytes() (rx, tx int64, err error) {
 	return rx, tx, nil
 }
 
-// NEW: Enhanced health check with handshake validation
 func (m *Monitor) checkVPNHealth() (*HealthCheckResult, error) {
 	m.debugLog("Starting health check")
 	start := time.Now()
@@ -507,16 +715,12 @@ func (m *Monitor) checkVPNHealth() (*HealthCheckResult, error) {
 	result.InterfaceUp = true
 	m.debugLog("Interface is up")
 
-	// NEW: Check handshake freshness if enabled
 	if m.config.WatchHandshake {
 		lastHandshake, err := m.getLastHandshakeTime()
 		if err == nil {
 			timeSince := time.Since(lastHandshake)
 			m.debugLog("Last handshake was %v ago", timeSince)
 			
-			// Handshake should happen every ~2 minutes with keepalive=25
-			// We use 6 minutes (360s default) as the threshold
-			// This allows for 3x the normal interval before failing
 			if timeSince < m.config.HandshakeTimeout {
 				result.HandshakeOK = true
 				m.debugLog("Handshake is fresh (within %v threshold)", m.config.HandshakeTimeout)
@@ -528,12 +732,9 @@ func (m *Monitor) checkVPNHealth() (*HealthCheckResult, error) {
 			}
 		} else {
 			m.debugLog("Could not check handshake: %v (ignoring for now)", err)
-			// Don't fail on handshake check errors - the interface might be transitioning
-			// The connectivity check below will catch real issues
 		}
 	}
 
-	// Fast-fail mode: single check
 	if m.config.FastFailMode {
 		if m.checkExternalConnectivity() {
 			result.Connectivity = true
@@ -545,7 +746,6 @@ func (m *Monitor) checkVPNHealth() (*HealthCheckResult, error) {
 		return result, result.Error
 	}
 
-	// Standard mode: check with retry
 	if m.checkExternalConnectivity() {
 		m.debugLog("Connectivity passed")
 		result.Connectivity = true
@@ -574,6 +774,11 @@ func (m *Monitor) triggerReconnect() {
 	m.reconnectAttempts++
 	attempts := m.reconnectAttempts
 	m.mu.Unlock()
+	
+	// NEW: Check WAN connectivity before scheduling reconnect
+	if !m.waitForWAN() {
+		m.debugLog("WAN check completed (possibly still down)")
+	}
 	
 	delay := m.config.ReconnectDelay * time.Duration(attempts)
 	if delay > m.config.MaxReconnectDelay {
@@ -604,7 +809,6 @@ func (m *Monitor) showError(msg string) {
 	fmt.Printf("  %s✗%s %s\n", colorRed, colorReset, msg)
 }
 
-// NEW: Background handshake watcher (continuous monitoring)
 func (m *Monitor) watchHandshakes(ctx context.Context, failChan chan<- struct{}) {
 	if !m.config.WatchHandshake {
 		return
@@ -693,8 +897,6 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 		}
 	}
 
-	// Grace period: Skip checks for configured time to allow VPN to stabilize
-	// This prevents false positives during port forwarding initialization
 	graceEnd := time.Now().Add(m.config.StartupGracePeriod)
 	if m.config.StartupGracePeriod > 0 {
 		m.debugLog("Starting with %v grace period until %v", 
@@ -717,11 +919,9 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 			m.mu.Lock()
 			m.failureCount = 0
 			m.mu.Unlock()
-			// Reset grace period after reconnect
 			graceEnd = time.Now().Add(m.config.StartupGracePeriod)
 			
 		case <-ticker.C:
-			// Skip checks during grace period
 			if time.Now().Before(graceEnd) {
 				m.debugLog("In grace period, skipping check")
 				continue
@@ -778,7 +978,6 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 					m.triggerReconnect()
 					m.mu.Lock()
 					m.failureCount = 0
-					// Reset grace period after reconnect
 					m.mu.Unlock()
 					graceEnd = time.Now().Add(m.config.StartupGracePeriod)
 					m.mu.Lock()
@@ -890,6 +1089,14 @@ func startMetricsServer(m *Monitor) {
 			fmt.Fprintf(w, "# HELP vpn_server_uptime_seconds Time connected to current server\n")
 			fmt.Fprintf(w, "# TYPE vpn_server_uptime_seconds gauge\n")
 			fmt.Fprintf(w, "vpn_server_uptime_seconds %d\n\n", stats["server_uptime_seconds"])
+			
+			fmt.Fprintf(w, "# HELP vpn_wan_checks_total Total number of WAN connectivity checks\n")
+			fmt.Fprintf(w, "# TYPE vpn_wan_checks_total counter\n")
+			fmt.Fprintf(w, "vpn_wan_checks_total %d\n\n", stats["wan_checks_total"])
+			
+			fmt.Fprintf(w, "# HELP vpn_wan_checks_failed_total Total number of failed WAN checks\n")
+			fmt.Fprintf(w, "# TYPE vpn_wan_checks_failed_total counter\n")
+			fmt.Fprintf(w, "vpn_wan_checks_failed_total %d\n\n", stats["wan_checks_failed"])
 			
 			if server, ok := stats["current_server"].(string); ok && server != "" {
 				fmt.Fprintf(w, "# HELP vpn_info VPN connection information\n")
