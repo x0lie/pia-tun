@@ -596,9 +596,12 @@ func (m *Monitor) waitForWAN() bool {
 	// Give the firewall rules a moment to apply
 	time.Sleep(500 * time.Millisecond)
 	
+	// Record start time for downtime calculation
+	downSince := time.Now()
+	
 	// Initial quick check
 	if m.checkWANConnectivity(5 * time.Second) {
-		m.showSuccess("Internet up, reconnecting")
+		m.showSuccess("Internet up")
 		if m.metrics != nil {
 			m.metrics.RecordWANCheck(true)
 		}
@@ -624,9 +627,10 @@ func (m *Monitor) waitForWAN() bool {
 		time.Sleep(time.Duration(delay) * time.Second)
 		
 		if m.checkWANConnectivity(5 * time.Second) {
+			downtime := time.Since(downSince)
 			fmt.Printf("\r%s", strings.Repeat(" ", 80)) // Clear the line
 			fmt.Printf("\r")
-			m.showSuccess("Internet restored, reconnecting")
+			m.showSuccess(fmt.Sprintf("Internet restored (down for %s)", formatDuration(downtime)))
 			if m.metrics != nil {
 				m.metrics.RecordWANCheck(true)
 			}
@@ -646,9 +650,10 @@ func (m *Monitor) waitForWAN() bool {
 		time.Sleep(time.Duration(maxDelay) * time.Second)
 		
 		if m.checkWANConnectivity(5 * time.Second) {
+			downtime := time.Since(downSince)
 			fmt.Printf("\r%s", strings.Repeat(" ", 80)) // Clear the line
 			fmt.Printf("\r")
-			m.showSuccess("Internet restored, reconnecting")
+			m.showSuccess(fmt.Sprintf("Internet restored (down for %s)", formatDuration(downtime)))
 			if m.metrics != nil {
 				m.metrics.RecordWANCheck(true)
 			}
@@ -798,22 +803,11 @@ func (m *Monitor) checkVPNHealth() (*HealthCheckResult, error) {
 func (m *Monitor) triggerReconnect() {
 	m.mu.Lock()
 	m.reconnectAttempts++
-	attempts := m.reconnectAttempts
 	m.mu.Unlock()
 	
-	// NEW: Check WAN connectivity before scheduling reconnect
-	if !m.waitForWAN() {
-		m.debugLog("WAN check completed (possibly still down)")
-	}
+	// NEW: Check WAN connectivity before reconnecting
+	m.waitForWAN()
 	
-	delay := m.config.ReconnectDelay * time.Duration(attempts)
-	if delay > m.config.MaxReconnectDelay {
-		delay = m.config.MaxReconnectDelay
-	}
-
-	fmt.Printf("\n%s▶%s Reconnecting in %ds...\n", colorBlue, colorReset, int(delay.Seconds()))
-	time.Sleep(delay)
-
 	if err := os.WriteFile("/tmp/vpn_reconnect_requested", []byte{}, 0644); err != nil {
 		log.Printf("Failed to create reconnect request: %v", err)
 	}
@@ -980,8 +974,9 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 				m.consecutiveSuccess = 0
 
 				if m.failureCount < m.config.MaxFailures {
-					m.showWarning(fmt.Sprintf("VPN health check failed (%d/%d)", 
-						m.failureCount, m.config.MaxFailures))
+					// Overwrite previous line to show updated count
+					fmt.Printf("\r  %s⚠%s VPN health check failed (%d/%d)%s\n", 
+						colorYellow, colorReset, m.failureCount, m.config.MaxFailures, strings.Repeat(" ", 20))
 					
 					if m.config.DebugMode && m.failureCount == 1 {
 						fmt.Printf("  %sℹ%s Debug info:\n", colorYellow, colorReset)
@@ -998,8 +993,9 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 						}
 					}
 				} else {
-					m.showError(fmt.Sprintf("VPN connection lost (%d/%d)", 
-						m.failureCount, m.config.MaxFailures))
+					// Overwrite the last warning with the final error
+					fmt.Printf("\r  %s✗%s VPN connection lost (%d/%d)%s\n", 
+						colorRed, colorReset, m.failureCount, m.config.MaxFailures, strings.Repeat(" ", 20))
 					m.mu.Unlock()
 					m.triggerReconnect()
 					m.mu.Lock()
