@@ -178,8 +178,14 @@ main_loop() {
         show_vpn_connected
     fi
     
-    show_step "Starting health monitor..."
+    # IMPROVED: Add stabilization delay before starting monitor
+    # This gives the VPN time to establish handshakes and settle
+    show_step "Waiting for VPN to stabilize..."
     sleep 5
+    show_success "VPN ready"
+    echo ""
+    
+    show_step "Starting health monitor..."
     /usr/local/bin/monitor &
     show_success "Health monitor active (PID: $!)"
     show_success "Check interval: ${CHECK_INTERVAL}s, Failure threshold: ${MAX_FAILURES}"
@@ -213,3 +219,4 @@ main_loop() {
 
 initial_connect || { show_error "Initial connection failed"; exit 1; }
 main_loop
+

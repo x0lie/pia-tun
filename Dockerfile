@@ -20,7 +20,7 @@ RUN cd cmd/monitor && \
 # Final stage
 FROM alpine:latest
 
-# Install dependencies (REMOVED: speedtest-cli, net-tools)
+# Install dependencies
 RUN apk update && \
     apk add --no-cache \
         jq \
@@ -85,17 +85,18 @@ ENV PORT_API_URL=""
 ENV PORT_API_USER=""
 ENV PORT_API_PASS=""
 
-# Environment variables - Auto-Reconnect Configuration
-ENV HANDSHAKE_TIMEOUT=180
+# Environment variables - Auto-Reconnect Configuration (IMPROVED DEFAULTS)
+ENV HANDSHAKE_TIMEOUT=360
 ENV CHECK_INTERVAL=15
-ENV MAX_FAILURES=2
+ENV MAX_FAILURES=3
 ENV RECONNECT_DELAY=5
 ENV MAX_RECONNECT_DELAY=300
 ENV RESTART_SERVICES=""
 ENV MONITOR_DEBUG=false
 ENV MONITOR_PARALLEL_CHECKS=true
 ENV MONITOR_FAST_FAIL=false
-ENV MONITOR_WATCH_HANDSHAKE=false
+ENV MONITOR_WATCH_HANDSHAKE=true
+ENV MONITOR_STARTUP_GRACE=30
 ENV METRICS=false
 ENV METRICS_PORT=9090
 

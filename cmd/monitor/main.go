@@ -29,6 +29,7 @@ type Config struct {
 	FastFailMode       bool
 	WatchHandshake     bool
 	HandshakeTimeout   time.Duration
+	StartupGracePeriod time.Duration
 }
 
 type Monitor struct {
@@ -58,7 +59,7 @@ type Metrics struct {
 	ConnectedAt        time.Time
 	
 	// Server performance tracking
-	ServerLatency      int64  // Initial connection latency in ms
+	ServerLatency      int64
 	ServerUptime       time.Duration
 	
 	// Performance metrics
@@ -72,6 +73,7 @@ type Metrics struct {
 type HealthCheckResult struct {
 	InterfaceUp    bool
 	Connectivity   bool
+	HandshakeOK    bool
 	CheckDuration  time.Duration
 	Error          error
 }
@@ -94,25 +96,32 @@ func loadConfig() Config {
 		return os.Getenv(key) == "true"
 	}
 
+	// Determine if handshake monitoring should be enabled (default: true)
+	watchHandshake := true
+	if val := os.Getenv("MONITOR_WATCH_HANDSHAKE"); val == "false" {
+		watchHandshake = false
+	}
+
 	return Config{
-		CheckInterval:     getEnvDuration("CHECK_INTERVAL", 15),
-		MaxFailures:       getEnvInt("MAX_FAILURES", 2),
-		ReconnectDelay:    getEnvDuration("RECONNECT_DELAY", 5),
-		MaxReconnectDelay: getEnvDuration("MAX_RECONNECT_DELAY", 300),
-		RestartServices:   os.Getenv("RESTART_SERVICES"),
-		DebugMode:         getEnvBool("MONITOR_DEBUG"),
-		ParallelChecks:    getEnvBool("MONITOR_PARALLEL_CHECKS"),
-		MetricsEnabled:    getEnvBool("METRICS"),
-		FastFailMode:      getEnvBool("MONITOR_FAST_FAIL"),
-		WatchHandshake:    getEnvBool("MONITOR_WATCH_HANDSHAKE"),
-		HandshakeTimeout:  getEnvDuration("HANDSHAKE_TIMEOUT", 180),
+		CheckInterval:      getEnvDuration("CHECK_INTERVAL", 15),
+		MaxFailures:        getEnvInt("MAX_FAILURES", 3),
+		ReconnectDelay:     getEnvDuration("RECONNECT_DELAY", 5),
+		MaxReconnectDelay:  getEnvDuration("MAX_RECONNECT_DELAY", 300),
+		RestartServices:    os.Getenv("RESTART_SERVICES"),
+		DebugMode:          getEnvBool("MONITOR_DEBUG"),
+		ParallelChecks:     getEnvBool("MONITOR_PARALLEL_CHECKS"),
+		MetricsEnabled:     getEnvBool("METRICS"),
+		FastFailMode:       getEnvBool("MONITOR_FAST_FAIL"),
+		WatchHandshake:     watchHandshake,
+		HandshakeTimeout:   getEnvDuration("HANDSHAKE_TIMEOUT", 360),
+		StartupGracePeriod: getEnvDuration("MONITOR_STARTUP_GRACE", 30),
 	}
 }
 
 func NewMetrics() *Metrics {
 	return &Metrics{
 		UptimeStart:      time.Now(),
-		MinCheckDuration: time.Hour, // Will be replaced on first check
+		MinCheckDuration: time.Hour,
 	}
 }
 
@@ -124,14 +133,12 @@ func (m *Metrics) RecordCheck(success bool, duration time.Duration) {
 	m.LastCheckTime = time.Now()
 	m.LastCheckDuration = duration
 	
-	// Update duration stats
 	if duration > m.MaxCheckDuration {
 		m.MaxCheckDuration = duration
 	}
 	if duration < m.MinCheckDuration {
 		m.MinCheckDuration = duration
 	}
-	// Running average
 	if m.AvgCheckDuration == 0 {
 		m.AvgCheckDuration = duration
 	} else {
@@ -149,7 +156,6 @@ func (m *Metrics) UpdateVPNInfo(server, ip string, rx, tx int64, handshake time.
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	
-	// Track server changes and uptime
 	if m.CurrentServer != server && server != "" {
 		m.ConnectedAt = time.Now()
 		m.CurrentServer = server
@@ -193,15 +199,12 @@ func (m *Metrics) GetStats() map[string]interface{} {
 	}
 	
 	return map[string]interface{}{
-		// Health check metrics
 		"total_checks":           m.TotalChecks,
 		"successful_checks":      m.SuccessfulChecks,
 		"failed_checks":          m.FailedChecks,
 		"success_rate":           fmt.Sprintf("%.2f%%", successRate),
 		"success_rate_decimal":   successRate / 100,
 		"total_reconnects":       m.TotalReconnects,
-		
-		// Timing metrics
 		"uptime_seconds":         int(uptime.Seconds()),
 		"uptime_formatted":       formatDuration(uptime),
 		"last_check":             m.LastCheckTime.Format("2006-01-02 15:04:05"),
@@ -209,8 +212,6 @@ func (m *Metrics) GetStats() map[string]interface{} {
 		"avg_check_duration_ms":  m.AvgCheckDuration.Milliseconds(),
 		"max_check_duration_ms":  m.MaxCheckDuration.Milliseconds(),
 		"min_check_duration_ms":  m.MinCheckDuration.Milliseconds(),
-		
-		// VPN metrics
 		"current_server":         m.CurrentServer,
 		"current_ip":             m.CurrentIP,
 		"bytes_received":         m.BytesReceived,
@@ -218,8 +219,6 @@ func (m *Metrics) GetStats() map[string]interface{} {
 		"total_bytes":            m.BytesReceived + m.BytesTransmitted,
 		"last_handshake":         m.LastHandshakeTime.Format("2006-01-02 15:04:05"),
 		"handshake_age_seconds":  int(timeSinceHandshake.Seconds()),
-		
-		// Server performance
 		"server_latency_ms":      m.ServerLatency,
 		"server_uptime_seconds":  int(m.ServerUptime.Seconds()),
 		"server_uptime_formatted": formatDuration(m.ServerUptime),
@@ -239,7 +238,6 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dm", minutes)
 }
 
-// ANSI color codes
 const (
 	colorReset  = "\033[0m"
 	colorRed    = "\033[0;31m"
@@ -265,7 +263,6 @@ func (m *Monitor) getCurrentServer() string {
 }
 
 func (m *Monitor) getServerLatency() int64 {
-	// Try to read the latency that was recorded during connection
 	data, err := os.ReadFile("/tmp/server_latency")
 	if err != nil {
 		return 0
@@ -281,14 +278,12 @@ func (m *Monitor) getCurrentIP() string {
 		return ""
 	}
 	
-	// Parse "inet 10.x.x.x/32" from output
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines {
 		if strings.Contains(line, "inet ") {
 			fields := strings.Fields(line)
 			for i, field := range fields {
 				if field == "inet" && i+1 < len(fields) {
-					// Remove the /32 suffix
 					ip := strings.Split(fields[i+1], "/")[0]
 					return ip
 				}
@@ -301,14 +296,12 @@ func (m *Monitor) getCurrentIP() string {
 func (m *Monitor) isInterfaceUp() bool {
 	m.debugLog("Checking interface status")
 	
-	// Check if interface exists
 	cmd := exec.Command("ip", "link", "show", "pia")
 	if err := cmd.Run(); err != nil {
 		m.debugLog("Interface not found")
 		return false
 	}
 
-	// Check for IP address
 	cmd = exec.Command("ip", "addr", "show", "pia")
 	output, err := cmd.Output()
 	if err == nil && strings.Contains(string(output), "inet ") {
@@ -316,7 +309,6 @@ func (m *Monitor) isInterfaceUp() bool {
 		return true
 	}
 
-	// Check WireGuard peers
 	cmd = exec.Command("wg", "show", "pia", "peers")
 	output, err = cmd.Output()
 	if err == nil && len(strings.TrimSpace(string(output))) > 0 {
@@ -324,7 +316,6 @@ func (m *Monitor) isInterfaceUp() bool {
 		return true
 	}
 
-	// Check if interface is not DOWN
 	cmd = exec.Command("ip", "link", "show", "pia")
 	output, err = cmd.Output()
 	if err == nil && !strings.Contains(string(output), "state DOWN") {
@@ -337,7 +328,6 @@ func (m *Monitor) isInterfaceUp() bool {
 }
 
 func (m *Monitor) checkConnectivityPing(ctx context.Context, host string) bool {
-	// More lenient timeout for heavy load scenarios
 	cmd := exec.CommandContext(ctx, "ping", "-c", "1", "-W", "5", host)
 	return cmd.Run() == nil
 }
@@ -349,7 +339,7 @@ func (m *Monitor) checkConnectivityHTTP(ctx context.Context, url string) bool {
 	}
 	
 	client := &http.Client{
-		Timeout: 8 * time.Second, // Increased from 5s
+		Timeout: 8 * time.Second,
 	}
 	resp, err := client.Do(req)
 	if err == nil {
@@ -359,11 +349,10 @@ func (m *Monitor) checkConnectivityHTTP(ctx context.Context, url string) bool {
 	return false
 }
 
-// Parallel connectivity checks (new capability!)
 func (m *Monitor) checkExternalConnectivityParallel() bool {
 	m.debugLog("Checking external connectivity (parallel mode)")
 	
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	
 	type checkResult struct {
@@ -373,7 +362,6 @@ func (m *Monitor) checkExternalConnectivityParallel() bool {
 	
 	results := make(chan checkResult, 3)
 	
-	// Run checks in parallel
 	go func() {
 		success := m.checkConnectivityPing(ctx, "1.1.1.1")
 		results <- checkResult{"ping-1.1.1.1", success}
@@ -389,7 +377,6 @@ func (m *Monitor) checkExternalConnectivityParallel() bool {
 		results <- checkResult{"http-1.1.1.1", success}
 	}()
 	
-	// Return true if any check succeeds
 	for i := 0; i < 3; i++ {
 		result := <-results
 		if result.success {
@@ -405,23 +392,20 @@ func (m *Monitor) checkExternalConnectivityParallel() bool {
 func (m *Monitor) checkExternalConnectivitySerial() bool {
 	m.debugLog("Checking external connectivity (serial mode)")
 	
-	// Try ping to 1.1.1.1
-	cmd := exec.Command("ping", "-c", "1", "-W", "3", "1.1.1.1")
+	cmd := exec.Command("ping", "-c", "1", "-W", "5", "1.1.1.1")
 	if err := cmd.Run(); err == nil {
 		m.debugLog("Ping to 1.1.1.1 successful")
 		return true
 	}
 
-	// Try ping to 8.8.8.8
-	cmd = exec.Command("ping", "-c", "1", "-W", "3", "8.8.8.8")
+	cmd = exec.Command("ping", "-c", "1", "-W", "5", "8.8.8.8")
 	if err := cmd.Run(); err == nil {
 		m.debugLog("Ping to 8.8.8.8 successful")
 		return true
 	}
 
-	// Try HTTP request
 	client := &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout: 8 * time.Second,
 	}
 	resp, err := client.Get("http://1.1.1.1")
 	if err == nil {
@@ -441,6 +425,72 @@ func (m *Monitor) checkExternalConnectivity() bool {
 	return m.checkExternalConnectivitySerial()
 }
 
+// NEW: Check WireGuard handshake freshness
+func (m *Monitor) getLastHandshakeTime() (time.Time, error) {
+	cmd := exec.Command("wg", "show", "pia", "latest-handshakes")
+	output, err := cmd.Output()
+	if err != nil {
+		return time.Time{}, err
+	}
+	
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) == 0 {
+		return time.Time{}, fmt.Errorf("no handshake data")
+	}
+	
+	parts := strings.Fields(lines[0])
+	if len(parts) < 2 {
+		return time.Time{}, fmt.Errorf("invalid handshake format")
+	}
+	
+	timestamp, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return time.Time{}, err
+	}
+	
+	now := time.Now().Unix()
+	if timestamp == 0 {
+		return time.Time{}, fmt.Errorf("no handshake yet (timestamp is 0)")
+	}
+	if timestamp > now {
+		return time.Time{}, fmt.Errorf("invalid timestamp: %d (in future)", timestamp)
+	}
+	
+	return time.Unix(timestamp, 0), nil
+}
+
+// NEW: Get transfer bytes (better indicator than handshake alone)
+func (m *Monitor) getTransferBytes() (rx, tx int64, err error) {
+	cmd := exec.Command("wg", "show", "pia", "transfer")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, 0, err
+	}
+	
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) == 0 {
+		return 0, 0, fmt.Errorf("no transfer data")
+	}
+	
+	parts := strings.Fields(lines[0])
+	if len(parts) < 3 {
+		return 0, 0, fmt.Errorf("interface transitioning")
+	}
+	
+	rx, err = strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+	
+	tx, err = strconv.ParseInt(parts[2], 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+	
+	return rx, tx, nil
+}
+
+// NEW: Enhanced health check with handshake validation
 func (m *Monitor) checkVPNHealth() (*HealthCheckResult, error) {
 	m.debugLog("Starting health check")
 	start := time.Now()
@@ -457,7 +507,33 @@ func (m *Monitor) checkVPNHealth() (*HealthCheckResult, error) {
 	result.InterfaceUp = true
 	m.debugLog("Interface is up")
 
-	// In fast-fail mode, only do one quick connectivity check
+	// NEW: Check handshake freshness if enabled
+	if m.config.WatchHandshake {
+		lastHandshake, err := m.getLastHandshakeTime()
+		if err == nil {
+			timeSince := time.Since(lastHandshake)
+			m.debugLog("Last handshake was %v ago", timeSince)
+			
+			// Handshake should happen every ~2 minutes with keepalive=25
+			// We use 6 minutes (360s default) as the threshold
+			// This allows for 3x the normal interval before failing
+			if timeSince < m.config.HandshakeTimeout {
+				result.HandshakeOK = true
+				m.debugLog("Handshake is fresh (within %v threshold)", m.config.HandshakeTimeout)
+			} else {
+				m.debugLog("Handshake is stale (%v old, threshold: %v)", timeSince, m.config.HandshakeTimeout)
+				result.Error = fmt.Errorf("handshake stale (%v old, threshold: %v)", timeSince, m.config.HandshakeTimeout)
+				result.CheckDuration = time.Since(start)
+				return result, result.Error
+			}
+		} else {
+			m.debugLog("Could not check handshake: %v (ignoring for now)", err)
+			// Don't fail on handshake check errors - the interface might be transitioning
+			// The connectivity check below will catch real issues
+		}
+	}
+
+	// Fast-fail mode: single check
 	if m.config.FastFailMode {
 		if m.checkExternalConnectivity() {
 			result.Connectivity = true
@@ -469,7 +545,7 @@ func (m *Monitor) checkVPNHealth() (*HealthCheckResult, error) {
 		return result, result.Error
 	}
 
-	// Standard mode: Check with single retry
+	// Standard mode: check with retry
 	if m.checkExternalConnectivity() {
 		m.debugLog("Connectivity passed")
 		result.Connectivity = true
@@ -478,7 +554,7 @@ func (m *Monitor) checkVPNHealth() (*HealthCheckResult, error) {
 	}
 
 	m.debugLog("First check failed, retrying...")
-	time.Sleep(2 * time.Second)
+	time.Sleep(3 * time.Second)
 	
 	if m.checkExternalConnectivity() {
 		m.debugLog("Retry passed")
@@ -507,7 +583,6 @@ func (m *Monitor) triggerReconnect() {
 	fmt.Printf("\n%s▶%s Reconnecting in %ds...\n", colorBlue, colorReset, int(delay.Seconds()))
 	time.Sleep(delay)
 
-	// Create reconnect request file
 	if err := os.WriteFile("/tmp/vpn_reconnect_requested", []byte{}, 0644); err != nil {
 		log.Printf("Failed to create reconnect request: %v", err)
 	}
@@ -529,112 +604,21 @@ func (m *Monitor) showError(msg string) {
 	fmt.Printf("  %s✗%s %s\n", colorRed, colorReset, msg)
 }
 
-func (m *Monitor) printMetrics() {
-	if !m.config.MetricsEnabled || m.metrics == nil {
-		return
-	}
-	
-	stats := m.metrics.GetStats()
-	fmt.Printf("\n%s[METRICS]%s\n", colorBlue, colorReset)
-	fmt.Printf("  Uptime: %s\n", stats["uptime_formatted"])
-	fmt.Printf("  Total Checks: %d (Success: %d, Failed: %d)\n", 
-		stats["total_checks"], stats["successful_checks"], stats["failed_checks"])
-	fmt.Printf("  Success Rate: %s\n", stats["success_rate"])
-	fmt.Printf("  Reconnects: %d\n", stats["total_reconnects"])
-	fmt.Printf("  Last Check: %s (Duration: %dms, Avg: %dms)\n", 
-		stats["last_check"], stats["last_check_duration_ms"], stats["avg_check_duration_ms"])
-	
-	if server, ok := stats["current_server"].(string); ok && server != "" {
-		fmt.Printf("  VPN Server: %s\n", server)
-	}
-	if ip, ok := stats["current_ip"].(string); ok && ip != "" {
-		fmt.Printf("  VPN IP: %s\n", ip)
-	}
-	
-	fmt.Println()
-}
-
-func (m *Monitor) getLastHandshakeTime() (time.Time, error) {
-	cmd := exec.Command("wg", "show", "pia", "latest-handshakes")
-	output, err := cmd.Output()
-	if err != nil {
-		return time.Time{}, err
-	}
-	
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(lines) == 0 {
-		return time.Time{}, fmt.Errorf("no handshake data")
-	}
-	
-	// Output format: <public-key>\t<timestamp>
-	parts := strings.Fields(lines[0])
-	if len(parts) < 2 {
-		return time.Time{}, fmt.Errorf("invalid handshake format")
-	}
-	
-	timestamp, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil {
-		return time.Time{}, err
-	}
-	
-	// Sanity check: if timestamp is 0 or in the future, it's invalid
-	now := time.Now().Unix()
-	if timestamp == 0 || timestamp > now {
-		return time.Time{}, fmt.Errorf("invalid timestamp: %d", timestamp)
-	}
-	
-	return time.Unix(timestamp, 0), nil
-}
-
-// Get transfer counters (better than handshake for detecting stale connection)
-func (m *Monitor) getTransferBytes() (rx, tx int64, err error) {
-	cmd := exec.Command("wg", "show", "pia", "transfer")
-	output, err := cmd.Output()
-	if err != nil {
-		return 0, 0, err
-	}
-	
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(lines) == 0 {
-		return 0, 0, fmt.Errorf("no transfer data")
-	}
-	
-	// Output format: <public-key>\t<rx-bytes>\t<tx-bytes>
-	parts := strings.Fields(lines[0])
-	if len(parts) < 3 {
-		// During teardown/reconnection, this is expected - not an error
-		return 0, 0, fmt.Errorf("interface transitioning")
-	}
-	
-	rx, err = strconv.ParseInt(parts[1], 10, 64)
-	if err != nil {
-		return 0, 0, err
-	}
-	
-	tx, err = strconv.ParseInt(parts[2], 10, 64)
-	if err != nil {
-		return 0, 0, err
-	}
-	
-	return rx, tx, nil
-}
-
-// Watch for stale WireGuard connection using transfer bytes (Grok's recommendation)
+// NEW: Background handshake watcher (continuous monitoring)
 func (m *Monitor) watchHandshakes(ctx context.Context, failChan chan<- struct{}) {
 	if !m.config.WatchHandshake {
 		return
 	}
 	
-	m.debugLog("Starting connection watcher (using transfer bytes, timeout: %v)", m.config.HandshakeTimeout)
+	m.debugLog("Starting handshake watcher (timeout: %v)", m.config.HandshakeTimeout)
 	
-	// Wait for initial connection to stabilize
 	time.Sleep(15 * time.Second)
 	
 	var lastRx, lastTx int64
 	var staleCount int
-	const maxStaleChecks = 3 // Require 3 consecutive stale checks before failing
+	const maxStaleChecks = 3
 	
-	ticker := time.NewTicker(30 * time.Second) // Check every 30s (less aggressive)
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	
 	for {
@@ -642,21 +626,18 @@ func (m *Monitor) watchHandshakes(ctx context.Context, failChan chan<- struct{})
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// Method 1: Check transfer bytes (primary method - Grok's advice)
 			rx, tx, err := m.getTransferBytes()
 			if err != nil {
-				// During teardown/reconnection, this is normal - don't spam logs
 				if !strings.Contains(err.Error(), "transitioning") {
 					m.debugLog("Could not get transfer bytes: %v", err)
 				}
 				continue
 			}
 			
-			// Check if bytes are increasing (keepalive packets count!)
 			bytesChanged := (rx != lastRx) || (tx != lastTx)
 			
 			if bytesChanged {
-				m.debugLog("Transfer active: rx=%d (%+d), tx=%d (%+d)", 
+				m.debugLog("Transfer active: rx=%d (+%d), tx=%d (+%d)", 
 					rx, rx-lastRx, tx, tx-lastTx)
 				lastRx = rx
 				lastTx = tx
@@ -664,7 +645,6 @@ func (m *Monitor) watchHandshakes(ctx context.Context, failChan chan<- struct{})
 				continue
 			}
 			
-			// No byte changes - check handshake as backup
 			lastHandshake, err := m.getLastHandshakeTime()
 			if err != nil {
 				m.debugLog("Could not get handshake time: %v", err)
@@ -673,7 +653,6 @@ func (m *Monitor) watchHandshakes(ctx context.Context, failChan chan<- struct{})
 				timeSince := time.Since(lastHandshake)
 				m.debugLog("No transfer in 30s, handshake was %v ago", timeSince)
 				
-				// Only fail if handshake is REALLY old (3+ minutes with no bytes)
 				if timeSince > m.config.HandshakeTimeout {
 					staleCount++
 					m.debugLog("Stale check %d/%d", staleCount, maxStaleChecks)
@@ -682,14 +661,13 @@ func (m *Monitor) watchHandshakes(ctx context.Context, failChan chan<- struct{})
 				}
 			}
 			
-			// Trigger reconnect only after multiple consecutive failures
 			if staleCount >= maxStaleChecks {
-				m.showWarning(fmt.Sprintf("Connection appears stale (%d checks) - triggering reconnect", staleCount))
+				m.showWarning(fmt.Sprintf("Connection stale (%d checks) - triggering reconnect", staleCount))
 				select {
 				case failChan <- struct{}{}:
 				default:
 				}
-				staleCount = 0 // Reset after triggering
+				staleCount = 0
 			}
 			
 			lastRx = rx
@@ -699,28 +677,29 @@ func (m *Monitor) watchHandshakes(ctx context.Context, failChan chan<- struct{})
 }
 
 func (m *Monitor) monitorLoop(ctx context.Context) {
-	firstCheck := true
 	ticker := time.NewTicker(m.config.CheckInterval)
 	defer ticker.Stop()
 	
-	// Channel for instant failure signals (from handshake watcher)
 	failChan := make(chan struct{}, 1)
 	
-	// Start handshake watcher if enabled
 	if m.config.WatchHandshake {
 		go m.watchHandshakes(ctx, failChan)
 	}
 	
-	// Capture initial server latency once
 	if m.metrics != nil {
 		latency := m.getServerLatency()
 		if latency > 0 {
 			m.metrics.SetServerLatency(latency)
 		}
 	}
-	
-	// Don't start metrics printer - it fills up logs
-	// Users should use the HTTP endpoint instead: curl http://localhost:9090/metrics
+
+	// Grace period: Skip checks for configured time to allow VPN to stabilize
+	// This prevents false positives during port forwarding initialization
+	graceEnd := time.Now().Add(m.config.StartupGracePeriod)
+	if m.config.StartupGracePeriod > 0 {
+		m.debugLog("Starting with %v grace period until %v", 
+			m.config.StartupGracePeriod, graceEnd.Format("15:04:05"))
+	}
 
 	for {
 		select {
@@ -729,9 +708,8 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 			return
 		
 		case <-failChan:
-			// Instant failure from handshake watcher
 			m.mu.Lock()
-			m.failureCount = m.config.MaxFailures // Immediately trigger reconnect
+			m.failureCount = m.config.MaxFailures
 			m.consecutiveSuccess = 0
 			m.showError("Handshake timeout detected - immediate reconnect")
 			m.mu.Unlock()
@@ -739,16 +717,18 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 			m.mu.Lock()
 			m.failureCount = 0
 			m.mu.Unlock()
+			// Reset grace period after reconnect
+			graceEnd = time.Now().Add(m.config.StartupGracePeriod)
 			
 		case <-ticker.C:
-			if firstCheck {
-				firstCheck = false
+			// Skip checks during grace period
+			if time.Now().Before(graceEnd) {
+				m.debugLog("In grace period, skipping check")
 				continue
 			}
 
 			result, err := m.checkVPNHealth()
 			
-			// Update VPN info in metrics if available
 			if m.metrics != nil {
 				rx, tx, _ := m.getTransferBytes()
 				handshake, _ := m.getLastHandshakeTime()
@@ -757,7 +737,6 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 				m.metrics.UpdateVPNInfo(server, ip, rx, tx, handshake)
 			}
 			
-			// Record metrics
 			if m.metrics != nil {
 				m.metrics.RecordCheck(err == nil, result.CheckDuration)
 			}
@@ -799,6 +778,10 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 					m.triggerReconnect()
 					m.mu.Lock()
 					m.failureCount = 0
+					// Reset grace period after reconnect
+					m.mu.Unlock()
+					graceEnd = time.Now().Add(m.config.StartupGracePeriod)
+					m.mu.Lock()
 				}
 			}
 			m.mu.Unlock()
@@ -819,7 +802,6 @@ func main() {
 		metrics: metrics,
 	}
 
-	// Setup graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	
@@ -829,19 +811,14 @@ func main() {
 	go func() {
 		<-sigChan
 		monitor.debugLog("Received shutdown signal")
-		if config.MetricsEnabled {
-			monitor.printMetrics()
-		}
 		cancel()
 	}()
 
-	// Ensure we can resolve DNS before starting
 	_, err := net.LookupHost("google.com")
 	if err != nil {
 		log.Printf("Warning: DNS resolution may not be working: %v", err)
 	}
 
-	// Start metrics HTTP endpoint if enabled
 	if config.MetricsEnabled {
 		go startMetricsServer(monitor)
 	}
@@ -849,9 +826,7 @@ func main() {
 	monitor.monitorLoop(ctx)
 }
 
-// HTTP endpoint for metrics (new capability!)
 func startMetricsServer(m *Monitor) {
-	// Prometheus-compatible metrics endpoint
 	http.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		if m.metrics == nil {
 			http.Error(w, "Metrics not enabled", http.StatusNotFound)
@@ -860,12 +835,10 @@ func startMetricsServer(m *Monitor) {
 		
 		stats := m.metrics.GetStats()
 		
-		// Check if Prometheus format is requested
 		acceptHeader := r.Header.Get("Accept")
 		if strings.Contains(acceptHeader, "text/plain") || r.URL.Query().Get("format") == "prometheus" {
 			w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 			
-			// Prometheus format
 			fmt.Fprintf(w, "# HELP vpn_uptime_seconds Total uptime in seconds\n")
 			fmt.Fprintf(w, "# TYPE vpn_uptime_seconds gauge\n")
 			fmt.Fprintf(w, "vpn_uptime_seconds %d\n\n", stats["uptime_seconds"])
@@ -925,7 +898,6 @@ func startMetricsServer(m *Monitor) {
 					stats["current_server"], stats["current_ip"])
 			}
 		} else {
-			// JSON format (default)
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(stats)
 		}
@@ -947,6 +919,7 @@ func startMetricsServer(m *Monitor) {
 			"status":         status,
 			"interface_up":   result.InterfaceUp,
 			"connectivity":   result.Connectivity,
+			"handshake_ok":   result.HandshakeOK,
 			"check_duration": result.CheckDuration.String(),
 			"error":          fmt.Sprintf("%v", err),
 		})
@@ -957,7 +930,6 @@ func startMetricsServer(m *Monitor) {
 		port = "9090"
 	}
 	
-	// Silent startup - no log output (already shown in run.sh)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Printf("Metrics server error: %v", err)
 	}
