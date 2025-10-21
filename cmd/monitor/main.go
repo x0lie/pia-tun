@@ -583,7 +583,7 @@ func (m *Monitor) checkWANConnectivity(timeout time.Duration) bool {
 	return false
 }
 
-// NEW: Wait for WAN with exponential backoff
+// NEW: Wait for WAN with exponential backoff (infinite loop until success)
 func (m *Monitor) waitForWAN() bool {
 	fmt.Printf("\n%s▶%s Testing WAN before reconnect...\n", colorBlue, colorReset)
 	
@@ -611,14 +611,21 @@ func (m *Monitor) waitForWAN() bool {
 		m.metrics.RecordWANCheck(false)
 	}
 	
-	delays := []int{5, 10, 20, 40, 80, 160, 160, 160} // Exponential up to 160s
+	// Exponential backoff: 5s, 10s, 20s, 40s, 80s, then 160s forever
+	delays := []int{5, 10, 20, 40, 80}
+	maxDelay := 160
+	attempt := 1
 	
-	for i, delay := range delays {
-		fmt.Printf("  %s⏳%s Checking again in %ds (attempt %d/%d)...\n", 
-			colorYellow, colorReset, delay, i+1, len(delays))
+	// First 5 attempts with exponential backoff
+	for _, delay := range delays {
+		// Use \r to overwrite the previous line
+		fmt.Printf("\r  %s⏳%s Checking again in %ds (attempt %d)...%s", 
+			colorYellow, colorReset, delay, attempt, strings.Repeat(" ", 20))
 		time.Sleep(time.Duration(delay) * time.Second)
 		
 		if m.checkWANConnectivity(5 * time.Second) {
+			fmt.Printf("\r%s", strings.Repeat(" ", 80)) // Clear the line
+			fmt.Printf("\r")
 			m.showSuccess("Internet restored, reconnecting")
 			if m.metrics != nil {
 				m.metrics.RecordWANCheck(true)
@@ -629,11 +636,30 @@ func (m *Monitor) waitForWAN() bool {
 		if m.metrics != nil {
 			m.metrics.RecordWANCheck(false)
 		}
+		attempt++
 	}
 	
-	// After all retries, proceed anyway
-	m.showWarning("Max wait reached, attempting reconnect anyway")
-	return false
+	// Continue checking every 160s indefinitely
+	for {
+		fmt.Printf("\r  %s⏳%s Checking again in %ds (attempt %d)...%s", 
+			colorYellow, colorReset, maxDelay, attempt, strings.Repeat(" ", 20))
+		time.Sleep(time.Duration(maxDelay) * time.Second)
+		
+		if m.checkWANConnectivity(5 * time.Second) {
+			fmt.Printf("\r%s", strings.Repeat(" ", 80)) // Clear the line
+			fmt.Printf("\r")
+			m.showSuccess("Internet restored, reconnecting")
+			if m.metrics != nil {
+				m.metrics.RecordWANCheck(true)
+			}
+			return true
+		}
+		
+		if m.metrics != nil {
+			m.metrics.RecordWANCheck(false)
+		}
+		attempt++
+	}
 }
 
 func (m *Monitor) getLastHandshakeTime() (time.Time, error) {
