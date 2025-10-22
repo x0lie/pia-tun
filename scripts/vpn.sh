@@ -306,9 +306,16 @@ teardown_wireguard() {
 #═══════════════════════════════════════════════════════════════════════════════
 
 setup_vpn() {
-    show_step "Authenticating with PIA..."
-    local token=$(authenticate) && show_success "Authentication successful" || return 1
-    echo ""
+    local quiet_mode="${1:-false}"
+    
+    if [ "$quiet_mode" != "true" ]; then
+        show_step "Authenticating with PIA..."
+        local token=$(authenticate) && show_success "Authentication successful" || return 1
+        echo ""
+    else
+        # Silent authentication during reconnection
+        local token=$(authenticate) || return 1
+    fi
     
     # Parse location display
     local locations="${PIA_LOCATION}"
@@ -339,10 +346,16 @@ setup_vpn() {
     else
         show_success "Connected to: ${bold}${server_name}${nc} (${latency}ms)"
     fi
-    echo ""
     
-    show_step "Configuring WireGuard tunnel..."
-    generate_config "$token" && show_success "Tunnel configured" || return 1
+    if [ "$quiet_mode" != "true" ]; then
+        echo ""
+        show_step "Configuring WireGuard tunnel..."
+        generate_config "$token" && show_success "Tunnel configured" || return 1
+	echo ""
+    else
+        # Silent configuration during reconnection
+        generate_config "$token" >/dev/null 2>&1 || return 1
+    fi
 }
 
 # Only run setup_vpn if executed directly (not sourced)

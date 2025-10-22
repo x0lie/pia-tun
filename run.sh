@@ -57,6 +57,8 @@ cleanup() {
 trap cleanup SIGTERM SIGINT SIGQUIT
 
 initial_connect() {
+    local quiet_mode="${1:-false}"
+    
     [ ! -f /tmp/reconnecting ] && print_banner
     
     # OPTIMIZED: Only capture real IP if not already captured
@@ -65,38 +67,51 @@ initial_connect() {
         echo ""
     fi
     
-    setup_pre_tunnel_killswitch
-    
-    # Debug info
-    if $DEBUG_MODE; then
+    # Only show these steps if not in quiet mode (first connection)
+    if [ "$quiet_mode" != "true" ]; then
+        setup_pre_tunnel_killswitch
+        
+        # Debug info
+        if $DEBUG_MODE; then
+            echo ""
+            echo "  ${blu}[DEBUG]${nc} Pre-tunnel firewall rules:"
+            iptables -L VPN_OUT -n -v 2>/dev/null | head -20 | sed 's/^/    /' || \
+                nft list chain inet vpn_filter output 2>/dev/null | head -20 | sed 's/^/    /'
+            echo ""
+            echo "  ${blu}[DEBUG]${nc} Testing connectivity:"
+            printf "    DNS: "
+            nslookup www.privateinternetaccess.com >/dev/null 2>&1 && echo "${grn}OK${nc}" || echo "${red}FAIL${nc}"
+            printf "    HTTPS: "
+            curl -s --max-time 5 https://www.privateinternetaccess.com >/dev/null 2>&1 && echo "${grn}OK${nc}" || echo "${red}FAIL${nc}"
+        fi
         echo ""
-        echo "  ${blu}[DEBUG]${nc} Pre-tunnel firewall rules:"
-        iptables -L VPN_OUT -n -v 2>/dev/null | head -20 | sed 's/^/    /' || \
-            nft list chain inet vpn_filter output 2>/dev/null | head -20 | sed 's/^/    /'
-        echo ""
-        echo "  ${blu}[DEBUG]${nc} Testing connectivity:"
-        printf "    DNS: "
-        nslookup www.privateinternetaccess.com >/dev/null 2>&1 && echo "${grn}OK${nc}" || echo "${red}FAIL${nc}"
-        printf "    HTTPS: "
-        curl -s --max-time 5 https://www.privateinternetaccess.com >/dev/null 2>&1 && echo "${grn}OK${nc}" || echo "${red}FAIL${nc}"
+    else
+        # Silent killswitch setup during reconnection
+        setup_pre_tunnel_killswitch >/dev/null 2>&1
     fi
-    echo ""
     
-    /app/scripts/vpn.sh || return 1
+    /app/scripts/vpn.sh "$quiet_mode" || return 1
     
     # Save server latency for metrics
     [ -f /tmp/server_latency_temp ] && mv /tmp/server_latency_temp /tmp/server_latency
     
-    echo ""
-    
-    show_step "Establishing VPN connection..."
-    bring_up_wireguard /etc/wireguard/pia.conf && show_success "VPN tunnel established" || \
-        { show_error "Failed to bring up tunnel"; return 1; }
-    sleep 3
-    echo ""
-    
-    finalize_killswitch
-    echo ""
+    # Only show tunnel establishment if not in quiet mode
+    if [ "$quiet_mode" != "true" ]; then
+        show_step "Establishing VPN connection..."
+        bring_up_wireguard /etc/wireguard/pia.conf && show_success "VPN tunnel established" || \
+            { show_error "Failed to bring up tunnel"; return 1; }
+        sleep 3
+        echo ""
+        
+        finalize_killswitch
+        echo ""
+    else
+        # Silent operations during reconnection
+        bring_up_wireguard /etc/wireguard/pia.conf >/dev/null 2>&1 || \
+            { show_error "Failed to bring up tunnel"; return 1; }
+        sleep 3
+        finalize_killswitch >/dev/null 2>&1
+    fi
     
     show_step "Verifying connection..."
     verify_connection && echo "" || { show_warning "Connection verification found issues"; echo ""; }
@@ -112,19 +127,16 @@ perform_reconnection() {
     }
     $PROXY_ENABLED_FLAG && stop_proxies
     
-    show_step "Tearing down existing tunnel..."
-    teardown_wireguard
-    show_success "Tunnel torn down"
-    echo ""
+    # Silent teardown
+    teardown_wireguard >/dev/null 2>&1
     
-    if initial_connect; then
+    if initial_connect "true"; then
         [ -n "$RESTART_SERVICES" ] && { restart_services "$RESTART_SERVICES"; echo ""; }
         
         # Start proxies after VPN is up
         $PROXY_ENABLED_FLAG && start_proxies
         
         if $PF_ENABLED; then
-            show_step "Restarting port forwarding..."
             /app/scripts/port_forwarding.sh &
             
             # Wait for port forwarding to complete (max 30s)
@@ -161,7 +173,6 @@ main_loop() {
     $PROXY_ENABLED_FLAG && start_proxies
     
     if $PF_ENABLED; then
-        show_step "Initializing port forwarding..."
         /app/scripts/port_forwarding.sh &
         
         # Wait for port forwarding to complete (max 30s)
@@ -219,4 +230,3 @@ main_loop() {
 
 initial_connect || { show_error "Initial connection failed"; exit 1; }
 main_loop
-
