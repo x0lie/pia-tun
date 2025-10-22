@@ -306,7 +306,7 @@ teardown_wireguard() {
 #═══════════════════════════════════════════════════════════════════════════════
 
 setup_vpn() {
-    local quiet_mode="${1:-false}"
+    local restart="${1:-false}"
     
     show_step "Authenticating with PIA..."
     local token=$(authenticate) && show_success "Authentication successful" || return 1
@@ -343,7 +343,7 @@ setup_vpn() {
 	echo ""
     fi
     
-    if [ "$quiet_mode" != "true" ]; then
+    if [ "$restart" != "true" ]; then
         show_step "Configuring WireGuard tunnel..."
         generate_config "$token" && show_success "Tunnel configured" || return 1
 	echo ""

@@ -12,7 +12,6 @@ source /app/scripts/proxy_go.sh
 DISABLE_IPV6=${DISABLE_IPV6:-true}
 DNS=${DNS:-pia}
 LOCAL_NETWORK=${LOCAL_NETWORK:-""}
-QUIET_MODE=true
 KILLSWITCH_EXEMPT_PORTS=${KILLSWITCH_EXEMPT_PORTS:-""}
 HANDSHAKE_TIMEOUT=${HANDSHAKE_TIMEOUT:-180}
 CHECK_INTERVAL=${CHECK_INTERVAL:-15}
@@ -57,7 +56,7 @@ cleanup() {
 trap cleanup SIGTERM SIGINT SIGQUIT
 
 initial_connect() {
-    local quiet_mode="${1:-false}"
+    local restart="${1:-false}"
     
     [ ! -f /tmp/reconnecting ] && print_banner
     
@@ -68,7 +67,7 @@ initial_connect() {
     fi
     
     # Only show these steps if not in quiet mode (first connection)
-    if [ "$quiet_mode" != "true" ]; then
+    if [ "$restart" != "true" ]; then
         setup_pre_tunnel_killswitch
         
         # Debug info
@@ -90,7 +89,7 @@ initial_connect() {
         setup_pre_tunnel_killswitch >/dev/null 2>&1
     fi
     
-    /app/scripts/vpn.sh "$quiet_mode" || return 1
+    /app/scripts/vpn.sh "$restart" || return 1
     
     # Save server latency for metrics
     [ -f /tmp/server_latency_temp ] && mv /tmp/server_latency_temp /tmp/server_latency
@@ -100,7 +99,7 @@ initial_connect() {
         { show_error "Failed to bring up tunnel"; return 1; }
     echo ""
     
-    if [ "$quiet_mode" != "true" ]; then
+    if [ "$restart" != "true" ]; then
         finalize_killswitch	
 	echo ""
     else
