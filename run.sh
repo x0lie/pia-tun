@@ -95,22 +95,16 @@ initial_connect() {
     # Save server latency for metrics
     [ -f /tmp/server_latency_temp ] && mv /tmp/server_latency_temp /tmp/server_latency
     
-    # Only show tunnel establishment if not in quiet mode
+    show_step "Establishing VPN connection..."
+    bring_up_wireguard /etc/wireguard/pia.conf && show_success "VPN tunnel established" || \
+        { show_error "Failed to bring up tunnel"; return 1; }
+    echo ""
+    
     if [ "$quiet_mode" != "true" ]; then
-        show_step "Establishing VPN connection..."
-        bring_up_wireguard /etc/wireguard/pia.conf && show_success "VPN tunnel established" || \
-            { show_error "Failed to bring up tunnel"; return 1; }
-        sleep 3
-        echo ""
-        
-        finalize_killswitch
-        echo ""
+        finalize_killswitch	
+	echo ""
     else
-        # Silent operations during reconnection
-        bring_up_wireguard /etc/wireguard/pia.conf >/dev/null 2>&1 || \
-            { show_error "Failed to bring up tunnel"; return 1; }
-        sleep 3
-        finalize_killswitch >/dev/null 2>&1
+        finalize_killswitch >/dev/null 1>&1
     fi
     
     show_step "Verifying connection..."
