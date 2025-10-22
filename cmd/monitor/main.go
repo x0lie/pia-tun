@@ -964,7 +964,8 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 			m.mu.Lock()
 			if err == nil {
 				if m.failureCount > 0 {
-					m.showSuccess("VPN connection restored")
+					fmt.Printf("\r  %s✓%s VPN connection restored%s\n", 
+						colorGreen, colorReset, strings.Repeat(" ", 30))
 					m.failureCount = 0
 					m.reconnectAttempts = 0
 				}
@@ -975,7 +976,7 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 
 				if m.failureCount < m.config.MaxFailures {
 					// Overwrite previous line to show updated count
-					fmt.Printf("\r  %s⚠%s VPN health check failed (%d/%d)%s\n", 
+					fmt.Printf("\r  %s⚠%s VPN health check failed (%d/%d)%s", 
 						colorYellow, colorReset, m.failureCount, m.config.MaxFailures, strings.Repeat(" ", 20))
 					
 					if m.config.DebugMode && m.failureCount == 1 {

@@ -345,11 +345,6 @@ while true; do
         if bind_port "$PAYLOAD" "$SIGNATURE"; then
             debug_log "✓ Keep-alive bind #${BIND_COUNT} successful"
             
-            # Only log every 6th bind (once per hour) to avoid log spam
-            if [ $((BIND_COUNT % 6)) -eq 0 ]; then
-                HOURS_LOGGED=$((BIND_COUNT * BIND_INTERVAL / 3600))
-                echo "[$(date '+%Y-%m-%d %H:%M:%S')] ${grn}✓${nc} Keep-alive active (${HOURS_LOGGED}h, bind #${BIND_COUNT})"
-            fi
         else
             show_warning "Keep-alive bind #${BIND_COUNT} failed"
             debug_log "ERROR: Bind failed, will retry in ${BIND_INTERVAL}s"

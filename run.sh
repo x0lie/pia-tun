@@ -127,8 +127,8 @@ perform_reconnection() {
         [ -n "$RESTART_SERVICES" ] && { restart_services "$RESTART_SERVICES"; echo ""; }
         
         # Start proxies after VPN is up
-        $PROXY_ENABLED_FLAG && start_proxies
-        
+        $PROXY_ENABLED_FLAG && start_proxies >/dev/null 1>&1
+
         if $PF_ENABLED; then
             /app/scripts/port_forwarding.sh &
             

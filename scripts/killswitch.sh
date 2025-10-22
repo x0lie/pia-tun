@@ -21,7 +21,6 @@ source /app/scripts/ui.sh
 USE_NFTABLES=false
 if command -v nft >/dev/null 2>&1; then
     USE_NFTABLES=true
-    show_success "Using nftables (high-performance mode)"
 else
     show_warning "nftables not available, falling back to iptables"
 fi

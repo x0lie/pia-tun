@@ -71,9 +71,7 @@ stop_proxies_silent() {
 
 # Stop proxy servers (with output)
 stop_proxies() {
-    show_step "Stopping proxy servers..."
     stop_proxies_silent
-    show_success "Proxy servers stopped"
 }
 
 # Restart proxy servers (used after VPN reconnection)
