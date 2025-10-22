@@ -185,10 +185,7 @@ main_loop() {
     
     # IMPROVED: Add stabilization delay before starting monitor
     # This gives the VPN time to establish handshakes and settle
-    show_step "Waiting for VPN to stabilize..."
     sleep 5
-    show_success "VPN ready"
-    echo ""
     
     show_step "Starting health monitor..."
     /usr/local/bin/monitor &
