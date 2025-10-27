@@ -964,8 +964,7 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 			m.mu.Lock()
 			if err == nil {
 				if m.failureCount > 0 {
-					fmt.Printf("\r  %s✓%s VPN connection restored%s\n", 
-						colorGreen, colorReset, strings.Repeat(" ", 30))
+					fmt.Printf("\r%s\r", strings.Repeat(" ", 60))
 					m.failureCount = 0
 					m.reconnectAttempts = 0
 				}
