@@ -1,106 +1,110 @@
-# Build stage for Go binaries
 FROM golang:1.21-alpine AS go-builder
 
 WORKDIR /build
 
-# Copy go.mod first (for better caching)
 COPY go.mod ./
-
-# Copy all Go source files
 COPY cmd/ ./cmd/
 
-# Build proxy binary
+# Build with maximum optimization
 RUN cd cmd/proxy && \
-    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags="-w -s" -o /build/proxy .
+    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
+    -ldflags="-w -s" \
+    -trimpath \
+    -o /build/proxy . && \
+    cd ../monitor && \
+    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
+    -ldflags="-w -s" \
+    -trimpath \
+    -o /build/monitor . && \
+    # Make them executable HERE (not after COPY)
+    chmod +x /build/proxy /build/monitor
 
-# Build monitor binary
-RUN cd cmd/monitor && \
-    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags="-w -s" -o /build/monitor .
+FROM alpine:3.19
 
-# Final stage
-FROM alpine:latest
-
-# Install dependencies
+# Install MINIMAL runtime dependencies
+# Removed: bind-tools (1.8MB), nftables (722KB)
 RUN apk update && \
     apk add --no-cache \
-        jq \
-        bc \
-        curl \
         bash \
-        nftables \
-        iptables \
-        ip6tables \
-        iputils \
-        bind-tools \
-        wireguard-tools \
+        curl \
         ca-certificates \
+        wireguard-tools-wg \
         iproute2 \
-        procps \
-        docker-cli && \
-    rm -rf /var/cache/apk/*
+        iptables \
+        jq \
+        iputils \
+        nftables \
+        bind-tools \
+    && \
+    bash --version && \
+    wg --version && \
+    rm -rf \
+        /var/cache/apk/* \
+        /tmp/* \
+        /var/tmp/* \
+        /usr/share/man \
+        /usr/share/doc \
+        /usr/share/info \
+        /usr/share/licenses \
+        /usr/lib/python* \
+        /root/.cache \
+    && \
+    find /usr/bin /usr/sbin /bin /sbin -type f -executable \
+        -exec strip --strip-all {} \; 2>/dev/null || true
 
-# Add PIA certificate
-ADD https://raw.githubusercontent.com/pia-foss/desktop/master/daemon/res/ca/rsa_4096.crt /app/ca.rsa.4096.crt
-
-# Copy Go binaries from builder
+# Copy Go binaries (already executable from builder)
 COPY --from=go-builder /build/proxy /usr/local/bin/proxy
 COPY --from=go-builder /build/monitor /usr/local/bin/monitor
 
-# Create working directory
+# Copy certificate
+COPY ca/rsa_4096.crt /app/ca.rsa.4096.crt
+
 WORKDIR /app
 
 # Copy scripts
 COPY run.sh /app/run.sh
 COPY scripts/ /app/scripts/
-RUN chmod +x /app/run.sh /app/scripts/*.sh /usr/local/bin/proxy /usr/local/bin/monitor
 
-# Create config directory
-RUN mkdir -p /etc/wireguard
+# CRITICAL FIX: Only chmod scripts, NOT the Go binaries (prevents 10MB duplication)
+RUN chmod +x /app/run.sh /app/scripts/*.sh && \
+    mkdir -p /etc/wireguard && \
+    ls -la /usr/local/bin/proxy /usr/local/bin/monitor
 
-# Volume for configs and port file
 VOLUME ["/etc/wireguard"]
-ENV PORT_FILE=/etc/wireguard/port
 
-# Enhanced health check that validates VPN is working
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
     CMD /app/scripts/healthcheck.sh
 
-# Environment variables - VPN Configuration
-ENV KILLSWITCH_EXEMPT_PORTS=""
-ENV DISABLE_IPV6=true
-ENV LOCAL_NETWORK=""
-ENV DNS="pia"
+ENV KILLSWITCH_EXEMPT_PORTS="" \
+    DISABLE_IPV6=true \
+    LOCAL_NETWORK="" \
+    DNS="pia" \
+    PORT_FILE=/etc/wireguard/port \
+    PROXY_ENABLED=false \
+    SOCKS5_PORT=1080 \
+    HTTP_PROXY_PORT=8888 \
+    PROXY_USER="" \
+    PROXY_PASS="" \
+    PORT_API_ENABLED=false \
+    PORT_API_TYPE="" \
+    PORT_API_URL="" \
+    PORT_API_USER="" \
+    PORT_API_PASS="" \
+    HANDSHAKE_TIMEOUT=360 \
+    CHECK_INTERVAL=15 \
+    MAX_FAILURES=3 \
+    RECONNECT_DELAY=5 \
+    MAX_RECONNECT_DELAY=300 \
+    RESTART_SERVICES="" \
+    MONITOR_DEBUG=false \
+    MONITOR_PARALLEL_CHECKS=true \
+    MONITOR_FAST_FAIL=false \
+    MONITOR_WATCH_HANDSHAKE=true \
+    MONITOR_STARTUP_GRACE=30 \
+    METRICS=false \
+    METRICS_PORT=9090
 
-# Environment variables - Proxy Configuration
-ENV PROXY_ENABLED=false
-ENV SOCKS5_PORT=1080
-ENV HTTP_PROXY_PORT=8888
-ENV PROXY_USER=""
-ENV PROXY_PASS=""
-
-# Environment variables - Port Forwarding API
-ENV PORT_API_ENABLED=false
-ENV PORT_API_TYPE=""
-ENV PORT_API_URL=""
-ENV PORT_API_USER=""
-ENV PORT_API_PASS=""
-
-# Environment variables - Auto-Reconnect Configuration (IMPROVED DEFAULTS)
-ENV HANDSHAKE_TIMEOUT=360
-ENV CHECK_INTERVAL=15
-ENV MAX_FAILURES=3
-ENV RECONNECT_DELAY=5
-ENV MAX_RECONNECT_DELAY=300
-ENV RESTART_SERVICES=""
-ENV MONITOR_DEBUG=false
-ENV MONITOR_PARALLEL_CHECKS=true
-ENV MONITOR_FAST_FAIL=false
-ENV MONITOR_WATCH_HANDSHAKE=true
-ENV MONITOR_STARTUP_GRACE=30
-ENV METRICS=false
-ENV METRICS_PORT=9090
-
-# Expose proxy ports and metrics port
 EXPOSE 1080 8888 9090
 
+# Use bash
 ENTRYPOINT ["/app/run.sh"]
