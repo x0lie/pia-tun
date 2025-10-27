@@ -13,12 +13,14 @@ import (
 	"time"
 )
 
-var (
-	proxyUser = os.Getenv("PROXY_USER")
-	proxyPass = os.Getenv("PROXY_PASS")
-	httpPort  = getEnvOrDefault("HTTP_PROXY_PORT", "8888")
-	socksPort = getEnvOrDefault("SOCKS5_PORT", "1080")
-)
+func getSecret(envVar, secretPath string) string {
+	// Check secret file first (Docker/Kubernetes secrets)
+	if data, err := os.ReadFile(secretPath); err == nil {
+		return strings.TrimSpace(string(data))
+	}
+	// Fallback to environment variable
+	return os.Getenv(envVar)
+}
 
 func getEnvOrDefault(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
@@ -26,6 +28,13 @@ func getEnvOrDefault(key, defaultValue string) string {
 	}
 	return defaultValue
 }
+
+var (
+	proxyUser = getSecret("PROXY_USER", "/run/secrets/proxy_user")
+	proxyPass = getSecret("PROXY_PASS", "/run/secrets/proxy_pass")
+	httpPort  = getEnvOrDefault("HTTP_PROXY_PORT", "8888")
+	socksPort = getEnvOrDefault("SOCKS5_PORT", "1080")
+)
 
 // HTTP Proxy Handler
 type HTTPProxyHandler struct{}

@@ -1,0 +1,23 @@
+# docker-compose.yml with secrets
+version: '3.8'
+services:
+  pia-vpn:
+    image: your-image
+    secrets:
+      - pia_user
+      - pia_pass
+    environment:
+      PIA_LOCATION: ca_toronto
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    security_opt:
+      - no-new-privileges:true
+
+secrets:
+  pia_user:
+    file: ./secrets/pia_user.txt
+  pia_pass:
+    file: ./secrets/pia_pass.txt

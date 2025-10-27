@@ -10,13 +10,26 @@ source /app/scripts/ui.sh
 #═══════════════════════════════════════════════════════════════════════════════
 
 authenticate() {
-    local response=$(curl -s --insecure -u "$PIA_USER:$PIA_PASS" \
+    # Support Docker secrets (preferred) or environment variables
+    local pia_user="${PIA_USER}"
+    local pia_pass="${PIA_PASS}"
+    
+    # Check for Docker secrets first
+    if [ -f "/run/secrets/pia_user" ]; then
+        pia_user=$(cat /run/secrets/pia_user)
+    fi
+    if [ -f "/run/secrets/pia_pass" ]; then
+        pia_pass=$(cat /run/secrets/pia_pass)
+    fi
+    
+    local response=$(curl -s --insecure -u "$pia_user:$pia_pass" \
         "https://www.privateinternetaccess.com/gtoken/generateToken")
     
     local token=$(echo "$response" | jq -r '.token // empty')
     [ -z "$token" ] && { show_error "Authentication failed"; return 1; }
     
     echo "$token" > /tmp/pia_token
+    chmod 600 /tmp/pia_token
     echo "$token"
 }
 
