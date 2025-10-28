@@ -29,11 +29,6 @@ check_internet() {
             return 0
         fi
         
-        # Test 4: Ping Cloudflare
-        if timeout 5 ping -c 1 -W 3 1.1.1.1 >/dev/null 2>&1; then
-            return 0
-        fi
-        
         attempt=$((attempt + 1))
         [ $attempt -le $max_attempts ] && sleep 2
     done

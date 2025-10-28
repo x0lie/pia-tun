@@ -13,6 +13,7 @@ import (
 	"time"
 )
 
+// Helper function to get secret from file or environment
 func getSecret(envVar, secretPath string) string {
 	// Check secret file first (Docker/Kubernetes secrets)
 	if data, err := os.ReadFile(secretPath); err == nil {
@@ -29,11 +30,12 @@ func getEnvOrDefault(key, defaultValue string) string {
 	return defaultValue
 }
 
+// These will be initialized in main()
 var (
-	proxyUser = getSecret("PROXY_USER", "/run/secrets/proxy_user")
-	proxyPass = getSecret("PROXY_PASS", "/run/secrets/proxy_pass")
-	httpPort  = getEnvOrDefault("HTTP_PROXY_PORT", "8888")
-	socksPort = getEnvOrDefault("SOCKS5_PORT", "1080")
+	proxyUser string
+	proxyPass string
+	httpPort  string
+	socksPort string
 )
 
 // HTTP Proxy Handler
@@ -269,6 +271,12 @@ func startSOCKS5() {
 }
 
 func main() {
+	// Initialize configuration at runtime (not package init)
+	proxyUser = getSecret("PROXY_USER", "/run/secrets/proxy_user")
+	proxyPass = getSecret("PROXY_PASS", "/run/secrets/proxy_pass")
+	httpPort = getEnvOrDefault("HTTP_PROXY_PORT", "8888")
+	socksPort = getEnvOrDefault("SOCKS5_PORT", "1080")
+
 	// Start SOCKS5 proxy in goroutine
 	go startSOCKS5()
 
@@ -287,6 +295,7 @@ func main() {
 		authStatus = "authenticated"
 	}
 	log.Printf("HTTP proxy listening on :%s (%s)", httpPort, authStatus)
+	log.Printf("SOCKS5 proxy listening on :%s (%s)", socksPort, authStatus)
 
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("Failed to start HTTP proxy: %v", err)

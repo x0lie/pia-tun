@@ -10,16 +10,26 @@ source /app/scripts/ui.sh
 #═══════════════════════════════════════════════════════════════════════════════
 
 authenticate() {
-    # Support Docker secrets (preferred) or environment variables
-    local pia_user="${PIA_USER}"
-    local pia_pass="${PIA_PASS}"
+    local pia_user=""
+    local pia_pass=""
     
     # Check for Docker secrets first
     if [ -f "/run/secrets/pia_user" ]; then
         pia_user=$(cat /run/secrets/pia_user)
+    elif [ -n "${PIA_USER:-}" ]; then
+        pia_user="${PIA_USER}"
     fi
+    
     if [ -f "/run/secrets/pia_pass" ]; then
         pia_pass=$(cat /run/secrets/pia_pass)
+    elif [ -n "${PIA_PASS:-}" ]; then
+        pia_pass="${PIA_PASS}"
+    fi
+    
+    # Validate we have credentials from either source
+    if [ -z "$pia_user" ] || [ -z "$pia_pass" ]; then
+        show_error "PIA credentials not found (set PIA_USER/PIA_PASS or use Docker secrets)"
+        return 1
     fi
     
     local response=$(curl -s --insecure -u "$pia_user:$pia_pass" \

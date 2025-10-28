@@ -22,27 +22,40 @@ readonly LOG_FILE="/tmp/proxy.log"
 # Start proxy server (single Go binary handles both SOCKS5 and HTTP)
 start_proxies() {
     show_step "Starting proxy servers..."
-    
+
     # Kill any existing proxy process
     stop_proxies_silent
     sleep 1
-    
-    # Export environment variables for Go proxy
-    export SOCKS5_PORT HTTP_PROXY_PORT PROXY_USER PROXY_PASS
-    
+
+    # Determine credentials (check secrets first, then env vars)
+    local proxy_user="${PROXY_USER:-}"
+    local proxy_pass="${PROXY_PASS:-}"
+
+    if [ -f "/run/secrets/proxy_user" ]; then
+        proxy_user=$(cat /run/secrets/proxy_user)
+    fi
+    if [ -f "/run/secrets/proxy_pass" ]; then
+        proxy_pass=$(cat /run/secrets/proxy_pass)
+    fi
+
+    # Export for Go proxy (it will also check secrets, but this ensures compatibility)
+    export PROXY_USER="$proxy_user"
+    export PROXY_PASS="$proxy_pass"
+    export SOCKS5_PORT HTTP_PROXY_PORT
+
     # Start the Go proxy in background
     /usr/local/bin/proxy >"$LOG_FILE" 2>&1 &
     local proxy_pid=$!
-    
+
     # Wait and verify it started
     sleep 3
     if kill -0 $proxy_pid 2>/dev/null; then
         echo "$proxy_pid" > "$PID_FILE"
-        
-        if [ -n "$PROXY_USER" ] && [ -n "$PROXY_PASS" ]; then
+
+        if [ -n "$proxy_user" ] && [ -n "$proxy_pass" ]; then
             show_success "Proxy servers ready (authenticated):"
-            echo "      SOCKS5: socks5://$PROXY_USER:****@<container-ip>:$SOCKS5_PORT"
-            echo "      HTTP:   http://$PROXY_USER:****@<container-ip>:$HTTP_PROXY_PORT"
+            echo "      SOCKS5: socks5://$proxy_user:****@<container-ip>:$SOCKS5_PORT"
+            echo "      HTTP:   http://$proxy_user:****@<container-ip>:$HTTP_PROXY_PORT"
         else
             show_success "Proxy servers ready:"
             echo "      SOCKS5: socks5://<container-ip>:$SOCKS5_PORT"

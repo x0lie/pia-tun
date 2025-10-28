@@ -1,23 +1,48 @@
-# docker-compose.yml with secrets
-version: '3.8'
 services:
   pia-vpn:
-    image: your-image
+    image: olsonalexw/k8s-wireguard-pia:latest
+    container_name: pia-tun
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - PIA_LOCATION=ca_ontario,ca_ontario-so,ca_toronto,ca
+      - PORT_FORWARDING=true
+      - PROXY_ENABLED=true
+      - PORT_API_ENABLED=true
+      - PORT_API_TYPE=qbittorrent
+      - PORT_API_URL=http://localhost:8080  # Fixed: Matches WEBUI_PORT
+      - LOCAL_NETWORK=192.168.1.0/24,172.17.0.0/16  # Fixed: Your LAN + Docker default (adjust if needed)
+    restart: unless-stopped
     secrets:
       - pia_user
       - pia_pass
+      - proxy_user
+      - proxy_pass
+    ports:
+      - 8080:8080
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
     environment:
-      PIA_LOCATION: ca_toronto
-    cap_drop:
-      - ALL
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    security_opt:
-      - no-new-privileges:true
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Toronto
+      - WEBUI_PORT=8080
+    volumes:
+      - ./qbittorrent/config:/config
+      - ./qbittorrent/downloads:/downloads
+    network_mode: "service:pia-vpn"
+    depends_on:
+      - pia-vpn
+    restart: unless-stopped
 
 secrets:
   pia_user:
-    file: ./secrets/pia_user.txt
+    file: ./secrets/pia_user
   pia_pass:
-    file: ./secrets/pia_pass.txt
+    file: ./secrets/pia_pass
+  proxy_user:
+    file: ./secrets/proxy_user
+  proxy_pass:
+    file: ./secrets/proxy_pass
