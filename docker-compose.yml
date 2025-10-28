@@ -12,6 +12,8 @@ services:
       - PORT_API_TYPE=qbittorrent
       - PORT_API_URL=http://localhost:8080  # Fixed: Matches WEBUI_PORT
       - LOCAL_NETWORK=192.168.1.0/24,172.17.0.0/16  # Fixed: Your LAN + Docker default (adjust if needed)
+      - WEBHOOK_URL=http://192.168.1.3:8081/1fca0748-edc1-4edc-bbb8-bf210fec6391   # Replace with the actual unique URL from the tester UI
+      - PF_SIGNATURE_REFRESH_DAYS=0
     restart: unless-stopped
     secrets:
       - pia_user
@@ -36,6 +38,12 @@ services:
     depends_on:
       - pia-vpn
     restart: unless-stopped
+
+  webhook-tester:
+    image: tarampampam/webhook-tester:latest
+    container_name: webhook-tester
+    ports:
+      - "8081:8080"  # Expose the UI on host port 8081
 
 secrets:
   pia_user:

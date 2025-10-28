@@ -109,6 +109,40 @@ format_timestamp() {
     date -d "@$timestamp" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -r "$timestamp" '+%Y-%m-%d %H:%M:%S'
 }
 
+# Send webhook notification for port changes
+notify_webhook() {
+    local port="$1"
+    local ip="${2:-}"
+
+    [ -z "$WEBHOOK_URL" ] && return 0
+
+    debug_log "Sending webhook notification for port $port..."
+
+    # Prepare JSON payload
+    local payload
+    if [ -n "$ip" ]; then
+        payload=$(jq -n --arg port "$port" --arg ip "$ip" \
+            '{port: $port, ip: $ip, timestamp: (now | todateiso8601)}')
+    else
+        payload=$(jq -n --arg port "$port" \
+            '{port: $port, timestamp: (now | todateiso8601)}')
+    fi
+
+    # Send webhook (async, don't block on failure)
+    (
+        response=$(curl -s -m 10 -X POST \
+            -H "Content-Type: application/json" \
+            -d "$payload" \
+            "$WEBHOOK_URL" 2>&1)
+
+        if [ $? -eq 0 ]; then
+            debug_log "Webhook notification sent successfully"
+        else
+            debug_log "Webhook notification failed: $response"
+        fi
+    ) &
+}
+
 # Initial signature acquisition with retry
 show_step "Acquiring port forward signature..."
 MAX_RETRIES=5
@@ -160,6 +194,12 @@ fi
 # Always write to file immediately
 echo "$PORT" > "${PORT_FILE:-/etc/wireguard/port}"
 debug_log "Port written to ${PORT_FILE:-/etc/wireguard/port}"
+
+# Get public VPN IP for webhook (async to avoid blocking)
+(
+    VPN_IP=$(timeout 5 curl -s --interface pia https://api.ipify.org 2>/dev/null || echo "")
+    notify_webhook "$PORT" "$VPN_IP"
+) &
 
 # Try API update if enabled (with retry logic)
 if [ "$PORT_API_ENABLED" = "true" ]; then
@@ -285,6 +325,12 @@ while true; do
                 PORT=$NEW_PORT
                 echo "$PORT" > "${PORT_FILE:-/etc/wireguard/port}"
                 
+                # Notify webhook of port change (async)
+                (
+                    VPN_IP=$(timeout 5 curl -s --interface pia https://api.ipify.org 2>/dev/null || echo "")
+                    notify_webhook "$PORT" "$VPN_IP"
+                ) &
+
                 # Update API if enabled (with retry)
                 if [ "$PORT_API_ENABLED" = "true" ]; then
                     debug_log "Updating API with new port..."
