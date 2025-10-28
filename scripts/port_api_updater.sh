@@ -123,6 +123,16 @@ update_port_api() {
             update_rtorrent "$port" "$PORT_API_URL"
             result=$?
             ;;
+	custom)
+            if [ -z "$PORT_API_CMD" ]; then
+                return 1
+            fi
+    
+            # Replace {PORT} placeholder in custom command
+            local cmd="${PORT_API_CMD//\{PORT\}/$port}"
+            eval "$cmd" >/dev/null 2>&1
+            result=$?
+            ;;
         *)
             return 1
             ;;
