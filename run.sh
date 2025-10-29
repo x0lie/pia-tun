@@ -22,6 +22,9 @@ SOCKS5_PORT=${SOCKS5_PORT:-1080}
 HTTP_PROXY_PORT=${HTTP_PROXY_PORT:-8888}
 PORT_API_ENABLED=${PORT_API_ENABLED:-false}
 
+# Auto-enable PORT_API if PORT_API_TYPE is set
+[ -n "${PORT_API_TYPE:-}" ] && PORT_API_ENABLED=true
+
 # Export only what child processes actually need
 export DISABLE_IPV6 DNS LOCAL_NETWORK KILLSWITCH_EXEMPT_PORTS
 export CHECK_INTERVAL MAX_FAILURES HANDSHAKE_TIMEOUT
@@ -186,7 +189,8 @@ main_loop() {
     # IMPROVED: Add stabilization delay before starting monitor
     # This gives the VPN time to establish handshakes and settle
     sleep 5
-    
+    echo "" 
+
     show_step "Starting health monitor..."
     /usr/local/bin/monitor &
     show_success "Health monitor active (PID: $!)"
