@@ -89,8 +89,7 @@ main() {
     wait_for_port_file
 
     # Check if this is a restart (reconnecting marker exists)
-    if [ -f /tmp/reconnecting ]; then
-    else
+    if [ ! -f /tmp/reconnecting ]; then
         show_step "Port monitor starting (API: $PORT_API_TYPE)"
     fi
 
