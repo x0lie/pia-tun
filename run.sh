@@ -110,6 +110,7 @@ initial_connect() {
         finalize_killswitch >/dev/null 1>&1
     fi
     
+    sleep 2
     show_step "Verifying connection..."
     verify_connection && echo "" || { show_warning "Connection verification found issues"; echo ""; }
 }

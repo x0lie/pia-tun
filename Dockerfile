@@ -35,6 +35,7 @@ RUN apk update && \
         iputils \
         nftables \
         bind-tools \
+        tzdata \
     && \
     bash --version && \
     wg --version && \
@@ -75,7 +76,8 @@ VOLUME ["/etc/wireguard"]
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
     CMD /app/scripts/healthcheck.sh
 
-ENV KILLSWITCH_EXEMPT_PORTS="" \
+ENV TZ=UTC \
+    KILLSWITCH_EXEMPT_PORTS="" \
     DISABLE_IPV6=true \
     LOCAL_NETWORK="" \
     DNS="pia" \
