@@ -901,113 +901,110 @@ func (m *Monitor) watchHandshakes(ctx context.Context, failChan chan<- struct{})
 }
 
 func (m *Monitor) monitorLoop(ctx context.Context) {
-	ticker := time.NewTicker(m.config.CheckInterval)
-	defer ticker.Stop()
-	
-	failChan := make(chan struct{}, 1)
-	
-	if m.config.WatchHandshake {
-		go m.watchHandshakes(ctx, failChan)
-	}
-	
-	if m.metrics != nil {
-		latency := m.getServerLatency()
-		if latency > 0 {
-			m.metrics.SetServerLatency(latency)
-		}
-	}
+    ticker := time.NewTicker(m.config.CheckInterval)
+    defer ticker.Stop()
+    
+    failChan := make(chan struct{}, 1)
+    
+    if m.config.WatchHandshake {
+        go m.watchHandshakes(ctx, failChan)
+    }
+    
+    if m.metrics != nil {
+        latency := m.getServerLatency()
+        if latency > 0 {
+            m.metrics.SetServerLatency(latency)
+        }
+    }
 
-	graceEnd := time.Now().Add(m.config.StartupGracePeriod)
-	if m.config.StartupGracePeriod > 0 {
-		m.debugLog("Starting with %v grace period until %v", 
-			m.config.StartupGracePeriod, graceEnd.Format("15:04:05"))
-	}
+    graceEnd := time.Now().Add(m.config.StartupGracePeriod)
+    if m.config.StartupGracePeriod > 0 {
+        m.debugLog("Starting with %v grace period until %v", 
+            m.config.StartupGracePeriod, graceEnd.Format("15:04:05"))
+    }
 
-	for {
-		select {
-		case <-ctx.Done():
-			m.debugLog("Monitor loop received shutdown signal")
-			return
-		
-		case <-failChan:
-			m.mu.Lock()
-			m.failureCount = m.config.MaxFailures
-			m.consecutiveSuccess = 0
-			m.showError("Handshake timeout detected - immediate reconnect")
-			m.mu.Unlock()
-			m.triggerReconnect()
-			m.mu.Lock()
-			m.failureCount = 0
-			m.mu.Unlock()
-			graceEnd = time.Now().Add(m.config.StartupGracePeriod)
-			
-		case <-ticker.C:
-			if time.Now().Before(graceEnd) {
-				m.debugLog("In grace period, skipping check")
-				continue
-			}
+    for {
+        select {
+        case <-ctx.Done():
+            m.debugLog("Monitor loop received shutdown signal")
+            return
+        
+        case <-failChan:
+            m.mu.Lock()
+            m.failureCount = m.config.MaxFailures
+            m.consecutiveSuccess = 0
+            m.showError("Handshake timeout detected - immediate reconnect")
+            m.mu.Unlock()
+            m.triggerReconnect()
+            m.mu.Lock()
+            m.failureCount = 0
+            m.mu.Unlock()
+            graceEnd = time.Now().Add(m.config.StartupGracePeriod)
+            
+        case <-ticker.C:
+            if time.Now().Before(graceEnd) {
+                m.debugLog("In grace period, skipping check")
+                continue
+            }
 
-			result, err := m.checkVPNHealth()
-			
-			if m.metrics != nil {
-				rx, tx, _ := m.getTransferBytes()
-				handshake, _ := m.getLastHandshakeTime()
-				server := m.getCurrentServer()
-				ip := m.getCurrentIP()
-				m.metrics.UpdateVPNInfo(server, ip, rx, tx, handshake)
-			}
-			
-			if m.metrics != nil {
-				m.metrics.RecordCheck(err == nil, result.CheckDuration)
-			}
-			
-			m.mu.Lock()
-			if err == nil {
-				if m.failureCount > 0 {
-					fmt.Printf("\r%s\r", strings.Repeat(" ", 60))
-					m.failureCount = 0
-					m.reconnectAttempts = 0
-				}
-				m.consecutiveSuccess++
-			} else {
-				m.failureCount++
-				m.consecutiveSuccess = 0
+            result, err := m.checkVPNHealth()
+            
+            if m.metrics != nil {
+                rx, tx, _ := m.getTransferBytes()
+                handshake, _ := m.getLastHandshakeTime()
+                server := m.getCurrentServer()
+                ip := m.getCurrentIP()
+                m.metrics.UpdateVPNInfo(server, ip, rx, tx, handshake)
+            }
+            
+            if m.metrics != nil {
+                m.metrics.RecordCheck(err == nil, result.CheckDuration)
+            }
+            
+            m.mu.Lock()
+            if err == nil {
+                if m.failureCount > 0 {
+                    fmt.Printf("\r%s\r", strings.Repeat(" ", 60))
+                    m.failureCount = 0
+                    m.reconnectAttempts = 0
+                }
+                m.consecutiveSuccess++
+            } else {
+                m.failureCount++
+                m.consecutiveSuccess = 0
 
-				if m.failureCount < m.config.MaxFailures {
-					// Overwrite previous line to show updated count
-					fmt.Printf("\r  %s⚠%s VPN health check failed (%d/%d)%s", 
-						colorYellow, colorReset, m.failureCount, m.config.MaxFailures, strings.Repeat(" ", 20))
-					
-					if m.config.DebugMode && m.failureCount == 1 {
-						fmt.Printf("  %sℹ%s Debug info:\n", colorYellow, colorReset)
-						cmd := exec.Command("wg", "show", "pia")
-						output, err := cmd.Output()
-						if err == nil {
-							lines := strings.Split(string(output), "\n")
-							for i, line := range lines {
-								if i >= 5 {
-									break
-								}
-								fmt.Printf("    %s\n", line)
-							}
-						}
-					}
-				} else {
-					// Overwrite the last warning with the final error
-					fmt.Printf("\r  %s✗%s VPN connection lost (%d/%d)%s\n", 
-						colorRed, colorReset, m.failureCount, m.config.MaxFailures, strings.Repeat(" ", 20))
-					m.mu.Unlock()
-					m.triggerReconnect()
-					m.mu.Lock()
-					m.failureCount = 0
-					m.mu.Unlock()
-					graceEnd = time.Now().Add(m.config.StartupGracePeriod)
-					m.mu.Lock()
-				}
-			}
-			m.mu.Unlock()
-		}
-	}
+                if m.failureCount < m.config.MaxFailures {
+                    
+                    if m.config.DebugMode && m.failureCount == 1 {
+                        fmt.Printf("  %sℹ%s Debug info:\n", colorYellow, colorReset)
+                        cmd := exec.Command("wg", "show", "pia")
+                        output, err := cmd.Output()
+                        if err == nil {
+                            lines := strings.Split(string(output), "\n")
+                            for i, line := range lines {
+                                if i >= 5 {
+                                    break
+                                }
+                                fmt.Printf("    %s\n", line)
+                            }
+                        }
+                    }
+                } else {
+                    // Print the final error only when reaching MaxFailures
+                    fmt.Printf("\n  %s✗%s VPN connection lost (%d/%d)%s\n", 
+                        colorRed, colorReset, m.failureCount, m.config.MaxFailures, strings.Repeat(" ", 20))
+                    m.mu.Unlock()
+                    m.triggerReconnect()
+                    m.mu.Lock()
+                    m.failureCount = 0
+                    m.mu.Unlock()
+                    graceEnd = time.Now().Add(m.config.StartupGracePeriod)
+                    m.mu.Lock()
+                }
+            }
+            m.mu.Unlock()
+        }
+    }
 }
 
 func main() {
