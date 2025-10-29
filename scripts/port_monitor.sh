@@ -35,51 +35,51 @@ monitor_port_changes() {
     while true; do
         # Read current port
         CURRENT_PORT=$(cat "$PORT_FILE" 2>/dev/null || echo "")
-        
+
         # Skip if port file is empty or invalid
         if [[ -z "$CURRENT_PORT" || ! "$CURRENT_PORT" =~ ^[0-9]+$ ]]; then
             sleep $CHECK_INTERVAL
             continue
         fi
-        
+
         # Determine if we should try to update
         local should_update=false
         local reason=""
-        
+
         # Case 1: Port changed
         if [ "$CURRENT_PORT" != "$LAST_PORT" ]; then
             should_update=true
             reason="port changed from $LAST_PORT to $CURRENT_PORT"
         fi
-        
+
         # Case 2: Previous update failed (keep retrying)
         if [ "$LAST_UPDATE_SUCCESS" = false ] && [ -n "$LAST_PORT" ]; then
             should_update=true
             reason="retrying previous failed update"
         fi
-        
+
         # Try to update if needed
         if [ "$should_update" = true ]; then
             if update_port_api "$CURRENT_PORT"; then
                 # Success!
                 if [ "$CURRENT_PORT" != "$LAST_PORT" ]; then
-                    echo "[$(date '+%H:%M:%S')] ${grn}✓${nc} $PORT_API_TYPE port updated to $CURRENT_PORT"
+                    echo "  ${grn}✓${nc} [$(date '+%H:%M:%S')] $PORT_API_TYPE port updated to $CURRENT_PORT"
                 else
-                    echo "[$(date '+%H:%M:%S')] ${grn}✓${nc} $PORT_API_TYPE now reachable, port set to $CURRENT_PORT"
+                    echo "  ${grn}✓${nc} [$(date '+%H:%M:%S')] $PORT_API_TYPE now reachable, port set to $CURRENT_PORT"
                 fi
                 LAST_UPDATE_SUCCESS=true
             else
                 # Failed - will retry next cycle
                 if [ "$LAST_UPDATE_SUCCESS" = true ]; then
                     # Only log on first failure (not on every retry)
-                    echo "[$(date '+%H:%M:%S')] ${ylw}⚠${nc} $PORT_API_TYPE not reachable, will retry"
+                    echo "  ${ylw}⚠${nc} [$(date '+%H:%M:%S')] $PORT_API_TYPE not reachable, will retry"
                 fi
                 LAST_UPDATE_SUCCESS=false
             fi
-            
+
             LAST_PORT="$CURRENT_PORT"
         fi
-        
+
         sleep $CHECK_INTERVAL
     done
 }
@@ -87,14 +87,13 @@ monitor_port_changes() {
 # Entry point
 main() {
     wait_for_port_file
-    
+
     # Check if this is a restart (reconnecting marker exists)
     if [ -f /tmp/reconnecting ]; then
-        echo "[$(date '+%H:%M:%S')] ${blu}↻${nc} Port monitor restarted"
     else
         show_step "Port monitor starting (API: $PORT_API_TYPE)"
     fi
-    
+
     monitor_port_changes
 }
 

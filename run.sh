@@ -61,19 +61,19 @@ trap cleanup SIGTERM SIGINT SIGQUIT
 
 initial_connect() {
     local restart="${1:-false}"
-    
+
     [ ! -f /tmp/reconnecting ] && print_banner
-    
+
     # OPTIMIZED: Only capture real IP if not already captured
     if [ ! -f /tmp/real_ip ]; then
         capture_real_ip
         echo ""
     fi
-    
+
     # Only show these steps if not in quiet mode (first connection)
     if [ "$restart" != "true" ]; then
         setup_pre_tunnel_killswitch
-        
+
         # Debug info
         if $DEBUG_MODE; then
             echo ""
@@ -92,24 +92,24 @@ initial_connect() {
         # Silent killswitch setup during reconnection
         setup_pre_tunnel_killswitch >/dev/null 2>&1
     fi
-    
+
     /app/scripts/vpn.sh "$restart" || return 1
-    
+
     # Save server latency for metrics
     [ -f /tmp/server_latency_temp ] && mv /tmp/server_latency_temp /tmp/server_latency
-    
+
     show_step "Establishing VPN connection..."
     bring_up_wireguard /etc/wireguard/pia.conf && show_success "VPN tunnel established" || \
         { show_error "Failed to bring up tunnel"; return 1; }
     echo ""
-    
+
     if [ "$restart" != "true" ]; then
-        finalize_killswitch	
-	echo ""
+        finalize_killswitch
+        echo ""
     else
         finalize_killswitch >/dev/null 1>&1
     fi
-    
+
     sleep 2
     show_step "Verifying connection..."
     verify_connection && echo "" || { show_warning "Connection verification found issues"; echo ""; }
@@ -118,25 +118,25 @@ initial_connect() {
 perform_reconnection() {
     show_reconnecting
     touch /tmp/reconnecting
-    
+
     $PF_ENABLED && {
         pkill -f "port_forwarding.sh" 2>/dev/null || true
         pkill -f "port_monitor.sh" 2>/dev/null || true
     }
     $PROXY_ENABLED_FLAG && stop_proxies
-    
+
     # Silent teardown
     teardown_wireguard >/dev/null 2>&1
-    
+
     if initial_connect "true"; then
         [ -n "$RESTART_SERVICES" ] && { restart_services "$RESTART_SERVICES"; echo ""; }
-        
+
         # Start proxies after VPN is up
         $PROXY_ENABLED_FLAG && start_proxies >/dev/null 1>&1
 
         if $PF_ENABLED; then
             /app/scripts/port_forwarding.sh &
-            
+
             # Wait for port forwarding to complete (max 30s)
             local waited=0
             while [ $waited -lt 30 ]; do
@@ -144,7 +144,7 @@ perform_reconnection() {
                 sleep 1
                 waited=$((waited + 1))
             done
-            
+
             # Restart port monitor if API is enabled
             if [ "$PORT_API_ENABLED" = "true" ]; then
                 show_step "Restarting port monitor..."
@@ -155,7 +155,7 @@ perform_reconnection() {
         else
             show_vpn_connected
         fi
-        
+
         show_step "Health monitor still running..."
         show_success "Check interval: ${CHECK_INTERVAL}s, Failure threshold: ${MAX_FAILURES}"
         echo ""
@@ -169,10 +169,10 @@ perform_reconnection() {
 main_loop() {
     # Start proxies first if enabled
     $PROXY_ENABLED_FLAG && start_proxies
-    
+
     if $PF_ENABLED; then
         /app/scripts/port_forwarding.sh &
-        
+
         # Wait for port forwarding to complete (max 30s)
         local waited=0
         while [ $waited -lt 30 ]; do
@@ -180,37 +180,37 @@ main_loop() {
             sleep 1
             waited=$((waited + 1))
         done
-        
+
         # Start port monitor if API is enabled
         [ "$PORT_API_ENABLED" = "true" ] && /app/scripts/port_monitor.sh &
     else
         show_vpn_connected
     fi
-    
+
     # IMPROVED: Add stabilization delay before starting monitor
     # This gives the VPN time to establish handshakes and settle
     sleep 5
-    echo "" 
+    echo ""
 
     show_step "Starting health monitor..."
     /usr/local/bin/monitor &
     show_success "Health monitor active (PID: $!)"
     show_success "Check interval: ${CHECK_INTERVAL}s, Failure threshold: ${MAX_FAILURES}"
-    
+
     # Show active detection modes
     [ "$MONITOR_FAST_FAIL" = "true" ] && show_success "Fast-fail mode: enabled"
     [ "$MONITOR_PARALLEL_CHECKS" = "true" ] && show_success "Parallel checks: enabled"
     [ "$MONITOR_WATCH_HANDSHAKE" = "true" ] && show_success "Handshake monitoring: enabled (timeout: ${HANDSHAKE_TIMEOUT}s)"
-    
+
     if [ "$METRICS" = "true" ]; then
         echo "  ${grn}✓${nc} Metrics available on port ${METRICS_PORT:-9090}"
         echo "      Prometheus:  http://<container-ip>:${METRICS_PORT:-9090}/metrics?format=prometheus"
         echo "      JSON:        http://<container-ip>:${METRICS_PORT:-9090}/metrics"
         echo "      Health:      http://<container-ip>:${METRICS_PORT:-9090}/health"
     fi
-    
+
     echo ""
-    
+
     while true; do
         if [ -f /tmp/vpn_reconnect_requested ]; then
             rm -f /tmp/vpn_reconnect_requested
