@@ -28,7 +28,7 @@ authenticate() {
     
     # Validate we have credentials from either source
     if [ -z "$pia_user" ] || [ -z "$pia_pass" ]; then
-        show_error "PIA credentials not found (set PIA_USER/PIA_PASS or use Docker secrets)"
+        show_error "PIA credentials not found (set PIA_USER/PIA_PASS or use Docker secrets)" >&2
         return 1
     fi
     
@@ -36,7 +36,7 @@ authenticate() {
         "https://www.privateinternetaccess.com/gtoken/generateToken")
     
     local token=$(echo "$response" | jq -r '.token // empty')
-    [ -z "$token" ] && { show_error "Authentication failed"; return 1; }
+    [ -z "$token" ] && { show_error "Authentication failed" >&2; return 1; }
     
     echo "$token" > /tmp/pia_token
     chmod 600 /tmp/pia_token
@@ -47,7 +47,7 @@ find_server() {
     local max_latency="${MAX_LATENCY:-1}"
     local all_regions=$(curl -s 'https://serverlist.piaservers.net/vpninfo/servers/v6' | head -1)
     
-    [ ${#all_regions} -lt 1000 ] && { show_error "Could not fetch server list"; return 1; }
+    [ ${#all_regions} -lt 1000 ] && { show_error "Could not fetch server list" >&2; return 1; }
     
     # Parse locations (comma or space separated)
     local locations="${PIA_LOCATION}"
@@ -332,7 +332,9 @@ setup_vpn() {
     local restart="${1:-false}"
     
     show_step "Authenticating with PIA..."
-    local token=$(authenticate) && show_success "Authentication successful" || return 1
+    local token
+    token=$(authenticate) || return 1
+    show_success "Authentication successful"
     echo ""
     
     # Parse location display
