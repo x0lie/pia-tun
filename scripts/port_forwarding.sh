@@ -114,7 +114,7 @@ notify_webhook() {
     local port="$1"
     local ip="${2:-}"
 
-    [ -z "$WEBHOOK_URL" ] && return 0
+    [ -z "${WEBHOOK_URL-}" ] && return 0
 
     debug_log "Sending webhook notification for port $port..."
 
