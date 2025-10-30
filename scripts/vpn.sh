@@ -32,11 +32,78 @@ authenticate() {
         return 1
     fi
     
-    local response=$(curl -s --insecure -u "$pia_user:$pia_pass" \
+    local response=$(curl -s --insecure -w "\n%{http_code}" -u "$pia_user:$pia_pass" \
         "https://www.privateinternetaccess.com/gtoken/generateToken")
     
-    local token=$(echo "$response" | jq -r '.token // empty')
-    [ -z "$token" ] && { show_error "Authentication failed" >&2; return 1; }
+    # Split response into body and HTTP code
+    local http_code=$(echo "$response" | tail -1)
+    local body=$(echo "$response" | sed '$d')
+    
+    # Check HTTP status first
+    if [ "$http_code" = "000" ]; then
+        show_error "Authentication failed: Cannot reach PIA servers (check internet connection)" >&2
+        return 1
+    elif [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
+        show_error "Authentication failed: Invalid username or password" >&2
+        if [ "${DEBUG_AUTH:-false}" = "true" ]; then
+            echo "  ${blu}[DEBUG]${nc} HTTP $http_code - Unauthorized" >&2
+        fi
+        return 1
+    elif [ "$http_code" != "200" ]; then
+        show_error "Authentication failed: PIA server error (HTTP $http_code)" >&2
+        if [ "${DEBUG_AUTH:-false}" = "true" ]; then
+            echo "  ${blu}[DEBUG]${nc} Response body: $body" >&2
+        fi
+        return 1
+    fi
+    
+    # Check if we got a valid JSON response
+    if ! echo "$body" | jq -e . >/dev/null 2>&1; then
+        show_error "Authentication failed: Invalid response from PIA" >&2
+        if [ "${DEBUG_AUTH:-false}" = "true" ]; then
+            echo "  ${blu}[DEBUG]${nc} Raw response: $body" >&2
+        fi
+        return 1
+    fi
+    
+    # Try to extract token
+    local token=$(echo "$body" | jq -r '.token // empty')
+    
+    # If no token, check for error message from PIA
+    if [ -z "$token" ]; then
+        local error_msg=$(echo "$body" | jq -r '.message // .error // empty')
+        
+        # Show raw response in debug mode
+        if [ "${DEBUG_AUTH:-false}" = "true" ]; then
+            echo "  ${blu}[DEBUG]${nc} Raw API response: $body" >&2
+        fi
+        
+        if [ -n "$error_msg" ]; then
+            # Handle known error messages
+            case "$error_msg" in
+                "authentication failed")
+                    show_error "Authentication failed: Invalid username or password" >&2
+                    ;;
+                *expired*)
+                    show_error "Authentication failed: Account expired" >&2
+                    ;;
+                *suspend*)
+                    show_error "Authentication failed: Account suspended" >&2
+                    ;;
+                *connection*|*limit*)
+                    show_error "Authentication failed: Too many active connections" >&2
+                    ;;
+                *)
+                    show_error "Authentication failed: $error_msg" >&2
+                    ;;
+            esac
+        else
+            # Fallback if PIA doesn't provide a specific error
+            show_error "Authentication failed: Unknown error (no token received)" >&2
+        fi
+        
+        return 1
+    fi
     
     echo "$token" > /tmp/pia_token
     chmod 600 /tmp/pia_token
