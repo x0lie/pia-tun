@@ -52,7 +52,6 @@ cleanup() {
     pkill -f "port_forwarding.sh" 2>/dev/null || true
     pkill -f "port_monitor.sh" 2>/dev/null || true
     teardown_wireguard
-    cleanup_killswitch
     show_success "Cleanup complete"
     exit 0
 }
@@ -64,35 +63,31 @@ initial_connect() {
 
     [ ! -f /tmp/reconnecting ] && print_banner
 
-    # OPTIMIZED: Only capture real IP if not already captured
+    # Only capture real IP if not already captured
     if [ ! -f /tmp/real_ip ]; then
         capture_real_ip
         echo ""
     fi
 
-    # Only show these steps if not in quiet mode (first connection)
+    # Setup baseline killswitch first (includes bypass route allowances)
     if [ "$restart" != "true" ]; then
-        setup_pre_tunnel_killswitch
+        setup_baseline_killswitch
+        echo ""
 
         # Debug info
         if $DEBUG_MODE; then
             echo ""
-            echo "  ${blu}[DEBUG]${nc} Pre-tunnel firewall rules:"
-            iptables -L VPN_OUT -n -v 2>/dev/null | head -20 | sed 's/^/    /' || \
+            echo "  ${blu}[DEBUG]${nc} Baseline killswitch rules:"
+            if command -v nft >/dev/null 2>&1; then
                 nft list chain inet vpn_filter output 2>/dev/null | head -20 | sed 's/^/    /'
+            else
+                iptables -L VPN_OUT -n -v 2>/dev/null | head -20 | sed 's/^/    /'
+            fi
             echo ""
-            echo "  ${blu}[DEBUG]${nc} Testing connectivity:"
-            printf "    DNS: "
-            nslookup www.privateinternetaccess.com >/dev/null 2>&1 && echo "${grn}OK${nc}" || echo "${red}FAIL${nc}"
-            printf "    HTTPS: "
-            curl -s --max-time 5 https://www.privateinternetaccess.com >/dev/null 2>&1 && echo "${grn}OK${nc}" || echo "${red}FAIL${nc}"
         fi
-        echo ""
-    else
-        # Silent killswitch setup during reconnection
-        setup_pre_tunnel_killswitch >/dev/null 2>&1
     fi
 
+    # VPN setup (uses surgical exemptions internally)
     /app/scripts/vpn.sh "$restart" || return 1
 
     # Save server latency for metrics
@@ -101,16 +96,16 @@ initial_connect() {
     show_step "Establishing VPN connection..."
     bring_up_wireguard /etc/wireguard/pia.conf && show_success "VPN tunnel established" || \
         { show_error "Failed to bring up tunnel"; return 1; }
-    echo ""
 
+    # Add VPN to killswitch (now it's safe to route through VPN)
     if [ "$restart" != "true" ]; then
-        finalize_killswitch
-        echo ""
+        add_vpn_to_killswitch
+        show_ruleset_stats
     else
-        finalize_killswitch >/dev/null 1>&1
+        add_vpn_to_killswitch >/dev/null 2>&1
     fi
 
-    sleep 2
+    echo ""
     show_step "Verifying connection..."
     verify_connection && echo "" || { show_warning "Connection verification found issues"; echo ""; }
 }
@@ -125,14 +120,14 @@ perform_reconnection() {
     }
     $PROXY_ENABLED_FLAG && stop_proxies
 
-    # Silent teardown
-    teardown_wireguard >/dev/null 2>&1
+    # Teardown VPN (removes from killswitch first, then tears down interface)
+    teardown_wireguard
 
     if initial_connect "true"; then
         [ -n "$RESTART_SERVICES" ] && { restart_services "$RESTART_SERVICES"; echo ""; }
 
         # Start proxies after VPN is up
-        $PROXY_ENABLED_FLAG && start_proxies >/dev/null 1>&1
+        $PROXY_ENABLED_FLAG && start_proxies >/dev/null 2>&1
 
         if $PF_ENABLED; then
             /app/scripts/port_forwarding.sh &
@@ -190,7 +185,6 @@ main_loop() {
     # IMPROVED: Add stabilization delay before starting monitor
     # This gives the VPN time to establish handshakes and settle
     sleep 5
-    echo ""
 
     show_step "Starting health monitor..."
     /usr/local/bin/monitor &

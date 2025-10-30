@@ -10,7 +10,7 @@ PF_GATEWAY=$(cat /tmp/pf_gateway)
 
 # Configuration
 BIND_INTERVAL=${PF_BIND_INTERVAL:-600}
-SIGNATURE_REFRESH_DAYS=${PF_SIGNATURE_REFRESH_DAYS:-7}
+SIGNATURE_REFRESH_DAYS=${PF_SIGNATURE_REFRESH_DAYS:-30}
 SIGNATURE_SAFETY_HOURS=${PF_SIGNATURE_SAFETY_HOURS:-24}
 DEBUG_PF=${DEBUG_PF:-false}
 
@@ -256,8 +256,6 @@ fi
 
 show_vpn_connected
 touch /tmp/port_forwarding_complete
-
-echo ""
 
 # Main loop with dual-purpose refreshing
 LAST_SIGNATURE_TIME=$(date +%s)

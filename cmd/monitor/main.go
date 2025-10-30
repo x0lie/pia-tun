@@ -447,116 +447,12 @@ func (m *Monitor) checkExternalConnectivity() bool {
 	return m.checkExternalConnectivitySerial()
 }
 
-// NEW: Temporarily allow WAN connectivity test by bypassing VPN routing
-func (m *Monitor) allowWANTest() error {
-	m.debugLog("Adding temporary killswitch exception for WAN test")
-	
-	// Check if using nftables or iptables
-	cmd := exec.Command("nft", "list", "table", "inet", "vpn_filter")
-	if err := cmd.Run(); err == nil {
-		// Using nftables - add temporary rule at high priority
-		m.debugLog("Using nftables for WAN exception")
-		
-		// Add rule to allow traffic to 1.1.1.1:80 (before DROP rules)
-		cmd = exec.Command("nft", "insert", "rule", "inet", "vpn_filter", "output", 
-			"ip", "daddr", "1.1.1.1", "tcp", "dport", "80", "accept")
-		if err := cmd.Run(); err != nil {
-			m.debugLog("Failed to add nftables WAN rule: %v", err)
-			return err
-		}
-		
-		// Also add 8.8.8.8 as backup
-		cmd = exec.Command("nft", "insert", "rule", "inet", "vpn_filter", "output",
-			"ip", "daddr", "8.8.8.8", "tcp", "dport", "80", "accept")
-		cmd.Run()
-		
-	} else {
-		// Using iptables - add temporary rule at top of chain
-		m.debugLog("Using iptables for WAN exception")
-		
-		cmd = exec.Command("iptables", "-I", "VPN_OUT", "1",
-			"-d", "1.1.1.1", "-p", "tcp", "--dport", "80", "-j", "ACCEPT")
-		if err := cmd.Run(); err != nil {
-			m.debugLog("Failed to add iptables WAN rule: %v", err)
-			return err
-		}
-		
-		// Also add 8.8.8.8 as backup
-		cmd = exec.Command("iptables", "-I", "VPN_OUT", "1",
-			"-d", "8.8.8.8", "-p", "tcp", "--dport", "80", "-j", "ACCEPT")
-		cmd.Run()
-	}
-	
-	// CRITICAL: Add routing rules to bypass VPN table for our test IPs
-	// This ensures packets go to main routing table instead of broken VPN
-	m.debugLog("Adding bypass routing rules for WAN test")
-	
-	// Route 1.1.1.1 via main table (priority 50, before VPN rules at 200)
-	cmd = exec.Command("ip", "rule", "add", "to", "1.1.1.1", "table", "main", "priority", "50")
-	if err := cmd.Run(); err != nil {
-		m.debugLog("Failed to add routing rule for 1.1.1.1: %v", err)
-	}
-	
-	// Route 8.8.8.8 via main table
-	cmd = exec.Command("ip", "rule", "add", "to", "8.8.8.8", "table", "main", "priority", "50")
-	if err := cmd.Run(); err != nil {
-		m.debugLog("Failed to add routing rule for 8.8.8.8: %v", err)
-	}
-	
-	return nil
-}
-
-// NEW: Remove temporary WAN test exception
-func (m *Monitor) removeWANTest() {
-	m.debugLog("Removing temporary killswitch exception for WAN test")
-	
-	// Remove routing rules first
-	m.debugLog("Removing bypass routing rules")
-	
-	cmd := exec.Command("ip", "rule", "del", "to", "1.1.1.1", "table", "main", "priority", "50")
-	cmd.Run()
-	
-	cmd = exec.Command("ip", "rule", "del", "to", "8.8.8.8", "table", "main", "priority", "50")
-	cmd.Run()
-	
-	// Check if using nftables
-	cmd = exec.Command("nft", "list", "table", "inet", "vpn_filter")
-	if err := cmd.Run(); err == nil {
-		// Using nftables - remove the rules we added
-		m.debugLog("Removing nftables WAN exception")
-		
-		// Delete 1.1.1.1 rule
-		cmd = exec.Command("nft", "delete", "rule", "inet", "vpn_filter", "output",
-			"ip", "daddr", "1.1.1.1", "tcp", "dport", "80", "accept")
-		cmd.Run()
-		
-		// Delete 8.8.8.8 rule
-		cmd = exec.Command("nft", "delete", "rule", "inet", "vpn_filter", "output",
-			"ip", "daddr", "8.8.8.8", "tcp", "dport", "80", "accept")
-		cmd.Run()
-		
-		return
-	}
-	
-	// Using iptables
-	m.debugLog("Removing iptables WAN exception")
-	
-	// Delete 1.1.1.1 rule
-	cmd = exec.Command("iptables", "-D", "VPN_OUT",
-		"-d", "1.1.1.1", "-p", "tcp", "--dport", "80", "-j", "ACCEPT")
-	cmd.Run()
-	
-	// Delete 8.8.8.8 rule
-	cmd = exec.Command("iptables", "-D", "VPN_OUT",
-		"-d", "8.8.8.8", "-p", "tcp", "--dport", "80", "-j", "ACCEPT")
-	cmd.Run()
-}
-
-// NEW: Check WAN connectivity using direct connection (with killswitch exception)
+// Check WAN connectivity using bypass routes (no firewall manipulation needed!)
+// These IPs (1.1.1.1, 8.8.8.8) are in routing table 100 and bypass the VPN
 func (m *Monitor) checkWANConnectivity(timeout time.Duration) bool {
-	m.debugLog("Checking WAN connectivity (bypass VPN)")
+	m.debugLog("Checking WAN connectivity (bypass routes)")
 	
-	// Try direct connection to Cloudflare
+	// Try direct connection to Cloudflare (routes via eth0 automatically)
 	dialer := &net.Dialer{
 		Timeout: timeout,
 	}
@@ -583,18 +479,9 @@ func (m *Monitor) checkWANConnectivity(timeout time.Duration) bool {
 	return false
 }
 
-// NEW: Wait for WAN with exponential backoff (infinite loop until success)
+// Wait for WAN with exponential backoff (infinite loop until success)
 func (m *Monitor) waitForWAN() bool {
 	fmt.Printf("\n%s▶%s Testing WAN before reconnect...\n", colorBlue, colorReset)
-	
-	// Add temporary killswitch exception for testing
-	if err := m.allowWANTest(); err != nil {
-		m.debugLog("Could not add WAN test exception: %v", err)
-	}
-	defer m.removeWANTest()
-	
-	// Give the firewall rules a moment to apply
-	time.Sleep(500 * time.Millisecond)
 	
 	// Record start time for downtime calculation
 	downSince := time.Now()
@@ -628,7 +515,7 @@ func (m *Monitor) waitForWAN() bool {
 		
 		if m.checkWANConnectivity(5 * time.Second) {
 			downtime := time.Since(downSince)
-			fmt.Printf("\r%s", strings.Repeat(" ", 80)) // Clear the line
+			fmt.Printf("\r%s\r", strings.Repeat(" ", 80)) // Clear the line
 			fmt.Printf("\r")
 			m.showSuccess(fmt.Sprintf("Internet restored (down for %s)", formatDuration(downtime)))
 			if m.metrics != nil {
@@ -651,7 +538,7 @@ func (m *Monitor) waitForWAN() bool {
 		
 		if m.checkWANConnectivity(5 * time.Second) {
 			downtime := time.Since(downSince)
-			fmt.Printf("\r%s", strings.Repeat(" ", 80)) // Clear the line
+			fmt.Printf("\r%s\r", strings.Repeat(" ", 80)) // Clear the line
 			fmt.Printf("\r")
 			m.showSuccess(fmt.Sprintf("Internet restored (down for %s)", formatDuration(downtime)))
 			if m.metrics != nil {
@@ -805,7 +692,7 @@ func (m *Monitor) triggerReconnect() {
 	m.reconnectAttempts++
 	m.mu.Unlock()
 	
-	// NEW: Check WAN connectivity before reconnecting
+	// Check WAN connectivity before reconnecting (uses bypass routes, no firewall changes!)
 	m.waitForWAN()
 	
 	if err := os.WriteFile("/tmp/vpn_reconnect_requested", []byte{}, 0644); err != nil {

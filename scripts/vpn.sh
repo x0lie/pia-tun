@@ -1,9 +1,28 @@
 #!/bin/bash
 # Unified VPN management - Authentication, server selection, and WireGuard interface
-# Merged from setup_vpn.sh + wireguard.sh for better cohesion
+# Uses surgical firewall exemptions for secure PIA API access
 
 set -e
 source /app/scripts/ui.sh
+source /app/scripts/killswitch.sh
+
+#═══════════════════════════════════════════════════════════════════════════════
+# DNS RESOLUTION (Using bypass Cloudflare DNS)
+#═══════════════════════════════════════════════════════════════════════════════
+
+# Resolve hostname using Cloudflare DNS (1.0.0.1, already in bypass routes)
+resolve_hostname() {
+    local hostname="$1"
+    local ip=$(dig +short "$hostname" @1.0.0.1 +timeout=5 2>/dev/null | head -1)
+    
+    # Validate IP address
+    if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "$ip"
+        return 0
+    else
+        return 1
+    fi
+}
 
 #═══════════════════════════════════════════════════════════════════════════════
 # AUTHENTICATION & SERVER SELECTION
@@ -32,54 +51,53 @@ authenticate() {
         return 1
     fi
     
+    # Resolve PIA auth server IP
+    local auth_ip=$(resolve_hostname "www.privateinternetaccess.com")
+    if [ -z "$auth_ip" ]; then
+        show_error "Cannot resolve privateinternetaccess.com" >&2
+        return 1
+    fi
+    
+    # Add surgical exemption for authentication
+    add_temporary_exemption "$auth_ip" "443" "tcp" "pia_auth"
+    
+    # Perform authentication
     local response=$(curl -s --insecure -w "\n%{http_code}" -u "$pia_user:$pia_pass" \
-        "https://www.privateinternetaccess.com/gtoken/generateToken")
+        --connect-to "www.privateinternetaccess.com::$auth_ip:" \
+        "https://www.privateinternetaccess.com/gtoken/generateToken" 2>/dev/null)
+    
+    # Remove exemption immediately
+    remove_temporary_exemption "pia_auth"
     
     # Split response into body and HTTP code
     local http_code=$(echo "$response" | tail -1)
     local body=$(echo "$response" | sed '$d')
     
-    # Check HTTP status first
+    # Check HTTP status
     if [ "$http_code" = "000" ]; then
-        show_error "Authentication failed: Cannot reach PIA servers (check internet connection)" >&2
+        show_error "Authentication failed: Cannot reach PIA servers" >&2
         return 1
     elif [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
         show_error "Authentication failed: Invalid username or password" >&2
-        if [ "${DEBUG_AUTH:-false}" = "true" ]; then
-            echo "  ${blu}[DEBUG]${nc} HTTP $http_code - Unauthorized" >&2
-        fi
         return 1
     elif [ "$http_code" != "200" ]; then
         show_error "Authentication failed: PIA server error (HTTP $http_code)" >&2
-        if [ "${DEBUG_AUTH:-false}" = "true" ]; then
-            echo "  ${blu}[DEBUG]${nc} Response body: $body" >&2
-        fi
         return 1
     fi
     
-    # Check if we got a valid JSON response
+    # Check if we got valid JSON
     if ! echo "$body" | jq -e . >/dev/null 2>&1; then
         show_error "Authentication failed: Invalid response from PIA" >&2
-        if [ "${DEBUG_AUTH:-false}" = "true" ]; then
-            echo "  ${blu}[DEBUG]${nc} Raw response: $body" >&2
-        fi
         return 1
     fi
     
-    # Try to extract token
+    # Extract token
     local token=$(echo "$body" | jq -r '.token // empty')
     
-    # If no token, check for error message from PIA
     if [ -z "$token" ]; then
         local error_msg=$(echo "$body" | jq -r '.message // .error // empty')
         
-        # Show raw response in debug mode
-        if [ "${DEBUG_AUTH:-false}" = "true" ]; then
-            echo "  ${blu}[DEBUG]${nc} Raw API response: $body" >&2
-        fi
-        
         if [ -n "$error_msg" ]; then
-            # Handle known error messages
             case "$error_msg" in
                 "authentication failed")
                     show_error "Authentication failed: Invalid username or password" >&2
@@ -98,7 +116,6 @@ authenticate() {
                     ;;
             esac
         else
-            # Fallback if PIA doesn't provide a specific error
             show_error "Authentication failed: Unknown error (no token received)" >&2
         fi
         
@@ -112,7 +129,22 @@ authenticate() {
 
 find_server() {
     local max_latency="${MAX_LATENCY:-1}"
-    local all_regions=$(curl -s 'https://serverlist.piaservers.net/vpninfo/servers/v6' | head -1)
+    
+    # Resolve server list API
+    local serverlist_ip=$(resolve_hostname "serverlist.piaservers.net")
+    if [ -z "$serverlist_ip" ]; then
+        show_error "Cannot resolve serverlist.piaservers.net" >&2
+        return 1
+    fi
+    
+    # Add surgical exemption for server list fetch
+    add_temporary_exemption "$serverlist_ip" "443" "tcp" "pia_serverlist"
+    
+    local all_regions=$(curl -s --connect-to "serverlist.piaservers.net::$serverlist_ip:" \
+        'https://serverlist.piaservers.net/vpninfo/servers/v6' | head -1)
+    
+    # Remove exemption immediately
+    remove_temporary_exemption "pia_serverlist"
     
     [ ${#all_regions} -lt 1000 ] && { show_error "Could not fetch server list" >&2; return 1; }
     
@@ -159,15 +191,22 @@ find_server() {
         return 1
     fi
     
-    # Test latency for all candidates
+    # Test latency for all candidates (with surgical exemptions)
     local latencies=$(mktemp)
     local tested=0
     local successful=0
     
     while read -r ip cn location_id location_name; do
         tested=$((tested + 1))
+        
+        # Add surgical exemption for this specific server test
+        add_temporary_exemption "$ip" "443" "tcp" "latency_test_$tested"
+        
         local time_sec=$(curl -k -o /dev/null -s --connect-timeout "$max_latency" \
             --write-out "%{time_connect}" "https://$ip:443" 2>/dev/null || echo "999")
+        
+        # Remove exemption immediately
+        remove_temporary_exemption "latency_test_$tested"
         
         if [[ "$time_sec" != "999" && "$time_sec" != "0.000"* ]]; then
             local time_ms=$(awk "BEGIN {printf \"%.0f\", $time_sec * 1000}")
@@ -188,7 +227,11 @@ find_server() {
         echo "$location_count" > /tmp/location_count
     else
         # Fallback to first server if all timeout
-        read -r ip cn location_id location_name <<< "$(head -1 < "$all_candidates")"
+        read -r ip cn location_id location_name <<< "$(head -1 < "$all_candidates" 2>/dev/null || echo "")"
+        if [ -z "$ip" ]; then
+            rm -f "$latencies"
+            return 1
+        fi
         BEST_IP="$ip"
         BEST_CN="$cn"
         BEST_LOCATION_ID="$location_id"
@@ -229,11 +272,17 @@ generate_config() {
     local private_key=$(wg genkey)
     local public_key=$(echo "$private_key" | wg pubkey)
     
+    # Add surgical exemption for addKey registration (port 1337)
+    add_temporary_exemption "$endpoint_ip" "1337" "tcp" "pia_addkey"
+    
     local response=$(curl -s -k -G \
         --connect-to "$meta_cn::$endpoint_ip:" \
         --data-urlencode "pt=$token" \
         --data-urlencode "pubkey=$public_key" \
         "https://$meta_cn:1337/addKey")
+    
+    # Remove exemption immediately
+    remove_temporary_exemption "pia_addkey"
     
     # Parse all JSON fields at once (single jq call)
     local json_data=$(echo "$response" | jq -r '[.status, .server_key, .peer_ip, (.server_port // 1337), (.server_vip // "")] | @tsv')
@@ -375,6 +424,11 @@ bring_up_wireguard() {
 
 # Teardown WireGuard tunnel
 teardown_wireguard() {
+    # CRITICAL: Remove VPN from killswitch FIRST
+    # This prevents any leak window where interface is down but firewall still references it
+    remove_vpn_from_killswitch
+    
+    # Now safe to tear down interface
     if wg show pia >/dev/null 2>&1; then
         ip link set pia down 2>/dev/null || true
         ip link del pia 2>/dev/null || true
@@ -383,11 +437,11 @@ teardown_wireguard() {
     # Clean up local network exceptions
     cleanup_local_exceptions
     
-    # Restore working DNS
+    # Restore working DNS (uses bypass route to 1.0.0.1)
     {
         echo "# DNS for reconnection"
+        echo "nameserver 1.0.0.1"
         echo "nameserver 1.1.1.1"
-        echo "nameserver 8.8.8.8"
     } > /etc/resolv.conf
 }
 
