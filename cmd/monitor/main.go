@@ -450,33 +450,31 @@ func (m *Monitor) checkExternalConnectivity() bool {
 // Check WAN connectivity using bypass routes (no firewall manipulation needed!)
 // These IPs (1.1.1.1, 8.8.8.8) are in routing table 100 and bypass the VPN
 func (m *Monitor) checkWANConnectivity(timeout time.Duration) bool {
-	m.debugLog("Checking WAN connectivity (bypass routes)")
-	
-	// Try direct connection to Cloudflare (routes via eth0 automatically)
-	dialer := &net.Dialer{
-		Timeout: timeout,
-	}
-	
-	// Try 1.1.1.1 first
-	conn, err := dialer.Dial("tcp", "1.1.1.1:80")
-	if err == nil {
-		conn.Close()
-		m.debugLog("WAN check successful (1.1.1.1)")
-		return true
-	}
-	m.debugLog("1.1.1.1 failed: %v", err)
-	
-	// Try 8.8.8.8 as backup
-	conn, err = dialer.Dial("tcp", "8.8.8.8:80")
-	if err == nil {
-		conn.Close()
-		m.debugLog("WAN check successful (8.8.8.8)")
-		return true
-	}
-	m.debugLog("8.8.8.8 failed: %v", err)
-	
-	m.debugLog("All WAN checks failed")
-	return false
+    m.debugLog("Checking WAN connectivity (bypass routes)")
+
+    dialer := &net.Dialer{Timeout: timeout}
+
+    // NIST time servers on TCP port 13 (DAYTIME)
+    targets := []string{
+        "129.6.15.28:13",   // time-a-g.nist.gov
+        "129.6.15.29:13",   // time-b-g.nist.gov
+        "132.163.96.1:13",  // time-a-b.nist.gov
+        "132.163.97.1:13",  // time-a-wwv.nist.gov
+        "128.138.140.44:13", // utcnist.colorado.edu
+    }
+
+    for _, target := range targets {
+        conn, err := dialer.Dial("tcp", target)
+        if err == nil {
+            conn.Close()
+            m.debugLog("WAN check successful (%s)", target)
+            return true
+        }
+        m.debugLog("%s failed: %v", target, err)
+    }
+
+    m.debugLog("All WAN checks failed")
+    return false
 }
 
 // Wait for WAN with exponential backoff (infinite loop until success)

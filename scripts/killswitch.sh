@@ -48,15 +48,14 @@ setup_bypass_routes() {
     
     show_step "Setting up bypass routing table..."
     
-    # Create bypass routing table (table 100)
-    # This routes specific traffic directly to eth0, bypassing VPN
     ip route add default via "$gateway" dev "$interface" table 100 2>/dev/null || true
     
-    # Priority 50 = before VPN rules (200), after local networks (100)
-    # These IPs ALWAYS route via eth0, no firewall involvement needed
-    ip rule add to 1.1.1.1 table 100 priority 50 2>/dev/null || true      # WAN check
-    ip rule add to 8.8.8.8 table 100 priority 50 2>/dev/null || true      # WAN check backup
-    ip rule add to 1.0.0.1 table 100 priority 50 2>/dev/null || true      # Cloudflare DNS
+    # Bypass only for new WAN check IPs
+    ip rule add to 129.6.15.28 table 100 priority 50 2>/dev/null || true
+    ip rule add to 129.6.15.29 table 100 priority 50 2>/dev/null || true
+    ip rule add to 132.163.96.1 table 100 priority 50 2>/dev/null || true
+    ip rule add to 132.163.97.1 table 100 priority 50 2>/dev/null || true
+    ip rule add to 128.138.140.44 table 100 priority 50 2>/dev/null || true
     
     show_success "Bypass routes configured (WAN checks will use $interface)"
     echo ""
@@ -64,10 +63,12 @@ setup_bypass_routes() {
 
 cleanup_bypass_routes() {
     # Clean up bypass routing rules
-    ip rule del to 1.1.1.1 table 100 priority 50 2>/dev/null || true
-    ip rule del to 8.8.8.8 table 100 priority 50 2>/dev/null || true
-    ip rule del to 1.0.0.1 table 100 priority 50 2>/dev/null || true
-    
+    ip rule del to 129.6.15.28 table 100 priority 50 2>/dev/null || true
+    ip rule del to 129.6.15.29 table 100 priority 50 2>/dev/null || true
+    ip rule del to 132.163.96.1 table 100 priority 50 2>/dev/null || true
+    ip rule del to 132.163.97.1 table 100 priority 50 2>/dev/null || true
+    ip rule del to 128.138.140.44 table 100 priority 50 2>/dev/null || true
+
     # Remove bypass table routes
     ip route del default table 100 2>/dev/null || true
 }
@@ -176,7 +177,7 @@ nft_apply_baseline_killswitch() {
     # 2. Bypass routing destinations (1.1.1.1, 8.8.8.8, 1.0.0.1)
     # MUST come before established/related to allow initial SYN packets!
     # These are handled by routing table 100
-    nft add rule inet vpn_filter output ip daddr { 1.1.1.1, 8.8.8.8, 1.0.0.1 } accept comment "bypass_routes"
+    nft add rule inet vpn_filter output ip daddr { 129.6.15.28, 129.6.15.29, 132.163.96.1, 132.163.97.1, 128.138.140.44 } accept comment "bypass_routes"
     
     # 3. Established/Related (bulk of traffic)
     nft add rule inet vpn_filter output ct state established,related accept
@@ -377,9 +378,11 @@ ipt_add_standard_rules() {
     
     # Bypass routing destinations MUST come before established/related
     # to allow initial SYN packets!
-    ipt_add_fw_rule "VPN_OUT" -d 1.1.1.1 -j ACCEPT -m comment --comment "bypass_routes"
-    ipt_add_fw_rule "VPN_OUT" -d 8.8.8.8 -j ACCEPT -m comment --comment "bypass_routes"
-    ipt_add_fw_rule "VPN_OUT" -d 1.0.0.1 -j ACCEPT -m comment --comment "bypass_routes"
+    ipt_add_fw_rule "VPN_OUT" -d 129.6.15.28 -j ACCEPT -m comment --comment "bypass_routes"
+    ipt_add_fw_rule "VPN_OUT" -d 129.6.15.29 -j ACCEPT -m comment --comment "bypass_routes"
+    ipt_add_fw_rule "VPN_OUT" -d 132.163.96.1 -j ACCEPT -m comment --comment "bypass_routes"
+    ipt_add_fw_rule "VPN_OUT" -d 132.163.97.1 -j ACCEPT -m comment --comment "bypass_routes"
+    ipt_add_fw_rule "VPN_OUT" -d 128.138.140.44 -j ACCEPT -m comment --comment "bypass_routes"
     
     ipt_add_fw_rule "VPN_OUT" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
     

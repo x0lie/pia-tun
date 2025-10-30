@@ -13,9 +13,24 @@ source /app/scripts/killswitch.sh
 # Resolve hostname using Cloudflare DNS (1.0.0.1, already in bypass routes)
 resolve_hostname() {
     local hostname="$1"
-    local ip=$(dig +short "$hostname" @1.0.0.1 +timeout=5 2>/dev/null | head -1)
     
-    # Validate IP address
+    # Try 1.0.0.1 first
+    add_temporary_exemption "1.0.0.1" "53" "udp" "dns_resolve"
+    add_temporary_exemption "1.0.0.1" "53" "tcp" "dns_resolve"
+    local ip=$(dig +short "$hostname" @1.0.0.1 +timeout=5 2>/dev/null | head -1)
+    remove_temporary_exemption "dns_resolve"
+    
+    if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "$ip"
+        return 0
+    fi
+    
+    # Fallback to 1.1.1.1
+    add_temporary_exemption "1.1.1.1" "53" "udp" "dns_resolve_fallback"
+    add_temporary_exemption "1.1.1.1" "53" "tcp" "dns_resolve_fallback"
+    ip=$(dig +short "$hostname" @1.1.1.1 +timeout=5 2>/dev/null | head -1)
+    remove_temporary_exemption "dns_resolve_fallback"
+    
     if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         echo "$ip"
         return 0
