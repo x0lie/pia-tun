@@ -175,16 +175,13 @@ main_loop() {
             sleep 1
             waited=$((waited + 1))
         done
-
-        # Start port monitor if API is enabled
-        [ "$PORT_API_ENABLED" = "true" ] && /app/scripts/port_monitor.sh &
     else
         show_vpn_connected
     fi
 
     # IMPROVED: Add stabilization delay before starting monitor
     # This gives the VPN time to establish handshakes and settle
-    sleep 5
+    sleep 1
 
     show_step "Starting health monitor..."
     /usr/local/bin/monitor &
@@ -193,7 +190,6 @@ main_loop() {
 
     # Show active detection modes
     [ "$MONITOR_FAST_FAIL" = "true" ] && show_success "Fast-fail mode: enabled"
-    [ "$MONITOR_PARALLEL_CHECKS" = "true" ] && show_success "Parallel checks: enabled"
     [ "$MONITOR_WATCH_HANDSHAKE" = "true" ] && show_success "Handshake monitoring: enabled (timeout: ${HANDSHAKE_TIMEOUT}s)"
 
     if [ "$METRICS" = "true" ]; then
@@ -204,6 +200,9 @@ main_loop() {
     fi
 
     echo ""
+
+    # Start port monitor if PF and API updater are enabled
+    $PF_ENABLED && [ "$PORT_API_ENABLED" = "true" ] && /app/scripts/port_monitor.sh &
 
     while true; do
         if [ -f /tmp/vpn_reconnect_requested ]; then

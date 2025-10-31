@@ -46,8 +46,6 @@ setup_bypass_routes() {
     [ -z "$gateway" ] && { show_error "Cannot determine default gateway"; return 1; }
     [ -z "$interface" ] && { show_error "Cannot determine default interface"; return 1; }
     
-    show_step "Setting up bypass routing table..."
-    
     ip route add default via "$gateway" dev "$interface" table 100 2>/dev/null || true
     
     # Bypass only for new WAN check IPs
@@ -56,9 +54,6 @@ setup_bypass_routes() {
     ip rule add to 132.163.96.1 table 100 priority 50 2>/dev/null || true
     ip rule add to 132.163.97.1 table 100 priority 50 2>/dev/null || true
     ip rule add to 128.138.140.44 table 100 priority 50 2>/dev/null || true
-    
-    show_success "Bypass routes configured (WAN checks will use $interface)"
-    echo ""
 }
 
 cleanup_bypass_routes() {
@@ -517,7 +512,7 @@ setup_baseline_killswitch() {
         ipt_apply_baseline_killswitch
     fi
     
-    show_success "Killswitch ready (baseline + bypass routes active)"
+    show_success "Killswitch ready"
 }
 
 # Add VPN interface to killswitch (called after VPN is up)
