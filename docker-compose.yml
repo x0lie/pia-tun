@@ -1,25 +1,22 @@
 services:
-  pia-vpn:
-    image: olsonalexw/k8s-wireguard-pia:latest
+  pia-tun:
+    image: x0lie/pia-tun
     container_name: pia-tun
     cap_add:
       - NET_ADMIN
+    cap_drop:
+      - all
     environment:
+      - TZ=America/New_York
       - PIA_LOCATION=ca_ontario,ca_ontario-so,ca_toronto,ca
       - PORT_FORWARDING=true
       - PROXY_ENABLED=true
-      - PORT_API_ENABLED=true
       - PORT_API_TYPE=qbittorrent
-      - PORT_API_URL=http://localhost:8080  # Fixed: Matches WEBUI_PORT
-      - LOCAL_NETWORK=192.168.1.0/24,172.17.0.0/16  # Fixed: Your LAN + Docker default (adjust if needed)
-      - WEBHOOK_URL=http://192.168.1.3:8081/1fca0748-edc1-4edc-bbb8-bf210fec6391   # Replace with the actual unique URL from the tester UI
-      - PF_SIGNATURE_REFRESH_DAYS=0
-    restart: unless-stopped
+      - PORT_API_URL=http://localhost:8080
+      - LOCAL_NETWORK=192.168.1.0/24,172.17.0.0/16                                  # Allows LAN access
     secrets:
       - pia_user
       - pia_pass
-      - proxy_user
-      - proxy_pass
     ports:
       - 8080:8080
 
@@ -27,30 +24,19 @@ services:
     image: lscr.io/linuxserver/qbittorrent:latest
     container_name: qbittorrent
     environment:
+      - TZ=America/New_York
       - PUID=1000
       - PGID=1000
-      - TZ=America/Toronto
       - WEBUI_PORT=8080
     volumes:
       - ./qbittorrent/config:/config
       - ./qbittorrent/downloads:/downloads
-    network_mode: "service:pia-vpn"
+    network_mode: "service:pia-tun"
     depends_on:
-      - pia-vpn
-    restart: unless-stopped
+      - pia-tun
 
-  webhook-tester:
-    image: tarampampam/webhook-tester:latest
-    container_name: webhook-tester
-    ports:
-      - "8081:8080"  # Expose the UI on host port 8081
-
-secrets:
+secrets:                                                                            # Also supports proxy_user and proxy_pass
   pia_user:
     file: ./secrets/pia_user
   pia_pass:
     file: ./secrets/pia_pass
-  proxy_user:
-    file: ./secrets/proxy_user
-  proxy_pass:
-    file: ./secrets/proxy_pass
