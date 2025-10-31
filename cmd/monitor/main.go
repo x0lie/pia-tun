@@ -26,7 +26,6 @@ type Config struct {
 	DebugMode          bool
 	ParallelChecks     bool
 	MetricsEnabled     bool
-	WatchHandshake     bool
 	HandshakeTimeout   time.Duration
 	StartupGracePeriod time.Duration
 }
@@ -99,12 +98,6 @@ func loadConfig() Config {
 		return os.Getenv(key) == "true"
 	}
 
-	// Determine if handshake monitoring should be enabled (default: true)
-	watchHandshake := true
-	if val := os.Getenv("MONITOR_WATCH_HANDSHAKE"); val == "false" {
-		watchHandshake = false
-	}
-
 	return Config{
 		CheckInterval:      getEnvDuration("CHECK_INTERVAL", 15),
 		MaxFailures:        getEnvInt("MAX_FAILURES", 3),
@@ -114,7 +107,6 @@ func loadConfig() Config {
 		DebugMode:          getEnvBool("MONITOR_DEBUG"),
 		ParallelChecks:     getEnvBool("MONITOR_PARALLEL_CHECKS"),
 		MetricsEnabled:     getEnvBool("METRICS"),
-		WatchHandshake:     watchHandshake,
 		HandshakeTimeout:   getEnvDuration("HANDSHAKE_TIMEOUT", 360),
 		StartupGracePeriod: getEnvDuration("MONITOR_STARTUP_GRACE", 30),
 	}
@@ -629,26 +621,6 @@ func (m *Monitor) checkVPNHealth() (*HealthCheckResult, error) {
 	result.InterfaceUp = true
 	m.debugLog("Interface is up")
 
-	if m.config.WatchHandshake {
-		lastHandshake, err := m.getLastHandshakeTime()
-		if err == nil {
-			timeSince := time.Since(lastHandshake)
-			m.debugLog("Last handshake was %v ago", timeSince)
-			
-			if timeSince < m.config.HandshakeTimeout {
-				result.HandshakeOK = true
-				m.debugLog("Handshake is fresh (within %v threshold)", m.config.HandshakeTimeout)
-			} else {
-				m.debugLog("Handshake is stale (%v old, threshold: %v)", timeSince, m.config.HandshakeTimeout)
-				result.Error = fmt.Errorf("handshake stale (%v old, threshold: %v)", timeSince, m.config.HandshakeTimeout)
-				result.CheckDuration = time.Since(start)
-				return result, result.Error
-			}
-		} else {
-			m.debugLog("Could not check handshake: %v (ignoring for now)", err)
-		}
-	}
-
 	if m.checkExternalConnectivity() {
 		m.debugLog("Connectivity passed")
 		result.Connectivity = true
@@ -701,86 +673,11 @@ func (m *Monitor) showError(msg string) {
 	fmt.Printf("  %s✗%s %s\n", colorRed, colorReset, msg)
 }
 
-func (m *Monitor) watchHandshakes(ctx context.Context, failChan chan<- struct{}) {
-	if !m.config.WatchHandshake {
-		return
-	}
-	
-	m.debugLog("Starting handshake watcher (timeout: %v)", m.config.HandshakeTimeout)
-	
-	time.Sleep(15 * time.Second)
-	
-	var lastRx, lastTx int64
-	var staleCount int
-	const maxStaleChecks = 3
-	
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			rx, tx, err := m.getTransferBytes()
-			if err != nil {
-				if !strings.Contains(err.Error(), "transitioning") {
-					m.debugLog("Could not get transfer bytes: %v", err)
-				}
-				continue
-			}
-			
-			bytesChanged := (rx != lastRx) || (tx != lastTx)
-			
-			if bytesChanged {
-				m.debugLog("Transfer active: rx=%d (+%d), tx=%d (+%d)", 
-					rx, rx-lastRx, tx, tx-lastTx)
-				lastRx = rx
-				lastTx = tx
-				staleCount = 0
-				continue
-			}
-			
-			lastHandshake, err := m.getLastHandshakeTime()
-			if err != nil {
-				m.debugLog("Could not get handshake time: %v", err)
-				staleCount++
-			} else {
-				timeSince := time.Since(lastHandshake)
-				m.debugLog("No transfer in 30s, handshake was %v ago", timeSince)
-				
-				if timeSince > m.config.HandshakeTimeout {
-					staleCount++
-					m.debugLog("Stale check %d/%d", staleCount, maxStaleChecks)
-				} else {
-					staleCount = 0
-				}
-			}
-			
-			if staleCount >= maxStaleChecks {
-				m.showWarning(fmt.Sprintf("Connection stale (%d checks) - triggering reconnect", staleCount))
-				select {
-				case failChan <- struct{}{}:
-				default:
-				}
-				staleCount = 0
-			}
-			
-			lastRx = rx
-			lastTx = tx
-		}
-	}
-}
-
 func (m *Monitor) monitorLoop(ctx context.Context) {
     ticker := time.NewTicker(m.config.CheckInterval)
     defer ticker.Stop()
     
     failChan := make(chan struct{}, 1)
-    
-    if m.config.WatchHandshake {
-        go m.watchHandshakes(ctx, failChan)
-    }
     
     if m.metrics != nil {
         latency := m.getServerLatency()

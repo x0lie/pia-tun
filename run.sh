@@ -31,7 +31,7 @@ export CHECK_INTERVAL MAX_FAILURES HANDSHAKE_TIMEOUT
 export PROXY_ENABLED SOCKS5_PORT HTTP_PROXY_PORT
 export PORT_API_ENABLED PORT_API_TYPE PORT_API_URL PORT_API_USER PORT_API_PASS PORT_API_CMD
 export RESTART_SERVICES MONITOR_DEBUG METRICS METRICS_PORT
-export MONITOR_PARALLEL_CHECKS MONITOR_FAST_FAIL MONITOR_WATCH_HANDSHAKE
+export MONITOR_PARALLEL_CHECKS
 export WEBHOOK_URL
 
 # Boolean flags (set once, check many times)
@@ -186,9 +186,6 @@ main_loop() {
     /usr/local/bin/monitor &
     show_success "Health monitor active (PID: $!)"
     show_success "Check interval: ${CHECK_INTERVAL}s, Failure threshold: ${MAX_FAILURES}"
-
-    # Show active detection modes
-    [ "$MONITOR_WATCH_HANDSHAKE" = "true" ] && show_success "Handshake monitoring: enabled (timeout: ${HANDSHAKE_TIMEOUT}s)"
 
     if [ "$METRICS" = "true" ]; then
         echo "  ${grn}✓${nc} Metrics available on port ${METRICS_PORT:-9090}"
