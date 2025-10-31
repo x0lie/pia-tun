@@ -188,7 +188,6 @@ main_loop() {
     show_success "Check interval: ${CHECK_INTERVAL}s, Failure threshold: ${MAX_FAILURES}"
 
     # Show active detection modes
-    [ "$MONITOR_FAST_FAIL" = "true" ] && show_success "Fast-fail mode: enabled"
     [ "$MONITOR_WATCH_HANDSHAKE" = "true" ] && show_success "Handshake monitoring: enabled (timeout: ${HANDSHAKE_TIMEOUT}s)"
 
     if [ "$METRICS" = "true" ]; then
