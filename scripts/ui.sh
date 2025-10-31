@@ -26,7 +26,7 @@ print_banner() {
     # Only clear screen if running in interactive terminal
     # This prevents 'docker logs' from clearing the user's terminal
     [ -t 1 ] && clear
-    
+
     cat << EOF
 ${cyn}╔════════════════════════════════════════════════╗${nc}
 ${cyn}║                                                ║${nc}
@@ -97,7 +97,7 @@ restart_services() {
         service=$(trim "$service")
         [ -n "$service" ] && {
             echo "  ${blu}↻${nc} Restarting container: $service"
-            docker restart "$service" 2>/dev/null || \
+            docker restart "$service" >/dev/null 2>&1 || \
                 echo "  ${ylw}⚠${nc} Could not restart $service"
         }
     done
@@ -111,7 +111,7 @@ get_external_ip() {
         "http://icanhazip.com"
         "http://api.ipify.org"
     )
-    
+
     for service in "${services[@]}"; do
         local ip=$(timeout 8 curl -s "$service" 2>/dev/null)
         # Valid IP found (and not a curl error message)
@@ -120,7 +120,7 @@ get_external_ip() {
             return 0
         fi
     done
-    
+
     # All services failed
     return 1
 }

@@ -3,7 +3,7 @@ services:
     image: x0lie/pia-tun
     container_name: pia-tun
     cap_add:
-      - NET_ADMIN
+      - NET_ADMIN                                                                   # Necessary
     cap_drop:
       - all
     environment:
@@ -11,7 +11,7 @@ services:
       - PIA_LOCATION=ca_ontario,ca_ontario-so,ca_toronto,ca
       - PORT_FORWARDING=true
       - PROXY_ENABLED=true
-      - PORT_API_TYPE=qbittorrent
+      - PORT_API_TYPE=qbittorrent                                                   # Supports qbittorrent, deluge, transmission, and rtorrent
       - PORT_API_URL=http://localhost:8080
       - LOCAL_NETWORK=192.168.1.0/24,172.17.0.0/16                                  # Allows LAN access
     secrets:

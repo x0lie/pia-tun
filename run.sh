@@ -124,8 +124,6 @@ perform_reconnection() {
     teardown_wireguard
 
     if initial_connect "true"; then
-        [ -n "$RESTART_SERVICES" ] && { restart_services "$RESTART_SERVICES"; echo ""; }
-
         # Start proxies after VPN is up
         $PROXY_ENABLED_FLAG && start_proxies >/dev/null 2>&1
 
@@ -152,6 +150,9 @@ perform_reconnection() {
             show_step "Restarting port monitor..."
             /app/scripts/port_monitor.sh &
         }
+        sleep 2
+        echo ""
+        [ -n "$RESTART_SERVICES" ] && { restart_services "$RESTART_SERVICES"; echo ""; }
 
         return 0
     else
@@ -196,6 +197,10 @@ main_loop() {
 
     # Start port monitor if PF and API updater are enabled
     $PF_ENABLED && [ "$PORT_API_ENABLED" = "true" ] && /app/scripts/port_monitor.sh &
+
+    sleep 2
+    echo ""
+    [ -n "$RESTART_SERVICES" ] && { restart_services "$RESTART_SERVICES"; echo ""; }
 
     while true; do
         if [ -f /tmp/vpn_reconnect_requested ]; then
