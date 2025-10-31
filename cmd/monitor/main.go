@@ -26,7 +26,6 @@ type Config struct {
 	DebugMode          bool
 	ParallelChecks     bool
 	MetricsEnabled     bool
-	FastFailMode       bool
 	WatchHandshake     bool
 	HandshakeTimeout   time.Duration
 	StartupGracePeriod time.Duration
@@ -115,7 +114,6 @@ func loadConfig() Config {
 		DebugMode:          getEnvBool("MONITOR_DEBUG"),
 		ParallelChecks:     getEnvBool("MONITOR_PARALLEL_CHECKS"),
 		MetricsEnabled:     getEnvBool("METRICS"),
-		FastFailMode:       getEnvBool("MONITOR_FAST_FAIL"),
 		WatchHandshake:     watchHandshake,
 		HandshakeTimeout:   getEnvDuration("HANDSHAKE_TIMEOUT", 360),
 		StartupGracePeriod: getEnvDuration("MONITOR_STARTUP_GRACE", 30),
@@ -649,17 +647,6 @@ func (m *Monitor) checkVPNHealth() (*HealthCheckResult, error) {
 		} else {
 			m.debugLog("Could not check handshake: %v (ignoring for now)", err)
 		}
-	}
-
-	if m.config.FastFailMode {
-		if m.checkExternalConnectivity() {
-			result.Connectivity = true
-			result.CheckDuration = time.Since(start)
-			return result, nil
-		}
-		result.CheckDuration = time.Since(start)
-		result.Error = fmt.Errorf("connectivity check failed")
-		return result, result.Error
 	}
 
 	if m.checkExternalConnectivity() {
