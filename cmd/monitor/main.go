@@ -20,14 +20,10 @@ import (
 type Config struct {
 	CheckInterval      time.Duration
 	MaxFailures        int
-	ReconnectDelay     time.Duration
-	MaxReconnectDelay  time.Duration
 	RestartServices    string
 	DebugMode          bool
 	ParallelChecks     bool
 	MetricsEnabled     bool
-	HandshakeTimeout   time.Duration
-	StartupGracePeriod time.Duration
 }
 
 type Monitor struct {
@@ -53,7 +49,6 @@ type Metrics struct {
 	CurrentIP          string
 	BytesReceived      int64
 	BytesTransmitted   int64
-	LastHandshakeTime  time.Time
 	ConnectedAt        time.Time
 	
 	// Server performance tracking
@@ -75,7 +70,6 @@ type Metrics struct {
 type HealthCheckResult struct {
 	InterfaceUp    bool
 	Connectivity   bool
-	HandshakeOK    bool
 	CheckDuration  time.Duration
 	Error          error
 }
@@ -105,8 +99,6 @@ func loadConfig() Config {
 		DebugMode:          getEnvBool("MONITOR_DEBUG"),
 		ParallelChecks:     getEnvBool("MONITOR_PARALLEL_CHECKS"),
 		MetricsEnabled:     getEnvBool("METRICS"),
-		HandshakeTimeout:   getEnvDuration("HANDSHAKE_TIMEOUT", 360),
-		StartupGracePeriod: getEnvDuration("MONITOR_STARTUP_GRACE", 30),
 	}
 }
 
@@ -154,7 +146,7 @@ func (m *Metrics) RecordWANCheck(success bool) {
 	}
 }
 
-func (m *Metrics) UpdateVPNInfo(server, ip string, rx, tx int64, handshake time.Time) {
+func (m *Metrics) UpdateVPNInfo(server, ip string, rx, tx int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	
@@ -170,7 +162,6 @@ func (m *Metrics) UpdateVPNInfo(server, ip string, rx, tx int64, handshake time.
 	m.CurrentIP = ip
 	m.BytesReceived = rx
 	m.BytesTransmitted = tx
-	m.LastHandshakeTime = handshake
 }
 
 func (m *Metrics) SetServerLatency(latency int64) {
@@ -193,11 +184,6 @@ func (m *Metrics) GetStats() map[string]interface{} {
 	successRate := float64(0)
 	if m.TotalChecks > 0 {
 		successRate = float64(m.SuccessfulChecks) / float64(m.TotalChecks) * 100
-	}
-	
-	timeSinceHandshake := time.Duration(0)
-	if !m.LastHandshakeTime.IsZero() {
-		timeSinceHandshake = time.Since(m.LastHandshakeTime)
 	}
 	
 	wanSuccessRate := float64(100)
@@ -224,8 +210,6 @@ func (m *Metrics) GetStats() map[string]interface{} {
 		"bytes_received":         m.BytesReceived,
 		"bytes_transmitted":      m.BytesTransmitted,
 		"total_bytes":            m.BytesReceived + m.BytesTransmitted,
-		"last_handshake":         m.LastHandshakeTime.Format("2006-01-02 15:04:05"),
-		"handshake_age_seconds":  int(timeSinceHandshake.Seconds()),
 		"server_latency_ms":      m.ServerLatency,
 		"server_uptime_seconds":  int(m.ServerUptime.Seconds()),
 		"server_uptime_formatted": formatDuration(m.ServerUptime),
@@ -540,39 +524,6 @@ func (m *Monitor) waitForWAN() bool {
 	}
 }
 
-func (m *Monitor) getLastHandshakeTime() (time.Time, error) {
-	cmd := exec.Command("wg", "show", "pia", "latest-handshakes")
-	output, err := cmd.Output()
-	if err != nil {
-		return time.Time{}, err
-	}
-	
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(lines) == 0 {
-		return time.Time{}, fmt.Errorf("no handshake data")
-	}
-	
-	parts := strings.Fields(lines[0])
-	if len(parts) < 2 {
-		return time.Time{}, fmt.Errorf("invalid handshake format")
-	}
-	
-	timestamp, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil {
-		return time.Time{}, err
-	}
-	
-	now := time.Now().Unix()
-	if timestamp == 0 {
-		return time.Time{}, fmt.Errorf("no handshake yet (timestamp is 0)")
-	}
-	if timestamp > now {
-		return time.Time{}, fmt.Errorf("invalid timestamp: %d (in future)", timestamp)
-	}
-	
-	return time.Unix(timestamp, 0), nil
-}
-
 func (m *Monitor) getTransferBytes() (rx, tx int64, err error) {
 	cmd := exec.Command("wg", "show", "pia", "transfer")
 	output, err := cmd.Output()
@@ -684,12 +635,6 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
         }
     }
 
-    graceEnd := time.Now().Add(m.config.StartupGracePeriod)
-    if m.config.StartupGracePeriod > 0 {
-        m.debugLog("Starting with %v grace period until %v", 
-            m.config.StartupGracePeriod, graceEnd.Format("15:04:05"))
-    }
-
     for {
         select {
         case <-ctx.Done():
@@ -700,28 +645,21 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
             m.mu.Lock()
             m.failureCount = m.config.MaxFailures
             m.consecutiveSuccess = 0
-            m.showError("Handshake timeout detected - immediate reconnect")
             m.mu.Unlock()
             m.triggerReconnect()
             m.mu.Lock()
             m.failureCount = 0
             m.mu.Unlock()
-            graceEnd = time.Now().Add(m.config.StartupGracePeriod)
             
         case <-ticker.C:
-            if time.Now().Before(graceEnd) {
-                m.debugLog("In grace period, skipping check")
-                continue
-            }
 
             result, err := m.checkVPNHealth()
             
             if m.metrics != nil {
                 rx, tx, _ := m.getTransferBytes()
-                handshake, _ := m.getLastHandshakeTime()
                 server := m.getCurrentServer()
                 ip := m.getCurrentIP()
-                m.metrics.UpdateVPNInfo(server, ip, rx, tx, handshake)
+                m.metrics.UpdateVPNInfo(server, ip, rx, tx)
             }
             
             if m.metrics != nil {
@@ -765,7 +703,6 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
                     m.mu.Lock()
                     m.failureCount = 0
                     m.mu.Unlock()
-                    graceEnd = time.Now().Add(m.config.StartupGracePeriod)
                     m.mu.Lock()
                 }
             }
@@ -864,10 +801,6 @@ func startMetricsServer(m *Monitor) {
 			fmt.Fprintf(w, "# TYPE vpn_bytes_transmitted_total counter\n")
 			fmt.Fprintf(w, "vpn_bytes_transmitted_total %d\n\n", stats["bytes_transmitted"])
 			
-			fmt.Fprintf(w, "# HELP vpn_handshake_age_seconds Time since last WireGuard handshake\n")
-			fmt.Fprintf(w, "# TYPE vpn_handshake_age_seconds gauge\n")
-			fmt.Fprintf(w, "vpn_handshake_age_seconds %d\n\n", stats["handshake_age_seconds"])
-			
 			fmt.Fprintf(w, "# HELP vpn_server_latency_milliseconds Initial connection latency to VPN server\n")
 			fmt.Fprintf(w, "# TYPE vpn_server_latency_milliseconds gauge\n")
 			fmt.Fprintf(w, "vpn_server_latency_milliseconds %d\n\n", stats["server_latency_ms"])
@@ -912,7 +845,6 @@ func startMetricsServer(m *Monitor) {
 			"status":         status,
 			"interface_up":   result.InterfaceUp,
 			"connectivity":   result.Connectivity,
-			"handshake_ok":   result.HandshakeOK,
 			"check_duration": result.CheckDuration.String(),
 			"error":          fmt.Sprintf("%v", err),
 		})
