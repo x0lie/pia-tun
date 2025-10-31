@@ -90,6 +90,7 @@ main() {
 
     # Check if this is a restart (reconnecting marker exists)
     if [ ! -f /tmp/reconnecting ]; then
+	echo ""
         show_step "Port monitor starting (API: $PORT_API_TYPE)"
     fi
 

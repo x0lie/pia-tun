@@ -139,21 +139,20 @@ perform_reconnection() {
                 sleep 1
                 waited=$((waited + 1))
             done
-
-            # Restart port monitor if API is enabled
-            if [ "$PORT_API_ENABLED" = "true" ]; then
-                show_step "Restarting port monitor..."
-                /app/scripts/port_monitor.sh &
-                show_success "Port monitor restarted"
-                echo ""
-            fi
         else
             show_vpn_connected
         fi
 
         show_step "Health monitor still running..."
         show_success "Check interval: ${CHECK_INTERVAL}s, Failure threshold: ${MAX_FAILURES}"
-        echo ""
+
+        # Restart port monitor if both PF and API are enabled (now after health status)
+        $PF_ENABLED && [ "$PORT_API_ENABLED" = "true" ] && {
+            echo ""
+            show_step "Restarting port monitor..."
+            /app/scripts/port_monitor.sh &
+        }
+
         return 0
     else
         show_error "Reconnection failed"
@@ -198,8 +197,6 @@ main_loop() {
         echo "      JSON:        http://<container-ip>:${METRICS_PORT:-9090}/metrics"
         echo "      Health:      http://<container-ip>:${METRICS_PORT:-9090}/health"
     fi
-
-    echo ""
 
     # Start port monitor if PF and API updater are enabled
     $PF_ENABLED && [ "$PORT_API_ENABLED" = "true" ] && /app/scripts/port_monitor.sh &
