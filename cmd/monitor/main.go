@@ -101,8 +101,6 @@ func loadConfig() Config {
 	return Config{
 		CheckInterval:      getEnvDuration("CHECK_INTERVAL", 15),
 		MaxFailures:        getEnvInt("MAX_FAILURES", 3),
-		ReconnectDelay:     getEnvDuration("RECONNECT_DELAY", 5),
-		MaxReconnectDelay:  getEnvDuration("MAX_RECONNECT_DELAY", 300),
 		RestartServices:    os.Getenv("RESTART_SERVICES"),
 		DebugMode:          getEnvBool("MONITOR_DEBUG"),
 		ParallelChecks:     getEnvBool("MONITOR_PARALLEL_CHECKS"),
