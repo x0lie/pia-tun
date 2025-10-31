@@ -394,7 +394,7 @@ while true; do
             debug_log "ERROR: Bind failed, will retry in ${BIND_INTERVAL}s"
             
             # If bind fails multiple times in a row, maybe we need a new signature?
-            if [ $((BIND_COUNT % 3)) -eq 0 ]; then
+            if [ $((BIND_COUNT % 2)) -eq 0 ]; then
                 echo "  ${ylw}ℹ${nc} Multiple bind failures detected, will request new signature next cycle"
                 # Force signature refresh by setting last signature time to 0
                 LAST_SIGNATURE_TIME=0
