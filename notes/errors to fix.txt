@@ -39,8 +39,103 @@
 
 
 
+
+
+
+
+
 #######################################################################################################
 ######################################## Another error to fix: ########################################
+
+
+▶ Starting health monitor...
+  ✓ Health monitor active (PID: 416)
+  ✓ Check interval: 15s, Failure threshold: 3
+  ✓ Parallel checks: enabled
+  ✓ Handshake monitoring: enabled (timeout: 360s)
+
+
+  ✗ VPN connection lost (3/3)
+
+▶ Testing WAN before reconnect...
+  ✗ Internet down, waiting...
+  ⏳ Checking again in 160s (attempt 7)...                      ⚠ Keep-alive bind #1 failed
+  ⏳ Checking again in 160s (attempt 10)...                      ⚠ Keep-alive bind #2 failed
+
+
+
+#######################################################################################################
+######################################## Another error to fix: ########################################
+
+
+
+▶ Acquiring port forward signature...
+  ✓ Port: 54245
+  ✓ Updated via: File only (API: qbittorrent unreachable)			# move the curl or whatever test this is to the:
+  ✓ Port expires: 2026-01-01 23:30:15 (in 62 days)						# Port monitor starting (API: qbittorrent unreachable)
+  ✓ Keep-alive: Bind refresh every 10 minutes							# maybe integrate continual retry into this and rewrite the line upon success
+  ✓ Signature refresh: Every 30 days										# or do the same thing but with a line beneath the Port monitor starting
+
+╔════════════════════════════════════════════════╗
+║                ✓ VPN Connected                 ║
+╚════════════════════════════════════════════════╝
+
+▶ Starting health monitor...
+  ✓ Health monitor active (PID: 455)
+  ✓ Check interval: 15s, Failure threshold: 3
+  ✓ Parallel checks: enabled
+  ✓ Handshake monitoring: enabled (timeout: 360s)
+
+▶ Port monitor starting (API: qbittorrent)
+^C
+▶ Shutting down...
+  ✓ Cleanup complete
+
+
+
+#######################################################################################################
+######################################## Another error to fix: ########################################
+
+
+
+	╔════════════════════════════════════════════════╗
+	║               ↻ Reconnecting VPN               ║
+	╚════════════════════════════════════════════════╝
+
+	Terminated
+	▶ Authenticating with PIA...
+	  ✓ Authentication successful
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#######################################################################################################
+######################################## Has been fixed: ##############################################
+#######################################################################################################
 
 ╔════════════════════════════════════════════════╗
 ║                                                ║
@@ -180,85 +275,6 @@
   ⚠ Signature refresh failed, continuing with existing signature
 
   forever and ever...
-
-
-
-
-#######################################################################################################
-######################################## Another error to fix: ########################################
-
-
-▶ Starting health monitor...
-  ✓ Health monitor active (PID: 416)
-  ✓ Check interval: 15s, Failure threshold: 3
-  ✓ Parallel checks: enabled
-  ✓ Handshake monitoring: enabled (timeout: 360s)
-
-
-  ✗ VPN connection lost (3/3)
-
-▶ Testing WAN before reconnect...
-  ✗ Internet down, waiting...
-  ⏳ Checking again in 160s (attempt 7)...                      ⚠ Keep-alive bind #1 failed
-  ⏳ Checking again in 160s (attempt 10)...                      ⚠ Keep-alive bind #2 failed
-
-
-
-#######################################################################################################
-######################################## Another error to fix: ########################################
-
-
-
-▶ Acquiring port forward signature...
-  ✓ Port: 54245
-  ✓ Updated via: File only (API: qbittorrent unreachable)			# move the curl or whatever test this is to the:
-  ✓ Port expires: 2026-01-01 23:30:15 (in 62 days)						# Port monitor starting (API: qbittorrent unreachable)
-  ✓ Keep-alive: Bind refresh every 10 minutes							# maybe integrate continual retry into this and rewrite the line upon success
-  ✓ Signature refresh: Every 30 days										# or do the same thing but with a line beneath the Port monitor starting
-
-╔════════════════════════════════════════════════╗
-║                ✓ VPN Connected                 ║
-╚════════════════════════════════════════════════╝
-
-▶ Starting health monitor...
-  ✓ Health monitor active (PID: 455)
-  ✓ Check interval: 15s, Failure threshold: 3
-  ✓ Parallel checks: enabled
-  ✓ Handshake monitoring: enabled (timeout: 360s)
-
-▶ Port monitor starting (API: qbittorrent)
-^C
-▶ Shutting down...
-  ✓ Cleanup complete
-
-
-
-#######################################################################################################
-######################################## Another error to fix: ########################################
-
-
-
-	╔════════════════════════════════════════════════╗
-	║               ↻ Reconnecting VPN               ║
-	╚════════════════════════════════════════════════╝
-
-	Terminated
-	▶ Authenticating with PIA...
-	  ✓ Authentication successful
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 #######################################################################################################

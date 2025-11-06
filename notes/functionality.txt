@@ -14,14 +14,13 @@ To do:
 	remove vestigial code, cleanup
 	verify wide api use - qbittorrent, deluge, transmission, rtorrent, etc.
 	Make UI (log output) prettier
-
+	HEALTHCHECK is not supported for OCI image format and will be ignored. Must use 'docker' format
 
 
 
 Consider getting rid of RESTART_SERVICES based on possible or likely use cases
 	or add docker apk back so it can actually be used
-
-
+	adds about 26MB to uncompressed image size
 
 
 
