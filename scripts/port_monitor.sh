@@ -34,7 +34,7 @@ wait_for_port_file() {
 monitor_port_changes() {
     while true; do
         # Read current port
-        CURRENT_PORT=$(cat "$PORT_FILE" 2>/dev/null || echo "")
+        CURRENT_PORT=$(cat "$PORT_FILE" 2>/dev/null)
 
         # Skip if port file is empty or invalid
         if [[ -z "$CURRENT_PORT" || ! "$CURRENT_PORT" =~ ^[0-9]+$ ]]; then

@@ -652,6 +652,25 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
             m.mu.Unlock()
             
         case <-ticker.C:
+            // Check for port forwarding signature failure flag
+			if _, err := os.Stat("/tmp/pf_signature_failed"); err == nil {
+			    if removeErr := os.Remove("/tmp/pf_signature_failed"); removeErr != nil {
+			        m.debugLog("Failed to remove PF failure flag: %v", removeErr)
+			    }
+				m.triggerReconnect()
+				continue
+			}
+            
+            // Skip checks during active reconnection to avoid races
+            if _, err := os.Stat("/tmp/reconnecting"); err == nil {
+                m.debugLog("Skipping health check during active reconnection")
+                m.mu.Lock()
+                if m.failureCount > 0 {
+                    m.failureCount = 0  // Forgive failures during reconnect
+                }
+                m.mu.Unlock()
+                continue
+            }
 
             result, err := m.checkVPNHealth()
             

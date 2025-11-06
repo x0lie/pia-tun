@@ -21,6 +21,7 @@ readonly LOG_FILE="/tmp/proxy.log"
 
 # Start proxy server (single Go binary handles both SOCKS5 and HTTP)
 start_proxies() {
+    echo ""
     show_step "Starting proxy servers..."
 
     # Kill any existing proxy process
@@ -61,7 +62,6 @@ start_proxies() {
             echo "      SOCKS5: socks5://<container-ip>:$SOCKS5_PORT"
             echo "      HTTP:   http://<container-ip>:$HTTP_PROXY_PORT"
         fi
-        echo ""
         return 0
     else
         show_error "Failed to start proxy servers"

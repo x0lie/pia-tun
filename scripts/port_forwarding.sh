@@ -27,63 +27,118 @@ debug_log() {
 }
 
 get_signature() {
-    debug_log "Requesting signature from $PF_GATEWAY..."
-    sleep 2
+    local max_retries=3
+    local retry_count=0
+    local backoff=2
+
+    while [ $retry_count -lt $max_retries ]; do
+        retry_count=$((retry_count + 1))
+        debug_log "Requesting signature from $PF_GATEWAY (attempt $retry_count/$max_retries)..."
+        
+        if [ $retry_count -gt 1 ]; then
+            debug_log "Waiting $backoff seconds before retry..."
+            sleep $backoff
+            backoff=$((backoff * 2))  # Exponential backoff
+        else
+            sleep 2
+        fi
+        
+        local result=$(curl -s -m 10 -k --interface pia -G \
+            --data-urlencode "token=$TOKEN" \
+            "https://$PF_GATEWAY:19999/getSignature" 2>&1)
+        
+        echo "$result" > /tmp/pf_response
+        
+        if [ ! -s /tmp/pf_response ]; then
+            debug_log "ERROR: Empty response from getSignature (attempt $retry_count)"
+            if [ $retry_count -eq $max_retries ]; then
+                return 1
+            fi
+            continue
+        fi
+        
+        if ! jq -e '.status' /tmp/pf_response >/dev/null 2>&1; then
+            debug_log "ERROR: Invalid JSON in response (attempt $retry_count)"
+            debug_log "Response: $(cat /tmp/pf_response)"
+            if [ $retry_count -eq $max_retries ]; then
+                return 1
+            fi
+            continue
+        fi
+        
+        local status=$(jq -r '.status' /tmp/pf_response)
+        debug_log "getSignature status: $status (attempt $retry_count)"
+        
+        if [ "$status" = "OK" ]; then
+            return 0
+        fi
+        
+        # Non-OK status: treat as failure, retry if attempts remain
+        debug_log "Non-OK status '$status' from getSignature (attempt $retry_count)"
+        if [ $retry_count -eq $max_retries ]; then
+            return 1
+        fi
+    done
     
-    local result=$(curl -s -m 10 -k --interface pia -G \
-        --data-urlencode "token=$TOKEN" \
-        "https://$PF_GATEWAY:19999/getSignature" 2>&1)
-    
-    echo "$result" > /tmp/pf_response
-    
-    if [ ! -s /tmp/pf_response ]; then
-        debug_log "ERROR: Empty response from getSignature"
-        return 1
-    fi
-    
-    if ! jq -e '.status' /tmp/pf_response >/dev/null 2>&1; then
-        debug_log "ERROR: Invalid JSON in response"
-        debug_log "Response: $(cat /tmp/pf_response)"
-        return 1
-    fi
-    
-    local status=$(jq -r '.status' /tmp/pf_response)
-    debug_log "getSignature status: $status"
-    
-    [ "$status" = "OK" ]
+    # If we exit the loop without returning, it's a final failure
+    debug_log "All $max_retries attempts failed; triggering reconnection"
+    return 1
 }
 
 bind_port() {
     local payload="$1"
     local signature="$2"
     
-    debug_log "Calling bindPort..."
-    debug_log "Payload length: ${#payload} bytes"
-    debug_log "Signature length: ${#signature} bytes"
-    
-    local result=$(curl -s -m 10 -k --interface pia -G \
-        --data-urlencode "payload=$payload" \
-        --data-urlencode "signature=$signature" \
-        "https://$PF_GATEWAY:19999/bindPort" 2>&1)
-    
-    echo "$result" > /tmp/pf_bind_response
-    
-    if [ ! -s /tmp/pf_bind_response ]; then
-        debug_log "ERROR: Empty response from bindPort"
-        return 1
-    fi
-    
-    local status=$(jq -r '.status // empty' /tmp/pf_bind_response 2>/dev/null)
-    debug_log "bindPort status: $status"
-    
-    if [ "$status" != "OK" ]; then
-        debug_log "ERROR: bindPort failed"
+    local max_retries=3
+    local retry_count=0
+    local backoff=2  # Initial backoff in seconds for retries
+
+    while [ $retry_count -lt $max_retries ]; do
+        retry_count=$((retry_count + 1))
+        debug_log "Calling bindPort (attempt $retry_count/$max_retries)..."
+        debug_log "Payload length: ${#payload} bytes"
+        debug_log "Signature length: ${#signature} bytes"
+        
+        if [ $retry_count -gt 1 ]; then
+            debug_log "Waiting $backoff seconds before retry..."
+            sleep $backoff
+            backoff=$((backoff * 2))  # Exponential backoff
+        fi
+        
+        local result=$(curl -s -m 10 -k --interface pia -G \
+            --data-urlencode "payload=$payload" \
+            --data-urlencode "signature=$signature" \
+            "https://$PF_GATEWAY:19999/bindPort" 2>&1)
+        
+        echo "$result" > /tmp/pf_bind_response
+        
+        if [ ! -s /tmp/pf_bind_response ]; then
+            debug_log "ERROR: Empty response from bindPort (attempt $retry_count)"
+            if [ $retry_count -eq $max_retries ]; then
+                return 1
+            fi
+            continue
+        fi
+        
+        local status=$(jq -r '.status // empty' /tmp/pf_bind_response 2>/dev/null)
+        debug_log "bindPort status: $status (attempt $retry_count)"
+        
+        if [ "$status" = "OK" ]; then
+            debug_log "✓ bindPort successful"
+            return 0
+        fi
+        
+        # Non-OK status: treat as failure, retry if attempts remain
+        debug_log "ERROR: bindPort failed (attempt $retry_count)"
         debug_log "Response: $(cat /tmp/pf_bind_response)"
-        return 1
-    fi
+        if [ $retry_count -eq $max_retries ]; then
+            return 1
+        fi
+    done
     
-    debug_log "✓ bindPort successful"
-    return 0
+    # If we exit the loop without returning, it's a final failure
+    debug_log "All $max_retries attempts failed; triggering reconnection"
+    return 1
 }
 
 # Parse response and extract all needed fields
@@ -259,9 +314,12 @@ show_vpn_connected
 touch /tmp/port_forwarding_complete
 
 # Main loop with dual-purpose refreshing
-LAST_SIGNATURE_TIME=$(date +%s)
 BIND_COUNT=0
 SIGNATURE_REFRESH_COUNT=0
+CONSECUTIVE_BIND_FAILURES=0
+CONSECUTIVE_REFRESH_FAILURES=0  # New: Separate counter for refresh fails
+FORCE_REFRESH=false
+LAST_SIGNATURE_TIME=$(date +%s)
 
 debug_log "Entering main keep-alive loop (interval: ${BIND_INTERVAL}s)"
 
@@ -277,6 +335,8 @@ while true; do
     debug_log "Woke up for bind cycle #$((BIND_COUNT + 1))"
     debug_log "Time since last signature: ${TIME_SINCE_SIGNATURE}s ($((TIME_SINCE_SIGNATURE / 86400)) days)"
     debug_log "Seconds until expiry: $SECONDS_UNTIL_EXPIRY ($((SECONDS_UNTIL_EXPIRY / 86400)) days)"
+    debug_log "Consecutive bind failures: $CONSECUTIVE_BIND_FAILURES"
+    debug_log "Consecutive refresh failures: $CONSECUTIVE_REFRESH_FAILURES"
     
     # Check if we need a new signature
     NEED_NEW_SIGNATURE=false
@@ -296,6 +356,13 @@ while true; do
         debug_log "Signature refresh needed: $REASON"
     fi
     
+    # Reason 3: Forced due to bind failures
+    if [ "$FORCE_REFRESH" = true ]; then
+        NEED_NEW_SIGNATURE=true
+        REASON="forced by bind failures"
+        debug_log "Signature refresh needed: $REASON"
+    fi
+    
     # Get new signature if needed
     if [ "$NEED_NEW_SIGNATURE" = "true" ]; then
         SIGNATURE_REFRESH_COUNT=$((SIGNATURE_REFRESH_COUNT + 1))
@@ -306,14 +373,11 @@ while true; do
         fi
         
         if get_signature; then
-            debug_log "New signature obtained successfully"
             
             # Parse new response
             read -r NEW_PORT NEW_PAYLOAD NEW_SIGNATURE NEW_EXPIRES_AT <<< "$(parse_pf_response)"
             
-            debug_log "New signature values:"
-            debug_log "  Port: $NEW_PORT"
-            debug_log "  Expires at: $NEW_EXPIRES_AT ($(format_timestamp "$NEW_EXPIRES_AT"))"
+            show_success "New signature acquired with port: $NEW_PORT"
             
             # Check if port changed
             if [ "$NEW_PORT" != "$PORT" ]; then
@@ -355,6 +419,9 @@ while true; do
             PAYLOAD=$NEW_PAYLOAD
             SIGNATURE=$NEW_SIGNATURE
             EXPIRES_AT=$NEW_EXPIRES_AT
+            CONSECUTIVE_BIND_FAILURES=0
+            CONSECUTIVE_REFRESH_FAILURES=0  # Reset on refresh success
+            FORCE_REFRESH=false
             LAST_SIGNATURE_TIME=$CURRENT_TIME
             
             # Calculate new expiry info
@@ -371,10 +438,23 @@ while true; do
                 fi
             else
                 show_warning "Got new signature but bind failed"
+                # Note: Bind fail after fresh sig is odd—still reset counters, but consider logging harder
+                CONSECUTIVE_BIND_FAILURES=1  # Start a new streak
             fi
         else
-            show_warning "Signature refresh failed, continuing with existing signature"
-            debug_log "Will retry signature refresh in next cycle"
+            echo ""
+            show_error "Signature refresh failed, reconnecting..."
+            
+            CONSECUTIVE_REFRESH_FAILURES=$((CONSECUTIVE_REFRESH_FAILURES + 1))
+            FORCE_REFRESH=false  # Clear to avoid immediate re-trigger
+            
+            # Immediate reconnect on any refresh failure
+            if [ $CONSECUTIVE_REFRESH_FAILURES -ge 1 ]; then
+                debug_log "ERROR: Signature refresh failed ($CONSECUTIVE_REFRESH_FAILURES times). Triggering reconnection."
+                touch /tmp/pf_signature_failed
+                # Exit the loop to let the parent process handle reconnection
+                exit 1
+            fi
         fi
         
         # Only add blank line if we showed messages
@@ -389,16 +469,19 @@ while true; do
         
         if bind_port "$PAYLOAD" "$SIGNATURE"; then
             debug_log "✓ Keep-alive bind #${BIND_COUNT} successful"
+            CONSECUTIVE_BIND_FAILURES=0
+            CONSECUTIVE_REFRESH_FAILURES=0  # Reset both on bind success too
+            FORCE_REFRESH=false
             
         else
             show_warning "Keep-alive bind #${BIND_COUNT} failed"
             debug_log "ERROR: Bind failed, will retry in ${BIND_INTERVAL}s"
+            CONSECUTIVE_BIND_FAILURES=$((CONSECUTIVE_BIND_FAILURES + 1))
             
-            # If bind fails multiple times in a row, maybe we need a new signature?
-            if [ $((BIND_COUNT % 2)) -eq 0 ]; then
-                echo "  ${ylw}ℹ${nc} Multiple bind failures detected, will request new signature next cycle"
-                # Force signature refresh by setting last signature time to 0
-                LAST_SIGNATURE_TIME=0
+            # Trigger force refresh only after 2 consecutive bind failures
+            if [ $CONSECUTIVE_BIND_FAILURES -ge 2 ]; then
+                echo "  ${ylw}ℹ${nc} Multiple bind failures detected ($CONSECUTIVE_BIND_FAILURES), will request new signature next cycle"
+                FORCE_REFRESH=true
             fi
         fi
     fi

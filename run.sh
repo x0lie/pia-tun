@@ -153,8 +153,7 @@ perform_reconnection() {
             /app/scripts/port_monitor.sh &
         }
         sleep 2
-        echo ""
-        [ -n "$RESTART_SERVICES" ] && { restart_services "$RESTART_SERVICES"; echo ""; }
+        [ -n "$RESTART_SERVICES" ] && { echo ""; restart_services "$RESTART_SERVICES"; echo ""; }
 
         return 0
     else
@@ -201,8 +200,7 @@ main_loop() {
     $PF_ENABLED && [ "$PORT_API_ENABLED" = "true" ] && /app/scripts/port_monitor.sh &
 
     sleep 2
-    echo ""
-    [ -n "$RESTART_SERVICES" ] && { restart_services "$RESTART_SERVICES"; echo ""; }
+    [ -n "$RESTART_SERVICES" ] && { echo""; restart_services "$RESTART_SERVICES"; echo ""; }
 
     while true; do
         if [ -f /tmp/vpn_reconnect_requested ]; then
