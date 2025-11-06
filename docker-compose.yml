@@ -5,7 +5,7 @@ services:
     cap_add:
       - NET_ADMIN                                                                   # Necessary
     cap_drop:
-      - all
+      - all                                                                         # Highly recommended
     environment:
       - TZ=America/New_York
       - PIA_LOCATION=ca_ontario,ca_ontario-so,ca_toronto,ca

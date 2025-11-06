@@ -9,6 +9,7 @@ source /app/scripts/verify_connection.sh
 source /app/scripts/proxy_go.sh
 
 # OPTIMIZED: Set defaults inline, export only what's needed by child processes
+PORT_FORWARDING=${PORT_FORWARDING:-false}
 DISABLE_IPV6=${DISABLE_IPV6:-true}
 DNS=${DNS:-pia}
 LOCAL_NETWORK=${LOCAL_NETWORK:-""}
@@ -26,6 +27,7 @@ PORT_API_ENABLED=${PORT_API_ENABLED:-false}
 [ -n "${PORT_API_TYPE:-}" ] && PORT_API_ENABLED=true
 
 # Export only what child processes actually need
+export PORT_FORWARDING
 export DISABLE_IPV6 DNS LOCAL_NETWORK KILLSWITCH_EXEMPT_PORTS
 export CHECK_INTERVAL MAX_FAILURES HANDSHAKE_TIMEOUT
 export PROXY_ENABLED SOCKS5_PORT HTTP_PROXY_PORT
@@ -107,7 +109,7 @@ initial_connect() {
 
     echo ""
     show_step "Verifying connection..."
-    verify_connection && echo "" || { show_warning "Connection verification found issues"; echo ""; }
+    verify_connection || { show_warning "Connection verification found issues"; echo ""; }
 }
 
 perform_reconnection() {

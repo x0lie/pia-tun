@@ -1,0 +1,493 @@
+Structured logging with LOG_LEVEL=debug/info/error?
+	integrate DEBUG_PF and MONITOR_DEBUG
+Try to user Trivy or something to scan for vulnerabilities during CI
+if account credentials change or account expires: if auth fails on restart, then error out with message like:
+	Could not authenticate - Credential change or account expired?
+
+
+
+
+
+
+To do:
+	begin using prometheus (& grafana) to test METRICS
+	remove vestigial code, cleanup
+	verify wide api use - qbittorrent, deluge, transmission, rtorrent, etc.
+	Make UI (log output) prettier
+
+
+
+
+Consider getting rid of RESTART_SERVICES based on possible or likely use cases
+	or add docker apk back so it can actually be used
+
+
+
+
+
+
+
+
+
+
+
+
+
+Added:
+	Local Network Access						
+	Run as nonroot										# Not useful - best to --cap-drop=ALL with NET_ADMIN powers only
+	Increase Throughput									# Achieved 800mbps torrenting with PIA_LOCATION=ca_ontario (PC gets about 920 max with speedtest.net)
+	Autoreconnect endpoint recovery watchdog			# Check reconnectivity with: wg set pia peer $(wg show pia peers) remove
+	DNS handling
+	SOCKS5 and/or HTTP Proxy
+	Prometheus Endpoint
+	Cleaner (API?) port transfer to users (like qbittorrent) than a file (if possible)
+	Show DNS you're using: "DNS: PIA" or "DNS: 192.168.1.48" etc.
+	Add ability to select multiple locations, have them ping all of the available servers, and select the best ping location.
+	Make log not eat whatever was behind it when called
+	Automatic Server Switching based on load?			# Probably not worth adding - too much overhead to justify
+	Add connectivity check so that VPN doesn't restart repeatedly when internet is down
+	kubernetes specific readiness/liveness probes 		# already have it with healthcheck.sh - add this to docs:
+															livenessProbe:
+															  exec:
+																command: ["/app/scripts/healthcheck.sh"]
+															  initialDelaySeconds: 30
+															  periodSeconds: 60
+															  
+															readinessProbe:
+															  exec:
+																command: ["/app/scripts/healthcheck.sh"]
+															  initialDelaySeconds: 10
+															  periodSeconds: 10
+	Improve connectivity check so that it can tell whether or not the internet or tunnel is down, and either restart or not on that basis?
+	add some sort of secrets management for user/pass to avoid exposure
+	webhook notifier env var (url) to post port and ip changes
+	PORT_API_TYPE=custom + PORT_API_CUSTOM_CMD="curl -X POST http://myapp:8080/port -d port=%PORT%"
+	TimeZone support TZ=
+	if PORT_API_TYPE="*something*" then PORT_API_ENABLED=true automatically
+	verify adequate killswitch in place for all run-time (during restarts, after exit because error, etc.)
+		poke holes for WAN check instead of using run-around eth0
+	gain higher confidence that killswitch is secure (compare against advanced users' dnsconfigmap setup for qbit)
+	Might need to further optimize monitoring for high-load scenarios
+	fix keep-alive logic (makes no sense to wait 30+ minutes to get new signature)?
+		issue keep-alive every 10 minutes, allow 1 failure, on the second failure get new signature
+
+
+
+Decided to not add:
+	Let user choose interface name? (interface=pia)
+	shadowsocks?
+	do wireguard_private_keys expire or anything like that? Do we need a contingency? # they don't expire, and reconnect would cover this
+	Add retries to initial connect? I feel like no
+	Env var table 										# Dockerfile covers this already
+	when LOCAL_NETWORK=all, that includes PIA's DNS @ 10.0.0.243. Not sure if this should be rectified at all, or left as-is.
+		maybe =all should disclude PIA's DNS for people testing such that they don't break it? Not sure
+			# document the potential issue but don't change it?
+	auto-failover for next best xms server if connection fails?
+	Add Metrics for proxy traffic? bytes in/out, connections. Check out metrics more thoroughly - justify their existence
+	split-tunneling (use certain DNS server for certain DNS lookups)
+	DNS_OVER_TLS=true
+
+
+
+
+
+
+
+
+
+
+
+
+######################## Fixed or deprecated:
+
+
+
+
+
+{
+"avg_check_duration_ms":72,
+"bytes_received":168300180508,
+"bytes_transmitted":87759232020,
+"current_ip":"10.10.225.123",
+"current_server":"ontario437",
+"failed_checks":26,
+"handshake_age_seconds":21,
+"last_check":"2025-10-31 13:27:27",
+"last_check_duration_ms":65,
+"last_handshake":"2025-10-31 13:27:11",
+"max_check_duration_ms":19038,
+"min_check_duration_ms":52,
+"server_latency_ms":50,
+"server_uptime_formatted":"3d 23h 28m",
+"server_uptime_seconds":343709,
+"success_rate":"99.89%",
+"success_rate_decimal":0.9988653720270565,
+"successful_checks":22889,
+"total_bytes":256059412528,
+"total_checks":22915,
+"total_reconnects":0,
+"uptime_formatted":"3d 23h 29m",
+"uptime_seconds":343745,
+"wan_checks_failed":0,
+"wan_checks_total":0,
+"wan_success_rate":"100.00%"
+}
+
+
+
+
+
+
+
+
+Get rid of these entirely (keep parallel checks, just get rid of the output into log):
+	# Show active detection modes
+	[ "$MONITOR_FAST_FAIL" = "true" ] && show_success "Fast-fail mode: enabled"
+	[ "$MONITOR_PARALLEL_CHECKS" = "true" ] && show_success "Parallel checks: enabled"
+	[ "$MONITOR_WATCH_HANDSHAKE" = "true" ] && show_success "Handshake monitoring: enabled (timeout: ${HANDSHAKE_TIMEOUT}s)"
+
+
+
+
+
+
+
+3 main bugs currently:
+	# FIXED # unnecessary restarts (due to resource usage or brief internet outtage)
+	# FIXED # port API not working after restart (and maybe not after 24 hour port refresh?)
+	# FIXED # port going stale after 26 minutes
+
+
+All fixed:
+
+Something odd happend when shutting down talos nodes:
+	everything looked good, but the port was not open
+	need to replicas=0 and then 1 for it to work properly
+	essentially reached a stale state upon being cordoned and re-added
+		after seeing it happen again, I notice that the "External IP" also doesn't update to the new one after restart.
+		once the pia network interface is unselected and reselected, the External IP updates to the new one.
+		but even after doing this and updating the port manually, portchecker says closed... weird.
+			qbit also says green connected globe but portchecker still disagrees.
+	with no PF it seems to work just fine - curl ifconfig.me in sab and it says the correct, newest, post-restart IP
+	this second time, even after scale 0 then 1, it still says closed, even though correct ip and port
+		rollout restart fixed it
+
+Notes about the port closure (closes after about 26 minutes):
+	olson@MasterPC:~/onedr0p-cluster-template$ k rollout restart deploy qbittorrent -n media
+	deployment.apps/qbittorrent restarted
+	olson@MasterPC:~/onedr0p-cluster-template$ # 4:53 port open
+	olson@MasterPC:~/onedr0p-cluster-template$ # closed by 5:20
+	olson@MasterPC:~/onedr0p-cluster-template$ k rollout restart deploy qbittorrent -n media
+	deployment.apps/qbittorrent restarted
+	olson@MasterPC:~/onedr0p-cluster-template$ # 5:21 port open
+	olson@MasterPC:~/onedr0p-cluster-template$ # 5:43 port still open
+	olson@MasterPC:~/onedr0p-cluster-template$ # 5:44 port still open
+	olson@MasterPC:~/onedr0p-cluster-template$ # 5:45 port still open
+	olson@MasterPC:~/onedr0p-cluster-template$ # 5:46 port still open
+	olson@MasterPC:~/onedr0p-cluster-template$ # 5:47 port closed!
+
+
+
+Bug where port is closed after about 20-30min - no restart, ip and port correct from both pia-tun and qbit
+	maybe a bug with qbit and not pia-tun?
+Another bug (mentioned in top):
+	when downloading, VPN healthchecks fail and cause a restart:
+		╔════════════════════════════════════════════════╗
+		║                                                ║
+		║    PIA WireGuard VPN Container                 ║
+		║    olsonalexw                                  ║
+		║                                                ║
+		╚════════════════════════════════════════════════╝
+
+		▶ Capturing pre-VPN IP address...
+		  ✓ Real IP captured: 97.106.51.66
+
+		▶ Setting up pre-tunnel firewall...
+		  ✓ Local network access: 10.69.0.0/16,10.96.0.0/16 (using nft sets)
+		  ✓ IPv6 completely blocked
+		  ✓ Pre-tunnel firewall active (nftables)
+
+		▶ Authenticating with PIA...
+		  ✓ Authentication successful
+
+		▶ Finding optimal server across locations: ca_ontario,ca_ontario-so,ca_toronto...
+		  ✓ Tested 8 servers, 8 responded
+		  ✓ Best server: CA Toronto
+		  ✓ Connected to: toronto433 (50ms)
+
+		▶ Configuring WireGuard tunnel...
+		  ✓ Tunnel configured
+
+		▶ Establishing VPN connection...
+		  ✓ VPN tunnel established
+
+		▶ Finalizing killswitch...
+		  ✓ Killswitch active (fwmark: 0xca6c, nftables)
+		  ✓ Firewall: 5 rules (5 output, 0 input), 3 sets active, nftables
+
+		▶ Verifying connection...
+		  ✓ No IPv6 leaks detected
+		  ✓ DNS: PIA (10.0.0.243)
+		  ✓ External IP: 212.32.48.153
+
+		▶ Initializing port forwarding...
+		  ✓ Port: 48173
+		  ✓ Port file: /etc/wireguard/port
+		  ✓ API updates: Enabled (qbittorrent)
+			  Port monitor will automatically update qbittorrent when it becomes available
+
+		╔════════════════════════════════════════════════╗
+		║                ✓ VPN Connected                 ║
+		╚════════════════════════════════════════════════╝
+
+		▶ Refreshing port in 24 hours...
+
+		▶ Starting health monitor...
+		▶ Port monitor starting (API: qbittorrent)
+		[15:32:50] ✓ qbittorrent port updated to 48173
+		  ✓ Health monitor active (PID: 330)
+		  ✓ Check interval: 15s, Failure threshold: 2
+		  ✓ Parallel checks: enabled
+
+		  ⚠ VPN health check failed (1/2)
+		  ✗ VPN connection lost (2/2)
+
+		▶ Reconnecting in 5s...
+
+		╔════════════════════════════════════════════════╗
+		║               ↻ Reconnecting VPN               ║
+		╚════════════════════════════════════════════════╝
+
+		▶ Tearing down existing tunnel...
+		  ✓ Tunnel torn down
+
+		▶ Setting up pre-tunnel firewall...
+		  ✓ Local network access: 10.69.0.0/16,10.96.0.0/16 (using nft sets)
+		  ✓ IPv6 completely blocked
+		  ✓ Pre-tunnel firewall active (nftables)
+
+		▶ Authenticating with PIA...
+		  ✓ Authentication successful
+
+		▶ Finding optimal server across locations: ca_ontario,ca_ontario-so,ca_toronto...
+		  ✓ Tested 8 servers, 8 responded
+		  ✓ Best server: CA Ontario
+		  ✓ Connected to: ontario415 (51ms)
+
+		▶ Configuring WireGuard tunnel...
+		  ✓ Tunnel configured
+
+		▶ Establishing VPN connection...
+		  ✓ VPN tunnel established
+
+		▶ Finalizing killswitch...
+		  ✓ Killswitch active (fwmark: 0xca6c, nftables)
+		  ✓ Firewall: 5 rules (5 output, 0 input), 3 sets active, nftables
+
+		▶ Verifying connection...
+		  ✓ No IPv6 leaks detected
+		  ✓ DNS: PIA (10.0.0.243)
+		  ✓ External IP: 66.56.80.49
+
+		▶ Restarting port forwarding...
+		  ✓ Port: 45247
+		  ✓ Port file: /etc/wireguard/port
+		  ✓ API updates: Enabled (qbittorrent)
+			  Port monitor will automatically update qbittorrent when it becomes available
+
+		╔════════════════════════════════════════════════╗
+		║                ✓ VPN Connected                 ║
+		╚════════════════════════════════════════════════╝
+
+		▶ Refreshing port in 24 hours...
+
+		▶ Health monitor still running...
+		  ✓ Check interval: 15s, Failure threshold: 2
+	
+	
+
+
+
+
+############################## Possible Names:
+
+olsonalexw/pia-tun
+xxxx/pia-tun
+
+alexander ward olson
+
+awols
+alardson
+oleward
+xarle
+olafa
+xarward
+wander
+alward
+lexegg
+olex
+awo
+exand
+exarn
+exar
+lexer
+lexward
+xeward
+xelward
+
+
+
+warlex		# taken
+waxel		# taken
+xewal		# taken
+olewan		# taken
+wolex		# taken
+olex		# taken
+olewa		# taken
+xolan		# taken
+xolaf		# taken
+exxar		# taken
+xolaw		# taken
+xunc		# taken
+xelaw		# taken
+xelron		# taken
+xelon		# taken
+
+xelox		# taken
+xole		# taken
+
+xe1ox		# taken
+xelow		# taken
+xoler		# taken
+xolen		# taken
+xenox		# taken
+xewox		# taken
+lexwon		# taken
+lexols		# taken
+lexlow		# taken
+xalwo		# taken
+alxow		# taken
+xelow		# taken
+xolie		# taken
+xalox		# taken
+
+xewol		# not taken			xewol/pia-tun
+wolax		# not taken			wolax/pia-tun
+xoliew		# not taken			xoliew/pia-tun
+xole27		# not taken			xole27/pia-tun
+xolew		# not taken			xolew/pia-tun
+warals		# not taken			warals/pia-tun
+awo27		# not taken			awo27/pia-tun
+awolso		# not taken			awolso/pia-tun
+alewon		# not taken			alewon/pia-tun
+xelran		# not taken			xelran/pia-tun
+
+xalow		# not taken			xalow/pia-tun
+xelwa		# not taken			xelwa/pia-tun
+awolie		# not taken			awolie/pia-tun
+aw0lie		# not taken			aw0lie/pia-tun
+alxwo		# not taken			alxwo/pia-tun
+awlox		# not taken			awlox/pia-tun
+x0lie		# not taken			x0lie/pia-tun
+w0xie		# not taken			w0xie/pia-tun
+xawlie		# not taken			xawlie/pia-tun
+xaloxie		# not taken			xaloxie/pia-tun
+awlor		# not taken			awlor/pia-tun
+
+
+
+
+autobrr:	8:09:19
+in qbit:	8:09:25
+download:	23 minutes 5 seconds
+completed:	8:34:01
+stalled:	about 1 minute
+
+
+
+cat << EOF
+${cyn}╔════════════════════════════════════════════════╗${nc}
+${cyn}║                                                ║${nc}
+${cyn}║${nc}    ${bold}PIA Wireguard VPN Client${nc}                    ${cyn}║${nc}
+${cyn}║${nc}    ${grn}x0lie/pia-tun${nc}                               ${cyn}║${nc}
+${cyn}║                                                ║${nc}
+${cyn}╚════════════════════════════════════════════════╝${nc}
+
+EOF
+
+
+cat << EOF
+${cyn}╔════════════════════════════════════════════════╗${nc}
+${cyn}║                                                ║${nc}
+${cyn}║${nc}    ${grn}x0lie/pia-tun${nc} v0.9.0                        ${cyn}║${nc}
+${cyn}║                                                ║${nc}
+${cyn}╚════════════════════════════════════════════════╝${nc}
+
+EOF
+
+
+
+cat << EOF
+${cyn}╔════════════════════════════════════════════════╗${nc}
+${cyn}║                                                ║${nc}
+${cyn}║${nc}    ${bold}Pia-Tun v0.9.0                              ${cyn}║${nc}
+${cyn}║${nc}    ${grn}x0lie/pia-tun${nc}                               ${cyn}║${nc}
+${cyn}║                                                ║${nc}
+${cyn}╚════════════════════════════════════════════════╝${nc}
+
+EOF
+
+
+╔════════════════════════════════════════════════╗
+║                                                ║
+║    PIA-TUN                                     ║
+║    x0lie/pia-tun v0.9.0                        ║
+║                                                ║
+╚════════════════════════════════════════════════╝
+
+╔════════════════════════════════════════════════╗
+║                                                ║
+║    Pia-Tun v0.9.0                              ║
+║    x0lie/pia-tun                               ║
+║                                                ║
+╚════════════════════════════════════════════════╝
+
+╔════════════════════════════════════════════════╗
+║                                                ║
+║    PIA WG VPN Container                        ║
+║    x0lie/pia-tun                               ║
+║                                                ║
+╚════════════════════════════════════════════════╝
+
+╔════════════════════════════════════════════════╗
+║                                                ║
+║    x0lie/pia-tun                               ║
+║                                                ║
+╚════════════════════════════════════════════════╝
+
+╔════════════════════════════════════════════════╗
+║                                                ║
+║    PIA-TUN v0.9.0                              ║
+║    x0lie                                       ║
+║                                                ║
+╚════════════════════════════════════════════════╝
+
+╔════════════════════════════════════════════════╗
+║                                                ║
+║    pia-tun v0.9.0                              ║
+║    x0lie                                       ║
+║                                                ║
+╚════════════════════════════════════════════════╝
+
+╔════════════════════════════════════════════════╗
+║                                                ║
+║                pia-tun v0.9.0                  ║
+║                    x0lie                       ║
+║                                                ║
+╚════════════════════════════════════════════════╝
+
+╔════════════════════════════════════════════════╗
+║                pia-tun v0.9.0                  ║
+║                    x0lie                       ║
+╚════════════════════════════════════════════════╝

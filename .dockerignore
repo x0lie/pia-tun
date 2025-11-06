@@ -2,3 +2,5 @@
 README.md
 PROJECT_STRUCTURE.md
 Dockerfile
+notes/
+docker-compose/

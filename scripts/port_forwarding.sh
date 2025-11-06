@@ -144,6 +144,7 @@ notify_webhook() {
 }
 
 # Initial signature acquisition with retry
+echo ""
 show_step "Acquiring port forward signature..."
 MAX_RETRIES=5
 retry=0
