@@ -1,0 +1,59 @@
+These are the necessary components to relying on Docker/Kube restarts for no leaks
+
+
+
+
+
+services:
+  pia-tun:
+    image: x0lie/pia-tun
+    cap_add:
+      - NET_ADMIN
+    cap_drop:
+      - all
+    restart: unless-stopped
+    healthcheck:                                # Necessary for 0 leaks
+      interval: 15s
+      retries: 3
+
+  qbittorrent:
+    image: linuxserver/qbittorrent
+    network_mode: container:pia-tun             # Shares the exact same network namespace
+    depends_on:
+      pia-tun:
+        condition: service_healthy              # Docker 100% respects this
+    ... 
+
+
+
+
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pia-tun
+spec:
+  template:
+    spec:
+      containers:
+      - name: pia-tun
+        livenessProbe: ...
+        readinessProbe: ...
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qbittorrent
+spec:
+  template:
+    spec:
+      containers:
+      - name: qbittorrent
+        image: linuxserver/qbittorrent
+      shareProcessNamespace: true   # or vpn-sidecar injection
+      # Most people use a vpn-sidecar injector (vpn-kit, gluetun-sidecar, etc.)
+      # which automatically:
+      # - waits for pia-tun readinessProbe
+      # - sets NET_ADMIN on host or injects killswitch

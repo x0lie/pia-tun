@@ -1,6 +1,6 @@
 Structured logging with LOG_LEVEL=debug/info/error?
 	integrate DEBUG_PF and MONITOR_DEBUG
-Try to user Trivy or something to scan for vulnerabilities during CI
+Try to use Trivy or something to scan for vulnerabilities during CI
 if account credentials change or account expires: if auth fails on restart, then error out with message like:
 	Could not authenticate - Credential change or account expired?
 
@@ -17,13 +17,23 @@ To do:
 	HEALTHCHECK is not supported for OCI image format and will be ignored. Must use 'docker' format
 
 
+Restart Logic
+	I realized that instead of RESTART_SERVICES for the stack and even for just the image/container itself,
+	healthchecks/probes should just get docker/kubernetes to restart the pod (stack) on reconnect needs,
+	signature (port) refreshes, etc.
+
+	
+
 
 Consider getting rid of RESTART_SERVICES based on possible or likely use cases
 	or add docker apk back so it can actually be used
 	adds about 26MB to uncompressed image size
 
+	Perhaps we can use health indicators so that docker just restarts the entire stack upon failure instead?
 
 
+Consider creating a linux (no container) version after complete
+	pia has their own GUI client for linux, so maybe not worth it
 
 
 

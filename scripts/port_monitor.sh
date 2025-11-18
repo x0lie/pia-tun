@@ -13,6 +13,8 @@ set -euo pipefail
 source /app/scripts/ui.sh
 source /app/scripts/port_api_updater.sh
 
+trap 'exit 0' SIGTERM SIGINT
+
 # Configuration (PORT_FILE may be set by environment)
 PORT_FILE="${PORT_FILE:-/etc/wireguard/port}"
 

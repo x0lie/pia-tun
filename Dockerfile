@@ -36,7 +36,6 @@ RUN apk update && \
         nftables \
         bind-tools \
         tzdata \
-        docker-cli \
     && \
     bash --version && \
     wg --version && \
