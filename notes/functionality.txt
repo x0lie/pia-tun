@@ -17,12 +17,12 @@ To do:
 	HEALTHCHECK is not supported for OCI image format and will be ignored. Must use 'docker' format
 
 
-Restart Logic
-	I realized that instead of RESTART_SERVICES for the stack and even for just the image/container itself,
-	healthchecks/probes should just get docker/kubernetes to restart the pod (stack) on reconnect needs,
-	signature (port) refreshes, etc.
+
 
 	
+
+
+
 
 
 Consider getting rid of RESTART_SERVICES based on possible or likely use cases
@@ -30,10 +30,14 @@ Consider getting rid of RESTART_SERVICES based on possible or likely use cases
 	adds about 26MB to uncompressed image size
 
 	Perhaps we can use health indicators so that docker just restarts the entire stack upon failure instead?
+		It turns out that docker does not have the ability to restart a stack upon health failures - 
+			no depends_on rules will get dependent services to restart on pia-tun restarts or health failures
+		Docker expects users to handle dependencies like this
+
 
 
 Consider creating a linux (no container) version after complete
-	pia has their own GUI client for linux, so maybe not worth it
+	pia has their own GUI client for linux, so probably not worth it
 
 
 

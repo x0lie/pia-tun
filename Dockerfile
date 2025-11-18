@@ -73,9 +73,6 @@ RUN chmod +x /app/run.sh /app/scripts/*.sh && \
 
 VOLUME ["/etc/wireguard"]
 
-HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
-    CMD /app/scripts/healthcheck.sh
-
 ENV TZ=UTC \
     KILLSWITCH_EXEMPT_PORTS="" \
     DISABLE_IPV6=true \

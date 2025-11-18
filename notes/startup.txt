@@ -1,7 +1,8 @@
-These are the necessary components to relying on Docker/Kube restarts for no leaks
 
 
 
+These are the necessary components to relying on Docker/Kube startups for no leaks
+    You're likely fine without this, but it's good to have to be sure of no leaks
 
 
 services:
@@ -13,15 +14,14 @@ services:
       - all
     restart: unless-stopped
     healthcheck:                                # Necessary for 0 leaks
-      interval: 15s
-      retries: 3
+      test: test -f /tmp/killswitch_on          # Waits for killswitch to be on to start dependent services
 
   qbittorrent:
     image: linuxserver/qbittorrent
     network_mode: container:pia-tun             # Shares the exact same network namespace
     depends_on:
       pia-tun:
-        condition: service_healthy              # Docker 100% respects this
+        condition: service_healthy              # Docker 100% respects this. Waits for killswitch to be on
     ... 
 
 
