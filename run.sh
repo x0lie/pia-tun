@@ -71,6 +71,8 @@ initial_connect() {
         echo ""
     fi
 
+    echo > /etc/resolv.conf
+
     # Setup baseline killswitch first (includes bypass route allowances)
     if [ "$restart" != "true" ]; then
         setup_baseline_killswitch
@@ -154,7 +156,7 @@ perform_reconnection() {
         }
         sleep 2
         [ -n "$RESTART_SERVICES" ] && { echo ""; restart_services "$RESTART_SERVICES"; echo ""; }
-
+        rm /tmp/reconnecting
         return 0
     else
         show_error "Reconnection failed"
@@ -180,8 +182,7 @@ main_loop() {
         show_vpn_connected
     fi
 
-    # IMPROVED: Add stabilization delay before starting monitor
-    # This gives the VPN time to establish handshakes and settle
+    # Stabilization delay before starting monitor
     sleep 1
 
     show_step "Starting health monitor..."

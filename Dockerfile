@@ -27,15 +27,12 @@ RUN apk update && \
     apk add --no-cache \
         bash \
         curl \
+        jq \
         ca-certificates \
         wireguard-tools-wg \
-        iproute2 \
-        iptables \
-        jq \
-        iputils \
         nftables \
-        bind-tools \
-        tzdata \
+        iptables \
+        iproute2-minimal \
     && \
     bash --version && \
     wg --version && \

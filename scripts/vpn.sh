@@ -14,24 +14,28 @@ source /app/scripts/killswitch.sh
 resolve_hostname() {
     local hostname="$1"
     
-    # Try 1.0.0.1 first
-    add_temporary_exemption "1.0.0.1" "53" "udp" "dns_resolve"
-    add_temporary_exemption "1.0.0.1" "53" "tcp" "dns_resolve"
-    local ip=$(dig +short "$hostname" @1.0.0.1 +timeout=5 2>/dev/null | head -1)
+    # Try 1.0.0.1 (Cloudflare)
+    add_temporary_exemption "1.0.0.1" "443" "tcp" "dns_resolve"
+    local ip=$(curl -fsS --max-time 10 \
+        "https://1.0.0.1/dns-query?name=$hostname&type=A" \
+        -H 'accept: application/dns-json' | \
+        jq -r '.Answer // empty | .[] | select(.type == 1) | .data' | head -n1)
     remove_temporary_exemption "dns_resolve"
     
-    if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
         echo "$ip"
         return 0
     fi
-    
+
     # Fallback to 1.1.1.1
-    add_temporary_exemption "1.1.1.1" "53" "udp" "dns_resolve_fallback"
-    add_temporary_exemption "1.1.1.1" "53" "tcp" "dns_resolve_fallback"
-    ip=$(dig +short "$hostname" @1.1.1.1 +timeout=5 2>/dev/null | head -1)
-    remove_temporary_exemption "dns_resolve_fallback"
+    add_temporary_exemption "1.1.1.1" "443" "tcp" "dns_resolve"
+    local ip=$(curl -fsS --max-time 10 \
+        "https://1.1.1.1/dns-query?name=$hostname&type=A" \
+        -H 'accept: application/dns-json' | \
+        jq -r '.Answer // empty | .[] | select(.type == 1) | .data' | head -n1)
+    remove_temporary_exemption "dns_resolve"
     
-    if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
         echo "$ip"
         return 0
     else
@@ -370,7 +374,7 @@ setup_dns() {
     [ ! -f /etc/resolv.conf.bak ] && cp /etc/resolv.conf /etc/resolv.conf.bak 2>/dev/null || true
     
     {
-        echo "# Set by PIA WireGuard"
+        echo "# Set by pia-tun"
         IFS=',' read -ra DNS_SERVERS <<< "$dns"
         for server in "${DNS_SERVERS[@]}"; do
             echo "nameserver $(echo "$server" | xargs)"
