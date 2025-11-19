@@ -479,13 +479,10 @@ func (m *Monitor) waitForWAN() bool {
 	// First 5 attempts with exponential backoff
 	for _, delay := range delays {
 		// Use \r to overwrite the previous line
-		fmt.Printf("\r  %s⏳%s Checking again in %ds (attempt %d)...%s", 
-			colorYellow, colorReset, delay, attempt, strings.Repeat(" ", 20))
 		time.Sleep(time.Duration(delay) * time.Second)
 		
 		if m.checkWANConnectivity(5 * time.Second) {
 			downtime := time.Since(downSince)
-			fmt.Printf("\r%s\r", strings.Repeat(" ", 80)) // Clear the line
 			fmt.Printf("\r")
 			m.showSuccess(fmt.Sprintf("Internet restored (down for %s)", formatDuration(downtime)))
 			if m.metrics != nil {
@@ -502,13 +499,10 @@ func (m *Monitor) waitForWAN() bool {
 	
 	// Continue checking every 160s indefinitely
 	for {
-		fmt.Printf("\r  %s⏳%s Checking again in %ds (attempt %d)...%s", 
-			colorYellow, colorReset, maxDelay, attempt, strings.Repeat(" ", 20))
 		time.Sleep(time.Duration(maxDelay) * time.Second)
 		
 		if m.checkWANConnectivity(5 * time.Second) {
 			downtime := time.Since(downSince)
-			fmt.Printf("\r%s\r", strings.Repeat(" ", 80)) // Clear the line
 			fmt.Printf("\r")
 			m.showSuccess(fmt.Sprintf("Internet restored (down for %s)", formatDuration(downtime)))
 			if m.metrics != nil {
@@ -717,6 +711,7 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
                     // Print the final error only when reaching MaxFailures
                     fmt.Printf("\n  %s✗%s VPN connection lost (%d/%d)%s\n", 
                         colorRed, colorReset, m.failureCount, m.config.MaxFailures, strings.Repeat(" ", 20))
+					exec.Command("pkill", "-f", "port_forwarding.sh").Run()
                     m.mu.Unlock()
                     m.triggerReconnect()
                     m.mu.Lock()

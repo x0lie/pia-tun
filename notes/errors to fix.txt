@@ -43,32 +43,6 @@ Not sure if this is an issue anymore or what the reason this happened is
 
 
 
-
-
-
-
-
-#######################################################################################################
-######################################## Another error to fix: ########################################
-
-Need to stop bind attempts and signature requests once Internet down is recognized
-
-▶ Starting health monitor...
-  ✓ Health monitor active (PID: 416)
-  ✓ Check interval: 15s, Failure threshold: 3
-  ✓ Parallel checks: enabled
-  ✓ Handshake monitoring: enabled (timeout: 360s)
-
-
-  ✗ VPN connection lost (3/3)
-
-▶ Testing WAN before reconnect...
-  ✗ Internet down, waiting...
-  ⏳ Checking again in 160s (attempt 7)...                      ⚠ Keep-alive bind #1 failed
-  ⏳ Checking again in 160s (attempt 10)...                      ⚠ Keep-alive bind #2 failed
-
-
-
 #######################################################################################################
 ######################################## Another error to fix: ########################################
 
@@ -116,6 +90,27 @@ Need to stop bind attempts and signature requests once Internet down is recogniz
 
 
 
+
+
+#######################################################################################################
+######################################## Has been fixed: ##############################################
+#######################################################################################################
+
+Need to stop bind attempts and signature requests once Internet down is recognized
+
+▶ Starting health monitor...
+  ✓ Health monitor active (PID: 416)
+  ✓ Check interval: 15s, Failure threshold: 3
+  ✓ Parallel checks: enabled
+  ✓ Handshake monitoring: enabled (timeout: 360s)
+
+
+  ✗ VPN connection lost (3/3)
+
+▶ Testing WAN before reconnect...
+  ✗ Internet down, waiting...
+  ⏳ Checking again in 160s (attempt 7)...                      ⚠ Keep-alive bind #1 failed
+  ⏳ Checking again in 160s (attempt 10)...                      ⚠ Keep-alive bind #2 failed
 
 
 

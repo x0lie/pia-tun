@@ -3,8 +3,8 @@ Structured logging with LOG_LEVEL=debug/info/error?
 Try to use Trivy or something to scan for vulnerabilities during CI
 if account credentials change or account expires: if auth fails on restart, then error out with message like:
 	Could not authenticate - Credential change or account expired?
-
-
+check keepalive logic (max time length) to be sure it doesn't ever let port drop without restarting or get signature
+	If keepalives not done within about 25 minutes, the port is lost
 
 
 
