@@ -1,12 +1,47 @@
-Structured logging with LOG_LEVEL=debug/info/error?
-	integrate DEBUG_PF and MONITOR_DEBUG
+##### Functionality I may want to add:
+
+
+
 Try to use Trivy or something to scan for vulnerabilities during CI
+	is to be added to github actions
+Multi-arch build (arm64 + armv7)
+	supposedly easy to do? something about github actions. Do I really not need to rewrite code?
+either setup killswitch as the first thing or
+	add a healthcheck file flag at killswitch up so that people can launch dependents more securely
+persistent metrics - write to file
+	json file written every minute with current server, port, latency, uptime, bytes transferred, etc.
+port persistence across restarts
+	apparently people really need this and are always upset if they don't have it?
+		I'm guessing they're plebs who don't automate their stuff
+	write payload and signature to a file (persistent volume)
 if account credentials change or account expires: if auth fails on restart, then error out with message like:
 	Could not authenticate - Credential change or account expired?
 check keepalive logic (max time length) to be sure it doesn't ever let port drop without restarting or get signature
 	If keepalives not done within about 25 minutes, the port is lost
+add either sidecar or webhook for restarting dependent services (or do nothing and recommend newer versions of torrent client)
+DIP_TOKEN support
+add debugging to monitor and/or proxy go files?
+supposedly can in fact run as non-root?
+	in dockerfile:
+		# After installing everything
+		RUN apk add --no-cache libcap   # for setcap
+		RUN setcap cap_net_admin+ep /usr/bin/wg /usr/bin/wg-quick /usr/bin/nft /usr/sbin/ip
+		USER 1000:1000
+	in compose:
+		cap_drop:
+		- ALL
+		cap_add:
+		- NET_ADMIN
+		- SETUID    # if you ever need to fix uid or something, optional
+		- SETGID
 
 
+
+
+I like thrnz method here for telling client they need NET_ADMIN
+	❯ d run --rm -it --name=thrnz -e LOC=ca_ontario -e USER=p1280306 -e PASS='0&00Me6!2cz*qm1*1' -e PORT_FORWARDING=1 thrnz/docker-wireguard-pia:latest
+	The container requires the NET_ADMIN capability to run. See the README for more info.
+	Fatal error
 
 
 To do:
@@ -15,29 +50,16 @@ To do:
 	verify wide api use - qbittorrent, deluge, transmission, rtorrent, etc.
 	Make UI (log output) prettier
 	HEALTHCHECK is not supported for OCI image format and will be ignored. Must use 'docker' format
+	add image to github repository as well probably
+	private k8s-cluster and push new clean repo before release of pia-tun
 
 
 
 
-	
 
 
 
 
-
-Consider getting rid of RESTART_SERVICES based on possible or likely use cases
-	or add docker apk back so it can actually be used
-	adds about 26MB to uncompressed image size
-
-	Perhaps we can use health indicators so that docker just restarts the entire stack upon failure instead?
-		It turns out that docker does not have the ability to restart a stack upon health failures - 
-			no depends_on rules will get dependent services to restart on pia-tun restarts or health failures
-		Docker expects users to handle dependencies like this
-
-
-
-Consider creating a linux (no container) version after complete
-	pia has their own GUI client for linux, so probably not worth it
 
 
 
@@ -84,6 +106,8 @@ Added:
 	Might need to further optimize monitoring for high-load scenarios
 	fix keep-alive logic (makes no sense to wait 30+ minutes to get new signature)?
 		issue keep-alive every 10 minutes, allow 1 failure, on the second failure get new signature
+	Structured logging with LOG_LEVEL=debug/info/error?
+		integrate DEBUG_PF and MONITOR_DEBUG
 
 
 
@@ -100,7 +124,18 @@ Decided to not add:
 	Add Metrics for proxy traffic? bytes in/out, connections. Check out metrics more thoroughly - justify their existence
 	split-tunneling (use certain DNS server for certain DNS lookups)
 	DNS_OVER_TLS=true
+	Consider getting rid of RESTART_SERVICES based on possible or likely use cases
+		or add docker apk back so it can actually be used
+		adds about 26MB to uncompressed image size
+		Perhaps we can use health indicators so that docker just restarts the entire stack upon failure instead?
+			It turns out that docker does not have the ability to restart a stack upon health failures - 
+				no depends_on rules will get dependent services to restart on pia-tun restarts or health failures
+			Docker expects users to handle dependencies like this
 
+
+
+Consider creating a linux (no container) version after complete
+	pia has their own GUI client for linux, so probably not worth it
 
 
 
@@ -113,6 +148,50 @@ Decided to not add:
 
 
 ######################## Fixed or deprecated:
+
+
+
+
+
+
+The issue of restarting dependent services
+	on reconnect and new signature (port)
+		Unfortunately docker does not support this functionality natively (feel like it should)
+		I need to know the best method to integrate at least partial functionality
+			some sort of script that plays on reconnect
+				should maybe just reconnect when new signature in these cases to simplify?
+				use with watchtower? Figure out best/most common way to solve this for people
+					make sure pia-tun as capable of making this (these?) method happen
+	relevant on older versions of qbit (and likely even current versions of alternatives)
+	get rid of use of docker-cli type commands?
+		I still dislike needing docker-cli (adds a lot of image size and need to access docker socket etc.)
+	from what I can tell, this is an issue on both kube and docker - there is no native stack-restart on failure.
+		something about core philosophy:
+			stateless, independent, crash-loop tolerant
+		race conditions, restart storms, circular dependencies
+		termination order
+		basically the managers of kube and docker say no for these reasons, and tell people to
+			combine them into a single container
+			it's a "user-space problem."
+	the best solution
+		qbittorrent:
+		  pid_mode: service:pia-tun				# pia-tun doesn't need anything like this, just dependents
+		  network_mode: service:pia-tun
+		both containers get the same exact PID namespace (shareProcessNamespace: true)
+			with the shared PID namespace, one container can kill another
+				this solves the issue of restarting dependents.
+		add env RESTART_DEPENDENTS=true/false
+			issues a pkill for all non-pia-tun processes
+		kube version:
+		  spec:
+			shareProcessNamespace: true   		# ← one line for the whole pod
+			containers:
+			- name: pia-tun
+				image: your/pia-tun
+			- name: qbittorrent
+				image: linuxserver/qbittorrent
+		apparently this doensn't work because many contaienrs require PID=1 which creates an incongruency
+	"the "perfect" zero-overhead solution simply doesn't exist in Docker today."
 
 
 

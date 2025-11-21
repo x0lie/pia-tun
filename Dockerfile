@@ -71,6 +71,7 @@ RUN chmod +x /app/run.sh /app/scripts/*.sh && \
 VOLUME ["/etc/wireguard"]
 
 ENV TZ=UTC \
+    LOG_LEVEL=info \
     KILLSWITCH_EXEMPT_PORTS="" \
     DISABLE_IPV6=true \
     LOCAL_NETWORK="" \
