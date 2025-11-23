@@ -27,9 +27,8 @@ readonly LOG_FILE="/tmp/proxy.log"
 
 # Start proxy server (single Go binary handles both SOCKS5 and HTTP)
 start_proxies() {
-    echo ""
+    show_info
     show_step "Starting proxy servers..."
-    show_debug "start_proxies: Beginning proxy startup"
 
     # Kill any existing proxy process
     show_debug "Cleaning up any existing proxy processes"
@@ -63,8 +62,8 @@ start_proxies() {
     show_debug "Proxy process started with PID: $proxy_pid"
 
     # Wait and verify it started
-    show_debug "Waiting 3s for proxy to initialize..."
-    sleep 3
+    #show_debug "Waiting 3s for proxy to initialize..."
+    #sleep 3
     
     if kill -0 $proxy_pid 2>/dev/null; then
         show_debug "Proxy process verified running, saving PID to $PID_FILE"
@@ -72,13 +71,13 @@ start_proxies() {
 
         if [ -n "$proxy_user" ] && [ -n "$proxy_pass" ]; then
             show_success "Proxy servers ready (authenticated):"
-            echo "      SOCKS5: socks5://$proxy_user:****@<container-ip>:$SOCKS5_PORT"
-            echo "      HTTP:   http://$proxy_user:****@<container-ip>:$HTTP_PROXY_PORT"
+            show_info "      SOCKS5: socks5://$proxy_user:****@<container-ip>:$SOCKS5_PORT"
+            show_info "      HTTP:   http://$proxy_user:****@<container-ip>:$HTTP_PROXY_PORT"
             show_debug "Proxy authentication enabled"
         else
             show_success "Proxy servers ready:"
-            echo "      SOCKS5: socks5://<container-ip>:$SOCKS5_PORT"
-            echo "      HTTP:   http://<container-ip>:$HTTP_PROXY_PORT"
+            show_info "      SOCKS5: socks5://<container-ip>:$SOCKS5_PORT"
+            show_info "      HTTP:   http://<container-ip>:$HTTP_PROXY_PORT"
             show_debug "Proxy running without authentication"
         fi
         return 0
@@ -103,8 +102,6 @@ start_proxies() {
 
 # Stop proxy servers (silent version for internal use)
 stop_proxies_silent() {
-    show_debug "stop_proxies_silent: Cleaning up proxy processes"
-    
     if [ -f "$PID_FILE" ]; then
         local pid=$(cat "$PID_FILE")
         show_debug "Found PID file with PID: $pid"
@@ -128,7 +125,6 @@ stop_proxies_silent() {
 
 # Stop proxy servers (with output)
 stop_proxies() {
-    show_debug "stop_proxies: Stopping proxy servers"
     stop_proxies_silent
 }
 

@@ -92,10 +92,10 @@ monitor_port_changes() {
             if update_port_api "$CURRENT_PORT"; then
                 # Success!
                 if [ "$CURRENT_PORT" != "$LAST_PORT" ]; then
-                    echo "  ${grn}✓${nc} [$(date '+%H:%M:%S')] $PORT_API_TYPE port updated to $CURRENT_PORT"
+                    show_success "[$(date '+%H:%M:%S')] $PORT_API_TYPE port updated to $CURRENT_PORT"
                     show_debug "Port update successful (new port: $CURRENT_PORT)"
                 else
-                    echo "  ${grn}✓${nc} [$(date '+%H:%M:%S')] $PORT_API_TYPE now reachable, port set to $CURRENT_PORT"
+                    show_success "[$(date '+%H:%M:%S')] $PORT_API_TYPE now reachable, port set to $CURRENT_PORT"
                     show_debug "Retry successful (port: $CURRENT_PORT)"
                 fi
                 LAST_UPDATE_SUCCESS=true
@@ -103,7 +103,7 @@ monitor_port_changes() {
                 # Failed - will retry next cycle
                 if [ "$LAST_UPDATE_SUCCESS" = true ]; then
                     # Only log on first failure (not on every retry)
-                    echo "  ${ylw}⚠${nc} [$(date '+%H:%M:%S')] $PORT_API_TYPE not reachable, will retry"
+                    show_warning "[$(date '+%H:%M:%S')] $PORT_API_TYPE not reachable, will retry"
                     show_debug "API update failed (first failure)"
                 else
                     show_debug "API update failed (continuing retry cycle)"
@@ -130,7 +130,7 @@ main() {
 
     # Check if this is a restart (reconnecting marker exists)
     if [ ! -f /tmp/reconnecting ]; then
-        echo ""
+        show_info
         show_step "Port monitor starting (API: $PORT_API_TYPE)"
     else
         show_debug "Reconnecting mode detected, suppressing startup message"

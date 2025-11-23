@@ -239,7 +239,6 @@ update_port_api() {
 
     # Mark success for display
     if [ $result -eq 0 ]; then
-        show_debug "API update successful, marking success"
         touch /tmp/port_api_success
     else
         show_debug "API update failed with exit code: $result"

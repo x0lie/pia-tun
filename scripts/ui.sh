@@ -39,17 +39,17 @@ export LOG_LEVEL _LOG_LEVEL
 
 # log_error: Always shown (even at error level)
 log_error() {
-    [ $_LOG_LEVEL -ge 0 ] && echo "$@" >&2
+    [[ $_LOG_LEVEL -ge 0 ]] && echo "$@" >&2 || true
 }
 
 # log_info: Shown at info and debug levels
 log_info() {
-    [ $_LOG_LEVEL -ge 1 ] && echo "$@"
+    [[ $_LOG_LEVEL -ge 1 ]] && echo "$@" || true
 }
 
 # log_debug: Only shown at debug level
 log_debug() {
-    [ $_LOG_LEVEL -ge 2 ] && echo "$@"
+    [[ $_LOG_LEVEL -ge 2 ]] && echo "$@" >&2 || true
 }
 
 # ============================================================================
@@ -100,13 +100,17 @@ show_warning() {
     log_info "  ${ylw}⚠${nc} $1"
 }
 
+show_info() {
+    log_info "${1:-}"
+}
+
 show_error() {
     log_error "  ${red}✗${nc} $1" >&2
 }
 
 # Debug indicator - debug level only
 show_debug() {
-    log_debug "  ${blu}[DEBUG]${nc} $1" >&2
+    log_debug "    ${blu}[DEBUG]${nc} $1" >&2
 }
 
 # ============================================================================
@@ -188,8 +192,6 @@ get_external_ip() {
         "http://icanhazip.com"
         "http://api.ipify.org"
     )
-
-    show_debug "Attempting to fetch external IP..."
     
     for service in "${services[@]}"; do
         show_debug "Trying service: $service"
@@ -197,7 +199,6 @@ get_external_ip() {
         
         # Valid IP found (and not a curl error message)
         if [[ -n "$ip" && "$ip" != "curl: "* ]]; then
-            show_debug "Successfully retrieved IP: $ip from $service"
             echo "$ip"
             return 0
         fi

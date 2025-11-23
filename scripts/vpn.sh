@@ -13,13 +13,12 @@ source /app/scripts/killswitch.sh
 # Resolve hostname using Cloudflare DNS (1.0.0.1, already in bypass routes)
 resolve_hostname() {
     local hostname="$1"
-    show_debug "Resolving hostname: $hostname" >&2
+    show_debug "Resolving hostname: $hostname"
     
     # Try 1.0.0.1 (Cloudflare)
-    show_debug "Adding temporary exemption for 1.0.0.1:443 (dns_resolve)" >&2
     add_temporary_exemption "1.0.0.1" "443" "tcp" "dns_resolve"
     
-    show_debug "Querying 1.0.0.1 for $hostname" >&2
+    show_debug "Querying 1.0.0.1 for $hostname"
     local ip=$(curl -fsS --max-time 10 \
         "https://1.0.0.1/dns-query?name=$hostname&type=A" \
         -H 'accept: application/dns-json' | \
@@ -27,18 +26,17 @@ resolve_hostname() {
     remove_temporary_exemption "dns_resolve"
     
     if [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-        show_debug "Resolved $hostname to $ip via 1.0.0.1" >&2
+        show_debug "Resolved $hostname to $ip via 1.0.0.1"
         echo "$ip"
         return 0
     fi
     
-    show_debug "1.0.0.1 failed, trying fallback 1.1.1.1" >&2
+    show_debug "1.0.0.1 failed, trying fallback 1.1.1.1"
 
     # Fallback to 1.1.1.1
-    show_debug "Adding temporary exemption for 1.1.1.1:443 (dns_resolve)" >&2
     add_temporary_exemption "1.1.1.1" "443" "tcp" "dns_resolve"
     
-    show_debug "Querying 1.1.1.1 for $hostname" >&2
+    show_debug "Querying 1.1.1.1 for $hostname"
     local ip=$(curl -fsS --max-time 10 \
         "https://1.1.1.1/dns-query?name=$hostname&type=A" \
         -H 'accept: application/dns-json' | \
@@ -46,11 +44,11 @@ resolve_hostname() {
     remove_temporary_exemption "dns_resolve"
     
     if [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-        show_debug "Resolved $hostname to $ip via 1.1.1.1" >&2
+        show_debug "Resolved $hostname to $ip via 1.1.1.1"
         echo "$ip"
         return 0
     else
-        show_debug "DNS resolution failed for $hostname (all services failed)" >&2
+        show_debug "DNS resolution failed for $hostname (all services failed)"
         return 1
     fi
 }
@@ -67,80 +65,78 @@ authenticate() {
     
     # Check for Docker secrets first
     if [ -f "/run/secrets/pia_user" ]; then
-        show_debug "Found Docker secret: /run/secrets/pia_user" >&2
+        show_debug "Found Docker secret: /run/secrets/pia_user"
         pia_user=$(cat /run/secrets/pia_user)
     elif [ -n "${PIA_USER:-}" ]; then
-        show_debug "Using PIA_USER environment variable" >&2
+        show_debug "Using PIA_USER environment variable"
         pia_user="${PIA_USER}"
     fi
     
     if [ -f "/run/secrets/pia_pass" ]; then
-        show_debug "Found Docker secret: /run/secrets/pia_pass" >&2
+        show_debug "Found Docker secret: /run/secrets/pia_pass"
         pia_pass=$(cat /run/secrets/pia_pass)
     elif [ -n "${PIA_PASS:-}" ]; then
-        show_debug "Using PIA_PASS environment variable" >&2
+        show_debug "Using PIA_PASS environment variable"
         pia_pass="${PIA_PASS}"
     fi
     
     # Validate we have credentials from either source
     if [ -z "$pia_user" ] || [ -z "$pia_pass" ]; then
-        show_error "PIA credentials not found (set PIA_USER/PIA_PASS or use Docker secrets)" >&2
-        show_debug "Credential check failed: user=${pia_user:+set} pass=${pia_pass:+set}" >&2
+        show_error "PIA credentials not found (set PIA_USER/PIA_PASS or use Docker secrets)"
+        show_debug "Credential check failed: user=${pia_user:+set} pass=${pia_pass:+set}"
         return 1
     fi
     
-    show_debug "Credentials validated: username length=${#pia_user}" >&2
+    show_debug "Credentials validated: username length=${#pia_user}"
     
     # Resolve PIA auth server IP
-    show_debug "Resolving www.privateinternetaccess.com" >&2
+    show_debug "Resolving www.privateinternetaccess.com"
     local auth_ip=$(resolve_hostname "www.privateinternetaccess.com")
     if [ -z "$auth_ip" ]; then
-        show_error "Cannot resolve privateinternetaccess.com" >&2
+        show_error "Cannot resolve privateinternetaccess.com"
         return 1
     fi
     
-    show_debug "PIA auth server resolved to: $auth_ip" >&2
+    show_debug "PIA auth server resolved to: $auth_ip"
     
     # Add surgical exemption for authentication
-    show_debug "Adding temporary exemption for $auth_ip:443 (pia_auth)" >&2
     add_temporary_exemption "$auth_ip" "443" "tcp" "pia_auth"
     
     # Perform authentication
-    show_debug "Sending authentication request to https://www.privateinternetaccess.com/gtoken/generateToken" >&2
+    show_debug "Sending authentication request to https://www.privateinternetaccess.com/gtoken/generateToken"
     local response=$(curl -s --insecure -w "\n%{http_code}" -u "$pia_user:$pia_pass" \
         --connect-to "www.privateinternetaccess.com::$auth_ip:" \
         "https://www.privateinternetaccess.com/gtoken/generateToken" 2>/dev/null)
     
     # Remove exemption immediately
-    show_debug "Removing temporary exemption (pia_auth)" >&2
     remove_temporary_exemption "pia_auth"
     
     # Split response into body and HTTP code
     local http_code=$(echo "$response" | tail -1)
     local body=$(echo "$response" | sed '$d')
     
-    show_debug "Authentication response: HTTP $http_code" >&2
-    [ $_LOG_LEVEL -ge 2 ] && [ -n "$body" ] && show_debug "Response body: ${body:0:200}..." >&2
+    show_debug "Authentication response: HTTP $http_code"
+    [ $_LOG_LEVEL -ge 2 ] && [ -n "$body" ] && show_debug "Response body: ${body:0:200}..."
     
     # Check HTTP status
     if [ "$http_code" = "000" ]; then
-        show_error "Authentication failed: Cannot reach PIA servers" >&2
-        show_debug "Connection failed (HTTP 000 - network error)" >&2
+        show_error "Authentication failed: Cannot reach PIA servers"
+        show_debug "Connection failed (HTTP 000 - network error)"
         return 1
     elif [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
-        show_error "Authentication failed: Invalid username or password" >&2
-        show_debug "Authentication rejected (HTTP $http_code)" >&2
+        show_error "Authentication failed: Invalid username or password"
+        show_debug "Authentication rejected (HTTP $http_code)"
         return 1
     elif [ "$http_code" != "200" ]; then
-        show_error "Authentication failed: PIA server error (HTTP $http_code)" >&2
-        show_debug "Unexpected HTTP status code" >&2
+        show_error "Authentication failed: PIA server error (HTTP $http_code)"
+        show_debug "Unexpected HTTP status code"
         return 1
     fi
     
     # Check if we got valid JSON
     if ! echo "$body" | jq -e . >/dev/null 2>&1; then
-        show_error "Authentication failed: Invalid response from PIA" >&2
-        show_debug "Response is not valid JSON" >&2
+        show_error "Authentication failed: Invalid response from PIA"
+        show_debug "Response is not valid JSON"
         return 1
     fi
     
@@ -149,35 +145,35 @@ authenticate() {
     
     if [ -z "$token" ]; then
         local error_msg=$(echo "$body" | jq -r '.message // .error // empty')
-        show_debug "No token in response, error message: $error_msg" >&2
+        show_debug "No token in response, error message: $error_msg"
         
         if [ -n "$error_msg" ]; then
             case "$error_msg" in
                 "authentication failed")
-                    show_error "Authentication failed: Invalid username or password" >&2
+                    show_error "Authentication failed: Invalid username or password"
                     ;;
                 *expired*)
-                    show_error "Authentication failed: Account expired" >&2
+                    show_error "Authentication failed: Account expired"
                     ;;
                 *suspend*)
-                    show_error "Authentication failed: Account suspended" >&2
+                    show_error "Authentication failed: Account suspended"
                     ;;
                 *connection*|*limit*)
-                    show_error "Authentication failed: Too many active connections" >&2
+                    show_error "Authentication failed: Too many active connections"
                     ;;
                 *)
-                    show_error "Authentication failed: $error_msg" >&2
+                    show_error "Authentication failed: $error_msg"
                     ;;
             esac
         else
-            show_error "Authentication failed: Unknown error (no token received)" >&2
+            show_error "Authentication failed: Unknown error (no token received)"
         fi
         
         return 1
     fi
     
-    show_debug "Token received successfully (length: ${#token})" >&2
-    show_debug "Saving token to /tmp/pia_token" >&2
+    show_debug "Token received successfully (length: ${#token})"
+    show_debug "Saving token to /tmp/pia_token"
     echo "$token" > /tmp/pia_token
     chmod 600 /tmp/pia_token
     echo "$token"
@@ -191,14 +187,13 @@ find_server() {
     show_debug "Resolving serverlist.piaservers.net"
     local serverlist_ip=$(resolve_hostname "serverlist.piaservers.net")
     if [ -z "$serverlist_ip" ]; then
-        show_error "Cannot resolve serverlist.piaservers.net" >&2
+        show_error "Cannot resolve serverlist.piaservers.net"
         return 1
     fi
     
     show_debug "Server list API resolved to: $serverlist_ip"
     
     # Add surgical exemption for server list fetch
-    show_debug "Adding temporary exemption for $serverlist_ip:443 (pia_serverlist)"
     add_temporary_exemption "$serverlist_ip" "443" "tcp" "pia_serverlist"
     
     show_debug "Fetching server list from https://serverlist.piaservers.net/vpninfo/servers/v6"
@@ -206,12 +201,11 @@ find_server() {
         'https://serverlist.piaservers.net/vpninfo/servers/v6' | head -1)
     
     # Remove exemption immediately
-    show_debug "Removing temporary exemption (pia_serverlist)"
     remove_temporary_exemption "pia_serverlist"
     
     show_debug "Server list response size: ${#all_regions} bytes"
     [ ${#all_regions} -lt 1000 ] && { 
-        show_error "Could not fetch server list" >&2
+        show_error "Could not fetch server list"
         show_debug "Server list too small (< 1000 bytes), likely failed"
         return 1
     }
@@ -324,7 +318,7 @@ find_server() {
     else
         show_debug "All servers timed out, using fallback"
         # Fallback to first server if all timeout
-        read -r ip cn location_id location_name <<< "$(head -1 < "$all_candidates" 2>/dev/null || echo "")"
+        read -r ip cn location_id location_name <<< "$(head -1 < "$all_candidates" 2>/dev/null || show_info)"
         if [ -z "$ip" ]; then
             rm -f "$latencies"
             show_debug "No fallback server available"
@@ -375,14 +369,12 @@ generate_config() {
         meta_cn="$META_CN"
         echo "$META_CN" > /tmp/meta_cn
     fi
-    
-    show_debug "Generating WireGuard keypair"
+
     local private_key=$(wg genkey)
     local public_key=$(echo "$private_key" | wg pubkey)
     show_debug "Public key generated: ${public_key:0:20}..."
     
     # Add surgical exemption for addKey registration (port 1337)
-    show_debug "Adding temporary exemption for $endpoint_ip:1337 (pia_addkey)"
     add_temporary_exemption "$endpoint_ip" "1337" "tcp" "pia_addkey"
     
     show_debug "Registering public key with PIA server: https://$meta_cn:1337/addKey"
@@ -393,7 +385,6 @@ generate_config() {
         "https://$meta_cn:1337/addKey")
     
     # Remove exemption immediately
-    show_debug "Removing temporary exemption (pia_addkey)"
     remove_temporary_exemption "pia_addkey"
     
     show_debug "addKey response received (length: ${#response})"
@@ -455,8 +446,6 @@ Endpoint = $endpoint_ip:$server_port
 AllowedIPs = $allowed_ips
 PersistentKeepalive = 25
 EOF
-    
-    show_debug "WireGuard config generated successfully"
 }
 
 #═══════════════════════════════════════════════════════════════════════════════
@@ -602,7 +591,6 @@ bring_up_wireguard() {
             network=$(echo "$network" | xargs)
             # Only IPv4 networks
             if [[ "$network" != *":"* ]]; then
-                show_debug "  Adding exception: $network"
                 ip rule add to "$network" table main priority 100 2>/dev/null || true
             else
                 show_debug "  Skipping IPv6 network: $network"
@@ -619,9 +607,7 @@ bring_up_wireguard() {
     
     # Setup DNS
     setup_dns "${WG_CONFIG[DNS]}"
-    
-    show_debug "WireGuard interface brought up successfully"
-    
+
     # Debug: Show interface status
     if [ $_LOG_LEVEL -ge 2 ]; then
         show_debug "Interface status:"
@@ -644,7 +630,6 @@ teardown_wireguard() {
     
     # CRITICAL: Remove VPN from killswitch FIRST
     # This prevents any leak window where interface is down but firewall still references it
-    show_debug "Removing VPN from killswitch"
     remove_vpn_from_killswitch
     
     # Now safe to tear down interface
@@ -684,7 +669,7 @@ setup_vpn() {
     token=$(authenticate) || return 1
     show_success "Authentication successful"
     show_debug "Token length: ${#token}"
-    echo ""
+    show_info
     
     # Parse location display
     local locations="${PIA_LOCATION}"
@@ -705,7 +690,7 @@ setup_vpn() {
     if [ -f /tmp/location_count ] && [ "$(cat /tmp/location_count)" -gt 1 ]; then
         local tested=$(cat /tmp/servers_tested 2>/dev/null || echo "0")
         local responded=$(cat /tmp/servers_responded 2>/dev/null || echo "0")
-        local location_name=$(cat /tmp/server_location_name 2>/dev/null || echo "")
+        local location_name=$(cat /tmp/server_location_name 2>/dev/null || show_info)
         
         [ "$responded" -gt 0 ] && show_success "Tested ${tested} servers, ${responded} responded"
         [ -n "$location_name" ] && show_success "Best server: ${location_name}"
@@ -715,13 +700,13 @@ setup_vpn() {
         show_warning "Server selected: $server_name (no latency data)"
     else
         show_success "Connected to: ${bold}${server_name}${nc} (${latency}ms)"
-        echo ""
+        show_info
     fi
     
     if [ "$restart" != "true" ]; then
         show_step "Configuring WireGuard tunnel..."
         generate_config "$token" && show_success "Tunnel configured" || return 1
-        echo ""
+        show_info
     else
         # Silent configuration during reconnection
         show_debug "Generating config silently (restart=true)"

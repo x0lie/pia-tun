@@ -326,7 +326,6 @@ nft_add_exemption() {
     
     if [ -n "$drop_handle" ]; then
         # Insert rule right before the DROP rule
-        show_debug "Inserting exemption before DROP (handle: $drop_handle)"
         nft insert rule inet vpn_filter output handle "$drop_handle" ip daddr "$ip" "$proto" dport "$port" accept comment "temp_$comment" 2>/dev/null
     else
         # Fallback: just add the rule (will be before any DROP if DROP doesn't exist yet)
@@ -343,7 +342,6 @@ nft_remove_exemption() {
     
     local removed=0
     nft -a list chain inet vpn_filter output 2>/dev/null | grep "comment \"temp_$comment\"" | awk '{print $NF}' | while read handle; do
-        show_debug "Removing exemption rule (handle: $handle)"
         nft delete rule inet vpn_filter output handle "$handle" 2>/dev/null || true
         removed=$((removed + 1))
     done
@@ -656,8 +654,6 @@ setup_baseline_killswitch() {
 
 # Add VPN interface to killswitch (called after VPN is up)
 add_vpn_to_killswitch() {
-    show_debug "Adding VPN to killswitch (backend: ${USE_NFTABLES})"
-    
     if $USE_NFTABLES; then
         nft_add_vpn_interface
     else
@@ -683,9 +679,6 @@ add_temporary_exemption() {
     local proto="${3:-tcp}"
     local comment="${4:-exemption}"
     
-    # CRITICAL: Send debug to stderr to prevent command substitution capture
-    show_debug "add_temporary_exemption: $ip:$port/$proto (tag: $comment)" >&2
-    
     if $USE_NFTABLES; then
         nft_add_exemption "$ip" "$port" "$proto" "$comment"
     else
@@ -696,9 +689,6 @@ add_temporary_exemption() {
 # Remove temporary exemption by comment
 remove_temporary_exemption() {
     local comment="$1"
-    
-    # CRITICAL: Send debug to stderr to prevent command substitution capture
-    show_debug "remove_temporary_exemption: $comment" >&2
     
     if $USE_NFTABLES; then
         nft_remove_exemption "$comment"
@@ -732,8 +722,6 @@ cleanup_killswitch() {
 
 # Show firewall statistics
 show_ruleset_stats() {
-    show_debug "Calculating firewall statistics"
-    
     if $USE_NFTABLES; then
         local output_rules=$(nft list chain inet vpn_filter output 2>/dev/null | grep -c "^\s*\(oifname\|ct state\|ip daddr\|ip6 daddr\|mark\|tcp dport\|udp dport\|drop\|accept\)")
         local input_rules=$(nft list chain inet vpn_filter input 2>/dev/null | grep -c "^\s*tcp dport")

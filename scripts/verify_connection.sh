@@ -9,7 +9,6 @@ capture_real_ip() {
     local real_ip=$(timeout 5 curl -s https://api.ipify.org 2>/dev/null)
     
     if [ -n "$real_ip" ]; then
-        show_debug "Real IP retrieved: $real_ip"
         echo "$real_ip" > /tmp/real_ip
         show_success "Real IP captured: $real_ip"
     else
@@ -37,8 +36,6 @@ get_current_dns() {
 validate_dns() {
     local leak_detected=false
     local pia_dns_found=false
-    
-    show_debug "Validating DNS configuration (expected: ${DNS:-pia})"
     
     # Early exit optimization: Check each nameserver
     local nameserver_count=0

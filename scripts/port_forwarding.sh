@@ -146,7 +146,6 @@ bind_port() {
         show_debug "bindPort status: '$status' (attempt $retry_count)"
         
         if [ "$status" = "OK" ]; then
-            show_debug "bindPort successful"
             return 0
         fi
         
@@ -166,8 +165,6 @@ bind_port() {
 
 # Parse response and extract all needed fields
 parse_pf_response() {
-    show_debug "Parsing PF response from /tmp/pf_response"
-    
     local parsed=$(jq -r '[
         (.payload | @base64d | fromjson | .port),
         .payload,
@@ -234,7 +231,7 @@ notify_webhook() {
 }
 
 # Initial signature acquisition with retry
-echo ""
+show_info
 show_step "Acquiring port forward signature..."
 show_debug "Starting initial signature acquisition (max retries: 5)"
 
@@ -244,7 +241,6 @@ while [ $retry -lt $MAX_RETRIES ]; do
     show_debug "Initial signature attempt $((retry + 1))/$MAX_RETRIES"
     
     if get_signature; then
-        show_debug "Signature acquired on attempt $((retry + 1))"
         break
     fi
     
@@ -300,7 +296,7 @@ echo "$PORT" > "${PORT_FILE:-/etc/wireguard/port}"
 # Get public VPN IP for webhook (async to avoid blocking)
 (
     show_debug "Fetching public VPN IP for webhook notification..."
-    VPN_IP=$(timeout 5 curl -s --interface pia https://api.ipify.org 2>/dev/null || echo "")
+    VPN_IP=$(timeout 5 curl -s --interface pia https://api.ipify.org 2>/dev/null || show_info)
     show_debug "Public VPN IP: ${VPN_IP:-failed to retrieve}"
     notify_webhook "$PORT" "$VPN_IP"
 ) &
@@ -321,11 +317,16 @@ if [ "$PORT_API_ENABLED" = "true" ]; then
             break
         fi
         
-        if [ $attempt -lt 3 ]; then
-            local wait_time=$((attempt * 2))
-            show_debug "API update attempt $attempt failed, retrying in ${wait_time}s..."
-            sleep $wait_time
+        if [ "$attempt" -lt 3 ]; then
+            show_debug "API update attempt $attempt failed, retrying in $((attempt * 2))s..."
+            sleep $((attempt * 2))
         fi
+
+        # if [ $attempt -lt 3 ]; then
+        #     local wait_time=$((attempt * 2))
+        #     show_debug "API update attempt $attempt failed, retrying in ${wait_time}s..."
+        #     sleep $wait_time
+        # fi
     done
     
     if $api_success; then
@@ -459,7 +460,7 @@ while true; do
                 # Notify webhook of port change (async)
                 (
                     show_debug "Fetching VPN IP for port change webhook..."
-                    VPN_IP=$(timeout 5 curl -s --interface pia https://api.ipify.org 2>/dev/null || echo "")
+                    VPN_IP=$(timeout 5 curl -s --interface pia https://api.ipify.org 2>/dev/null || show_info)
                     show_debug "VPN IP for webhook: ${VPN_IP:-failed}"
                     notify_webhook "$PORT" "$VPN_IP"
                 ) &
@@ -477,10 +478,9 @@ while true; do
                             break
                         fi
                         
-                        if [ $attempt -lt 3 ]; then
-                            local wait_time=$((attempt * 2))
-                            show_debug "API update attempt $attempt failed, retrying in ${wait_time}s..."
-                            sleep $wait_time
+                        if [ "$attempt" -lt 3 ]; then
+                            show_debug "API update attempt $attempt failed, retrying in $((attempt * 2))s..."
+                            sleep $((attempt * 2))
                         fi
                     done
                     
@@ -528,7 +528,7 @@ while true; do
                 CONSECUTIVE_BIND_FAILURES=1  # Start a new streak
             fi
         else
-            echo ""
+            show_info
             show_error "Signature refresh failed, reconnecting..."
             show_debug "Signature refresh failed after retries"
             
@@ -548,7 +548,7 @@ while true; do
         
         # Only add blank line if we showed messages
         if [ "$SIGNATURE_REFRESH_DAYS" -gt 0 ] 2>/dev/null; then
-            echo ""
+            show_info
         fi
     else
         # Regular keep-alive bind (no new signature needed)

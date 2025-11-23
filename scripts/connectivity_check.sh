@@ -83,7 +83,7 @@ wait_for_internet() {
         
         if check_internet 1; then
             [ "$quiet" != "true" ] && {
-                echo ""
+                show_info
                 show_success "Internet connection restored"
             }
             show_debug "Internet connection restored after ${waited}s"
