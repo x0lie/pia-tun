@@ -49,21 +49,55 @@ wait_for_port_file() {
 
 # Main monitoring loop
 monitor_port_changes() {
-    show_debug "monitor_port_changes: Entering main loop"
+    show_debug "monitor_port_changes: Entering main loop (event-driven via pipe)"
+
+    # Create named pipe for port change notifications
+    PORT_CHANGE_PIPE="/tmp/port_change_pipe"
+    [ -p "$PORT_CHANGE_PIPE" ] || mkfifo "$PORT_CHANGE_PIPE"
+
+    # On first run, check the port file immediately (handles case where port_forwarding.sh
+    # already wrote the port before port_monitor.sh started)
+    if [ -f "$PORT_FILE" ]; then
+        INITIAL_PORT=$(cat "$PORT_FILE" 2>/dev/null)
+        if [[ -n "$INITIAL_PORT" && "$INITIAL_PORT" =~ ^[0-9]+$ ]]; then
+            show_debug "Initial port from file: $INITIAL_PORT"
+            if update_port_api "$INITIAL_PORT"; then
+                show_success "[$(date '+%H:%M:%S')] $PORT_API_TYPE port set to $INITIAL_PORT"
+                LAST_UPDATE_SUCCESS=true
+            else
+                show_warning "[$(date '+%H:%M:%S')] $PORT_API_TYPE not reachable, will retry"
+                show_debug "Initial port update failed, will retry"
+                LAST_UPDATE_SUCCESS=false
+            fi
+            LAST_PORT="$INITIAL_PORT"
+            show_debug "State initialized: LAST_PORT=$LAST_PORT, LAST_UPDATE_SUCCESS=$LAST_UPDATE_SUCCESS"
+        else
+            show_debug "Port file exists but port is empty or invalid: ${INITIAL_PORT:-empty}"
+        fi
+    else
+        show_debug "Port file not found on startup (will wait for notification)"
+    fi
+
     local cycle=0
-    
+
     while true; do
         cycle=$((cycle + 1))
-        show_debug "====== Port monitor cycle #$cycle ======"
-        
-        # Read current port
-        CURRENT_PORT=$(cat "$PORT_FILE" 2>/dev/null)
-        show_debug "Current port from file: ${CURRENT_PORT:-empty}"
+        show_debug "====== Port monitor cycle #$cycle (waiting for port change) ======"
 
-        # Skip if port file is empty or invalid
+        # Block until port_forwarding.sh signals a change (with timeout for retry logic)
+        # Using read with timeout allows periodic retry of failed updates
+        if read -t 300 -r new_port < "$PORT_CHANGE_PIPE" 2>/dev/null; then
+            show_debug "Port change notification received: $new_port"
+            CURRENT_PORT="$new_port"
+        else
+            # Timeout occurred - check if we need to retry a failed update
+            CURRENT_PORT=$(cat "$PORT_FILE" 2>/dev/null)
+            show_debug "Timeout waiting for port change, current port: ${CURRENT_PORT:-empty}"
+        fi
+
+        # Skip if port is empty or invalid
         if [[ -z "$CURRENT_PORT" || ! "$CURRENT_PORT" =~ ^[0-9]+$ ]]; then
-            show_debug "Port is empty or invalid, sleeping ${CHECK_INTERVAL}s"
-            sleep $CHECK_INTERVAL
+            show_debug "Port is empty or invalid, waiting for next notification"
             continue
         fi
 
@@ -88,7 +122,7 @@ monitor_port_changes() {
         # Try to update if needed
         if [ "$should_update" = true ]; then
             show_debug "Attempting API update: $reason"
-            
+
             if update_port_api "$CURRENT_PORT"; then
                 # Success!
                 if [ "$CURRENT_PORT" != "$LAST_PORT" ]; then

@@ -34,6 +34,21 @@ if [[ -z "$PF_GATEWAY" || "$PF_GATEWAY" = "null" ]]; then
     exit 1
 fi
 
+# Notify port monitor of port change via named pipe
+notify_port_change() {
+    local port=$1
+    local pipe="/tmp/port_change_pipe"
+
+    # Write to pipe (non-blocking - if monitor isn't ready, that's okay)
+    if [ -p "$pipe" ]; then
+        # Use background process to avoid blocking if pipe isn't being read
+        (echo "$port" > "$pipe" 2>/dev/null &)
+        show_debug "Notified port monitor of new port: $port"
+    else
+        show_debug "Port change pipe not found, monitor may not be running yet"
+    fi
+}
+
 get_signature() {
     local max_retries=3
     local retry_count=0
@@ -442,7 +457,8 @@ while true; do
             show_debug "  Signature length: ${#NEW_SIGNATURE} bytes"
             show_debug "  Expires at: $NEW_EXPIRES_AT ($(format_timestamp "$NEW_EXPIRES_AT"))"
             
-            show_success "New signature acquired with port: $NEW_PORT"
+            show_info
+            show_step "New signature acquired with port: $NEW_PORT"
             
             # Check if port changed
             if [ "$NEW_PORT" != "$PORT" ]; then
@@ -456,7 +472,8 @@ while true; do
                 PORT=$NEW_PORT
                 show_debug "Writing new port to ${PORT_FILE:-/etc/wireguard/port}"
                 echo "$PORT" > "${PORT_FILE:-/etc/wireguard/port}"
-                
+                notify_port_change "$PORT"
+
                 # Notify webhook of port change (async)
                 (
                     show_debug "Fetching VPN IP for port change webhook..."
@@ -465,30 +482,6 @@ while true; do
                     notify_webhook "$PORT" "$VPN_IP"
                 ) &
 
-                # Update API if enabled (with retry)
-                if [ "$PORT_API_ENABLED" = "true" ]; then
-                    show_debug "Updating API with new port..."
-                    api_success=false
-                    for attempt in 1 2 3; do
-                        show_debug "API update attempt $attempt/3 (port: $PORT)"
-                        
-                        if update_port_api "$PORT"; then
-                            show_debug "API update successful on attempt $attempt"
-                            api_success=true
-                            break
-                        fi
-                        
-                        if [ "$attempt" -lt 3 ]; then
-                            show_debug "API update attempt $attempt failed, retrying in $((attempt * 2))s..."
-                            sleep $((attempt * 2))
-                        fi
-                    done
-                    
-                    if ! $api_success; then
-                        show_debug "API update failed after 3 attempts, port_monitor.sh will retry"
-                        echo "  ${ylw}⚠${nc} API update failed, port_monitor.sh will retry"
-                    fi
-                fi
             else
                 show_debug "Port unchanged: $PORT"
             fi

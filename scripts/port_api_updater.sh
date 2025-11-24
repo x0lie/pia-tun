@@ -188,8 +188,8 @@ update_port_api() {
         return 1
     fi
 
-    # Remove old marker
-    rm -f /tmp/port_api_success
+    # Remove old marker (suppress errors if file doesn't exist)
+    rm -f /tmp/port_api_success 2>/dev/null || true
     show_debug "Cleared old success marker"
 
     # Route to correct implementation

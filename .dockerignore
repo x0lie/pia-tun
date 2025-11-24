@@ -1,6 +1,8 @@
 .git
 README.md
 PROJECT_STRUCTURE.md
+CLAUDE.md
+GEMINI.md
 Dockerfile
 notes/
 docker-compose/

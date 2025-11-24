@@ -591,14 +591,15 @@ func (m *Monitor) triggerReconnect() {
 	m.mu.Lock()
 	m.reconnectAttempts++
 	m.mu.Unlock()
-	
-	// Check WAN connectivity before reconnecting (uses bypass routes, no firewall changes!)
+
+	// Check WAN connectivity before reconnecting
 	m.waitForWAN()
-	
-	if err := os.WriteFile("/tmp/vpn_reconnect_requested", []byte{}, 0644); err != nil {
-		log.Printf("Failed to create reconnect request: %v", err)
+
+	// Write to named pipe (non-blocking, opens and closes immediately)
+	if err := os.WriteFile("/tmp/vpn_reconnect_pipe", []byte("health_check_failed\n"), 0644); err != nil {
+		log.Printf("Failed to signal reconnect via pipe: %v", err)
 	}
-	
+
 	if m.metrics != nil {
 		m.metrics.RecordReconnect()
 	}

@@ -282,26 +282,24 @@ main_loop() {
         show_info
     fi
 
-    show_debug "Entering reconnection monitor loop (check every 20s)"
-    local loop_count=0
-    while true; do
-        if [ -f /tmp/vpn_reconnect_requested ]; then
-            show_debug "Reconnection flag detected (loop iteration: $loop_count)"
-            rm -f /tmp/vpn_reconnect_requested
-            
-            if perform_reconnection; then
-                show_debug "Reconnection successful"
-            else
-                show_warning "Retrying..."
-                show_debug "Reconnection failed, waiting 5s before retry"
-                sleep 5
-                touch /tmp/vpn_reconnect_requested
-            fi
-        fi
-        sleep 20
-        loop_count=$((loop_count + 1))
-        [ $_LOG_LEVEL -ge 2 ] && [ $((loop_count % 12)) -eq 0 ] && show_debug "Main loop heartbeat (iteration: $loop_count, uptime: $((loop_count * 5))s)"
-    done
+  # Create named pipe for monitor communication
+  RECONNECT_PIPE="/tmp/vpn_reconnect_pipe"
+  [ -p "$RECONNECT_PIPE" ] || mkfifo "$RECONNECT_PIPE"
+
+  show_debug "Entering reconnection monitor loop (blocking on pipe)"
+  while true; do
+      # This blocks until monitor writes to the pipe
+      if read -r reason < "$RECONNECT_PIPE"; then
+          show_debug "Reconnection requested: ${reason:-no reason given}"
+
+          if perform_reconnection; then
+              show_debug "Reconnection successful"
+          else
+              show_warning "Retrying..."
+              sleep 5
+          fi
+      fi
+  done
 }
 
 # Debug: Show environment configuration
