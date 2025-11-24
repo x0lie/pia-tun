@@ -316,45 +316,12 @@ echo "$PORT" > "${PORT_FILE:-/etc/wireguard/port}"
     notify_webhook "$PORT" "$VPN_IP"
 ) &
 
-# Try API update if enabled (with retry logic)
-if [ "$PORT_API_ENABLED" = "true" ]; then
-    show_debug "PORT_API_ENABLED=true, attempting API update..."
-    show_debug "API type: ${PORT_API_TYPE:-none}"
-    
-    # Try up to 3 times with exponential backoff
-    api_success=false
-    for attempt in 1 2 3; do
-        show_debug "API update attempt $attempt/3"
-        
-        if update_port_api "$PORT"; then
-            show_debug "API update successful on attempt $attempt"
-            api_success=true
-            break
-        fi
-        
-        if [ "$attempt" -lt 3 ]; then
-            show_debug "API update attempt $attempt failed, retrying in $((attempt * 2))s..."
-            sleep $((attempt * 2))
-        fi
+show_success "Port: ${grn}${bold}${PORT}${nc}"
 
-        # if [ $attempt -lt 3 ]; then
-        #     local wait_time=$((attempt * 2))
-        #     show_debug "API update attempt $attempt failed, retrying in ${wait_time}s..."
-        #     sleep $wait_time
-        # fi
-    done
-    
-    if $api_success; then
-        show_success "Port: ${grn}${bold}${PORT}${nc}"
-        show_success "Updated via: File + API ($PORT_API_TYPE)"
-    else
-        show_success "Port: ${grn}${bold}${PORT}${nc}"
-        show_success "Updated via: File only (API: $PORT_API_TYPE unreachable)"
-        show_debug "API update failed after 3 attempts, port_monitor.sh will retry"
-    fi
+# Show port update tactics
+if [ "$PORT_API_ENABLED" = "true" ]; then
+    show_success "Updated via: File + API ($PORT_API_TYPE)"
 else
-    show_debug "PORT_API_ENABLED=false, skipping API update"
-    show_success "Port: ${grn}${bold}${PORT}${nc}"
     show_success "Updated via: File"
 fi
 

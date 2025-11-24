@@ -12,12 +12,20 @@ readonly PORT_API_USER=${PORT_API_USER:-""}
 readonly PORT_API_PASS=${PORT_API_PASS:-""}
 readonly CURL_TIMEOUT="--connect-timeout 5 --max-time 10"
 
+# Retry configuration
+readonly RETRY_INITIAL_DELAY=${PORT_API_RETRY_INITIAL_DELAY:-5}      # Initial retry delay (seconds)
+readonly RETRY_MAX_DELAY=${PORT_API_RETRY_MAX_DELAY:-300}            # Max retry delay (seconds)
+readonly RETRY_BACKOFF_MULTIPLIER=${PORT_API_RETRY_BACKOFF:-2}       # Backoff multiplier
+
 show_debug "Port API updater configuration:"
 show_debug "  PORT_API_ENABLED=$PORT_API_ENABLED"
 show_debug "  PORT_API_TYPE=$PORT_API_TYPE"
 show_debug "  PORT_API_URL=$PORT_API_URL"
 show_debug "  PORT_API_USER=${PORT_API_USER:+set}"
 show_debug "  PORT_API_PASS=${PORT_API_PASS:+set}"
+show_debug "  RETRY_INITIAL_DELAY=${RETRY_INITIAL_DELAY}s"
+show_debug "  RETRY_MAX_DELAY=${RETRY_MAX_DELAY}s"
+show_debug "  RETRY_BACKOFF_MULTIPLIER=${RETRY_BACKOFF_MULTIPLIER}x"
 
 # Update qBittorrent port via API
 update_qbittorrent() {
@@ -171,31 +179,11 @@ update_rtorrent() {
     fi
 }
 
-# Main update function
-update_port_api() {
+# Internal function to perform a single update attempt
+_update_port_api_attempt() {
     local port=$1
-
-    show_debug "update_port_api called with port=$port"
-    
-    # Quick validation
-    if [ "$PORT_API_ENABLED" != "true" ]; then
-        show_debug "PORT_API_ENABLED is not true, skipping update"
-        return 0
-    fi
-    
-    if [ -z "$PORT_API_TYPE" ] || [ -z "$PORT_API_URL" ]; then
-        show_debug "PORT_API_TYPE or PORT_API_URL not set, cannot update"
-        return 1
-    fi
-
-    # Remove old marker (suppress errors if file doesn't exist)
-    rm -f /tmp/port_api_success 2>/dev/null || true
-    show_debug "Cleared old success marker"
-
-    # Route to correct implementation
     local result=1
-    show_debug "Routing to $PORT_API_TYPE implementation"
-    
+
     case "$PORT_API_TYPE" in
         qbittorrent|qbit|qb)
             show_debug "Using qBittorrent updater"
@@ -237,14 +225,58 @@ update_port_api() {
             ;;
     esac
 
-    # Mark success for display
-    if [ $result -eq 0 ]; then
-        touch /tmp/port_api_success
-    else
-        show_debug "API update failed with exit code: $result"
-    fi
-    
     return $result
+}
+
+# Main update function with infinite retry and exponential backoff
+update_port_api() {
+    local port=$1
+
+    show_debug "update_port_api called with port=$port"
+
+    # Quick validation
+    if [ "$PORT_API_ENABLED" != "true" ]; then
+        show_debug "PORT_API_ENABLED is not true, skipping update"
+        return 0
+    fi
+
+    if [ -z "$PORT_API_TYPE" ] || [ -z "$PORT_API_URL" ]; then
+        show_debug "PORT_API_TYPE or PORT_API_URL not set, cannot update"
+        return 1
+    fi
+
+    # Retry loop with exponential backoff
+    local attempt=0
+    local delay=$RETRY_INITIAL_DELAY
+    local first_failure=true
+
+    while true; do
+        attempt=$((attempt + 1))
+        show_debug "Update attempt #$attempt (port=$port)"
+
+        # Attempt update
+        if _update_port_api_attempt "$port"; then
+            show_debug "Update successful on attempt #$attempt"
+            return 0
+        fi
+
+        # Update failed - log and prepare for retry
+        if [ "$first_failure" = true ]; then
+            show_debug "Update failed on attempt #$attempt, entering retry loop"
+            first_failure=false
+        else
+            show_debug "Update failed on attempt #$attempt, will retry in ${delay}s"
+        fi
+
+        # Wait before retry
+        sleep "$delay"
+
+        # Calculate next delay with exponential backoff (capped at max)
+        delay=$((delay * RETRY_BACKOFF_MULTIPLIER))
+        if [ $delay -gt $RETRY_MAX_DELAY ]; then
+            delay=$RETRY_MAX_DELAY
+        fi
+    done
 }
 
 # Export for use in other scripts
