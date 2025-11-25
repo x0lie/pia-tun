@@ -37,6 +37,33 @@ func (m *Monitor) getServerLatency() int64 {
 }
 
 func (m *Monitor) getCurrentIP() string {
+	// Try to get public IP from external service
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	// Try multiple services in case one is down
+	services := []string{
+		"https://api.ipify.org",
+		"https://ifconfig.me/ip",
+		"https://icanhazip.com",
+	}
+
+	for _, service := range services {
+		resp, err := client.Get(service)
+		if err == nil {
+			defer resp.Body.Close()
+			body := make([]byte, 128)
+			n, _ := resp.Body.Read(body)
+			if n > 0 {
+				ip := strings.TrimSpace(string(body[:n]))
+				// Validate it looks like an IP
+				if len(ip) > 6 && len(ip) < 40 {
+					return ip
+				}
+			}
+		}
+	}
+
+	// Fallback: return tunnel IP
 	cmd := exec.Command("ip", "addr", "show", "pia")
 	output, err := cmd.Output()
 	if err != nil {
@@ -374,4 +401,66 @@ func (m *Monitor) triggerReconnect() {
 	if m.metrics != nil {
 		m.metrics.RecordReconnect()
 	}
+}
+
+func (m *Monitor) getLastHandshake() int64 {
+	cmd := exec.Command("wg", "show", "pia", "latest-handshakes")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) == 0 {
+		return 0
+	}
+
+	parts := strings.Fields(lines[0])
+	if len(parts) < 2 {
+		return 0
+	}
+
+	timestamp, _ := strconv.ParseInt(parts[1], 10, 64)
+	return timestamp
+}
+
+func (m *Monitor) isKillswitchActive() bool {
+	// Check if nftables vpn_filter table exists
+	cmd := exec.Command("nft", "list", "table", "inet", "vpn_filter")
+	if err := cmd.Run(); err == nil {
+		return true
+	}
+
+	// Fallback: check iptables rules
+	cmd = exec.Command("iptables", "-L", "VPN_FILTER", "-n")
+	if err := cmd.Run(); err == nil {
+		return true
+	}
+
+	return false
+}
+
+func (m *Monitor) getPortForwardingPort() int {
+	portFile := os.Getenv("PORT_FILE")
+	if portFile == "" {
+		portFile = "/etc/wireguard/port"
+	}
+
+	data, err := os.ReadFile(portFile)
+	if err != nil {
+		return 0
+	}
+
+	port, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0
+	}
+
+	return port
+}
+
+func (m *Monitor) isPortForwardingActive() bool {
+	// Check if port file exists and has a valid port
+	port := m.getPortForwardingPort()
+	return port > 0
 }

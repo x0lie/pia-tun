@@ -53,6 +53,13 @@ type Metrics struct {
 	wanChecksTotal          prometheus.Counter
 	wanChecksFailed         prometheus.Counter
 	vpnInfo                 *prometheus.GaugeVec
+
+	// New metrics
+	connectionUp            prometheus.Gauge
+	killswitchActive        prometheus.Gauge
+	lastHandshake           prometheus.Gauge
+	portForwardingStatus    prometheus.Gauge
+	portForwardingPort      prometheus.Gauge
 }
 
 func NewMetrics() *Metrics {
@@ -130,6 +137,32 @@ func NewMetrics() *Metrics {
 		[]string{"server", "ip"},
 	)
 
+	// New metrics
+	m.connectionUp = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "vpn_connection_up",
+		Help: "VPN connection status (1=up, 0=down)",
+	})
+
+	m.killswitchActive = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "vpn_killswitch_active",
+		Help: "Killswitch status (1=active, 0=inactive)",
+	})
+
+	m.lastHandshake = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "vpn_last_handshake_seconds",
+		Help: "Unix timestamp of last WireGuard handshake",
+	})
+
+	m.portForwardingStatus = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "vpn_port_forwarding_status",
+		Help: "Port forwarding status (1=active, 0=inactive)",
+	})
+
+	m.portForwardingPort = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "vpn_port_forwarding_port",
+		Help: "Currently forwarded port number (0 if not forwarding)",
+	})
+
 	// Register all metrics
 	prometheus.MustRegister(
 		m.healthChecksTotal,
@@ -145,6 +178,11 @@ func NewMetrics() *Metrics {
 		m.wanChecksTotal,
 		m.wanChecksFailed,
 		m.vpnInfo,
+		m.connectionUp,
+		m.killswitchActive,
+		m.lastHandshake,
+		m.portForwardingStatus,
+		m.portForwardingPort,
 	)
 
 	// Add uptime as a gauge function
@@ -270,6 +308,36 @@ func (m *Metrics) RecordReconnect() {
 
 	m.TotalReconnects++
 	m.reconnectsTotal.Inc()
+}
+
+func (m *Metrics) UpdateConnectionStatus(connected bool) {
+	if connected {
+		m.connectionUp.Set(1)
+	} else {
+		m.connectionUp.Set(0)
+	}
+}
+
+func (m *Metrics) UpdateKillswitchStatus(active bool) {
+	if active {
+		m.killswitchActive.Set(1)
+	} else {
+		m.killswitchActive.Set(0)
+	}
+}
+
+func (m *Metrics) UpdateLastHandshake(timestamp int64) {
+	m.lastHandshake.Set(float64(timestamp))
+}
+
+func (m *Metrics) UpdatePortForwarding(active bool, port int) {
+	if active {
+		m.portForwardingStatus.Set(1)
+		m.portForwardingPort.Set(float64(port))
+	} else {
+		m.portForwardingStatus.Set(0)
+		m.portForwardingPort.Set(0)
+	}
 }
 
 func (m *Metrics) GetStats() map[string]interface{} {

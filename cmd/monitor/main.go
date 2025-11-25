@@ -158,6 +158,16 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 				server := m.getCurrentServer()
 				ip := m.getCurrentIP()
 				m.metrics.UpdateVPNInfo(server, ip, rx, tx)
+
+				// Update new metrics
+				m.metrics.UpdateConnectionStatus(err == nil && result.InterfaceUp && result.Connectivity)
+				m.metrics.UpdateKillswitchStatus(m.isKillswitchActive())
+				m.metrics.UpdateLastHandshake(m.getLastHandshake())
+
+				// Update port forwarding metrics
+				pfActive := m.isPortForwardingActive()
+				pfPort := m.getPortForwardingPort()
+				m.metrics.UpdatePortForwarding(pfActive, pfPort)
 			}
 
 			if m.metrics != nil {

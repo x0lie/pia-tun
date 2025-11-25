@@ -145,16 +145,31 @@ func (c *PIAClient) GetSignature() (*SignatureResponse, error) {
 	return &sigResp, nil
 }
 
-func (c *PIAClient) GetSignatureWithRetry(maxRetries int) (*SignatureResponse, error) {
+func (c *PIAClient) GetSignatureWithRetry(ctx context.Context, maxRetries int) (*SignatureResponse, error) {
 	var lastErr error
 	backoff := 2 * time.Second
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// Check if context is cancelled
+		if ctx.Err() != nil {
+			debugLog(c.config, "GetSignatureWithRetry cancelled via context (attempt %d/%d)", attempt, maxRetries)
+			return nil, ctx.Err()
+		}
+
 		debugLog(c.config, "Signature attempt %d/%d", attempt, maxRetries)
 
 		if attempt > 1 {
 			debugLog(c.config, "Waiting %v before retry...", backoff)
-			time.Sleep(backoff)
+
+			// Use context-aware sleep
+			select {
+			case <-time.After(backoff):
+				// Continue to retry
+			case <-ctx.Done():
+				debugLog(c.config, "Backoff sleep cancelled via context")
+				return nil, ctx.Err()
+			}
+
 			backoff *= 2 // Exponential backoff
 		}
 
@@ -222,16 +237,31 @@ func (c *PIAClient) BindPort(payload, signature string) error {
 	return nil
 }
 
-func (c *PIAClient) BindPortWithRetry(payload, signature string, maxRetries int) error {
+func (c *PIAClient) BindPortWithRetry(ctx context.Context, payload, signature string, maxRetries int) error {
 	var lastErr error
 	backoff := 2 * time.Second
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// Check if context is cancelled
+		if ctx.Err() != nil {
+			debugLog(c.config, "BindPortWithRetry cancelled via context (attempt %d/%d)", attempt, maxRetries)
+			return ctx.Err()
+		}
+
 		debugLog(c.config, "Bind attempt %d/%d", attempt, maxRetries)
 
 		if attempt > 1 {
 			debugLog(c.config, "Waiting %v before retry...", backoff)
-			time.Sleep(backoff)
+
+			// Use context-aware sleep
+			select {
+			case <-time.After(backoff):
+				// Continue to retry
+			case <-ctx.Done():
+				debugLog(c.config, "Backoff sleep cancelled via context")
+				return ctx.Err()
+			}
+
 			backoff *= 2 // Exponential backoff
 		}
 

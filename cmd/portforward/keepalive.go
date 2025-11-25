@@ -58,8 +58,11 @@ func (m *KeepaliveManager) initialSetup() error {
 	showStep("Acquiring port forward signature...")
 	debugLog(m.config, "Starting initial signature acquisition (max retries: 5)")
 
+	// Use background context for initial setup (no cancellation during startup)
+	ctx := context.Background()
+
 	// Try to get signature with retries
-	resp, err := m.client.GetSignatureWithRetry(5)
+	resp, err := m.client.GetSignatureWithRetry(ctx, 5)
 	if err != nil {
 		showError(fmt.Sprintf("Port forwarding failed after 5 attempts"))
 		debugLog(m.config, "Exhausted all initial signature attempts, giving up")
@@ -103,7 +106,7 @@ func (m *KeepaliveManager) initialSetup() error {
 
 	// Initial bind
 	debugLog(m.config, "Performing initial bind...")
-	if err := m.client.BindPortWithRetry(resp.Payload, resp.Signature, 3); err != nil {
+	if err := m.client.BindPortWithRetry(ctx, resp.Payload, resp.Signature, 3); err != nil {
 		showWarning("Initial bind failed, but continuing...")
 		debugLog(m.config, "Initial bind failure is non-fatal, continuing with port announcement")
 	} else {
@@ -227,7 +230,13 @@ func (m *KeepaliveManager) keepaliveLoop(ctx context.Context) error {
 				}
 
 				m.mu.Unlock()
-				if err := m.refreshSignature(); err != nil {
+				if err := m.refreshSignature(ctx); err != nil {
+					// Check if we're shutting down - if so, just return without triggering reconnection
+					if ctx.Err() != nil {
+						debugLog(m.config, "Context cancelled during signature refresh, exiting gracefully")
+						return nil
+					}
+
 					m.mu.Lock()
 					m.handleRefreshFailure()
 					m.mu.Unlock()
@@ -243,7 +252,13 @@ func (m *KeepaliveManager) keepaliveLoop(ctx context.Context) error {
 				signature := m.state.Signature
 				m.mu.Unlock()
 
-				if err := m.client.BindPortWithRetry(payload, signature, 3); err != nil {
+				if err := m.client.BindPortWithRetry(ctx, payload, signature, 3); err != nil {
+					// Check if we're shutting down
+					if ctx.Err() != nil {
+						debugLog(m.config, "Context cancelled during bind, exiting gracefully")
+						return nil
+					}
+
 					m.mu.Lock()
 					m.handleBindFailure()
 					m.mu.Unlock()
@@ -264,9 +279,15 @@ func (m *KeepaliveManager) keepaliveLoop(ctx context.Context) error {
 	}
 }
 
-func (m *KeepaliveManager) refreshSignature() error {
-	resp, err := m.client.GetSignatureWithRetry(3)
+func (m *KeepaliveManager) refreshSignature(ctx context.Context) error {
+	resp, err := m.client.GetSignatureWithRetry(ctx, 3)
 	if err != nil {
+		// Check if cancelled - don't show error if shutting down
+		if ctx.Err() != nil {
+			debugLog(m.config, "Signature refresh cancelled due to context cancellation")
+			return err
+		}
+
 		showInfo()
 		showError("Signature refresh failed, reconnecting...")
 		debugLog(m.config, "Signature refresh failed after retries")
@@ -341,7 +362,13 @@ func (m *KeepaliveManager) refreshSignature() error {
 
 	// Bind with new signature
 	debugLog(m.config, "Binding with new signature...")
-	if err := m.client.BindPortWithRetry(payload, signature, 3); err != nil {
+	if err := m.client.BindPortWithRetry(ctx, payload, signature, 3); err != nil {
+		// Check if cancelled
+		if ctx.Err() != nil {
+			debugLog(m.config, "Bind cancelled due to context cancellation")
+			return err
+		}
+
 		showWarning("Got new signature but bind failed")
 		debugLog(m.config, "Bind failed after fresh signature (unusual), starting new failure streak")
 		m.mu.Lock()
