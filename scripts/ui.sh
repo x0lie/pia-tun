@@ -76,7 +76,7 @@ print_banner() {
     cat << EOF
 ${cyn}╔════════════════════════════════════════════════╗${nc}
 ${cyn}║                                                ║${nc}
-${cyn}║${nc}                 ${bold}pia-tun v0.9.1${nc}                 ${cyn}║${nc}
+${cyn}║${nc}                 ${bold}pia-tun v0.9.2${nc}                 ${cyn}║${nc}
 ${cyn}║${nc}                     ${grn}x0lie${nc}                      ${cyn}║${nc}
 ${cyn}║                                                ║${nc}
 ${cyn}╚════════════════════════════════════════════════╝${nc}

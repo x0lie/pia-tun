@@ -128,22 +128,20 @@ func showWarning(msg string) {
 
 func showVPNConnected() {
 	grn := colorGreen
-	ylw := colorYellow
 	bold := colorBold
 	nc := colorReset
-	fmt.Printf("\n  %s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", grn, bold, nc)
-	fmt.Printf("  %s%s✓ VPN connected%s  %s(PORT FORWARDING ENABLED)%s\n", grn, bold, nc, ylw, nc)
-	fmt.Printf("  %s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n\n", grn, bold, nc)
+    fmt.Printf("\n%s╔════════════════════════════════════════════════╗%s\n", grn, nc)
+    fmt.Printf("%s║%s                %s✓%s %sVPN Connected%s                 %s║%s\n", grn, nc, grn, nc, bold, nc, grn, nc)
+    fmt.Printf("%s╚════════════════════════════════════════════════╝%s\n\n", grn, nc)
 }
 
 func showVPNConnectedWarning() {
-	grn := colorGreen
 	ylw := colorYellow
 	bold := colorBold
 	nc := colorReset
-	fmt.Printf("\n  %s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", grn, bold, nc)
-	fmt.Printf("  %s%s✓ VPN connected%s  %s⚠ Port forwarding unavailable%s\n", grn, bold, nc, ylw, nc)
-	fmt.Printf("  %s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n\n", grn, bold, nc)
+    fmt.Printf("\n%s╔════════════════════════════════════════════════╗%s\n", ylw, nc)
+    fmt.Printf("%s║%s                %s⚠%s %sVPN Connected%s                 %s║%s\n", ylw, nc, ylw, nc, bold, nc, ylw, nc)
+    fmt.Printf("%s╚════════════════════════════════════════════════╝%s\n\n", ylw, nc)
 }
 
 func main() {
