@@ -2,11 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -35,44 +32,13 @@ type Monitor struct {
 	mu                 sync.Mutex
 }
 
-type Metrics struct {
-	TotalChecks        int64
-	FailedChecks       int64
-	SuccessfulChecks   int64
-	TotalReconnects    int64
-	LastCheckTime      time.Time
-	LastCheckDuration  time.Duration
-	UptimeStart        time.Time
-	
-	// VPN-specific metrics
-	CurrentServer      string
-	CurrentIP          string
-	BytesReceived      int64
-	BytesTransmitted   int64
-	ConnectedAt        time.Time
-	
-	// Server performance tracking
-	ServerLatency      int64
-	ServerUptime       time.Duration
-	
-	// Performance metrics
-	AvgCheckDuration   time.Duration
-	MaxCheckDuration   time.Duration
-	MinCheckDuration   time.Duration
-	
-	// WAN check metrics
-	WANChecksTotal     int64
-	WANChecksFailed    int64
-	
-	mu                 sync.Mutex
-}
-
-type HealthCheckResult struct {
-	InterfaceUp    bool
-	Connectivity   bool
-	CheckDuration  time.Duration
-	Error          error
-}
+const (
+	colorReset  = "\033[0m"
+	colorRed    = "\033[0;31m"
+	colorGreen  = "\033[0;32m"
+	colorBlue   = "\033[0;34m"
+	colorYellow = "\033[0;33m"
+)
 
 func loadConfig() Config {
 	getEnvInt := func(key string, defaultVal int) int {
@@ -93,129 +59,12 @@ func loadConfig() Config {
 	}
 
 	return Config{
-		CheckInterval:      getEnvDuration("CHECK_INTERVAL", 15),
-		MaxFailures:        getEnvInt("MAX_FAILURES", 3),
-		RestartServices:    os.Getenv("RESTART_SERVICES"),
-		DebugMode: 			getEnvInt("_LOG_LEVEL", 0) == 2,
-		ParallelChecks:     getEnvBool("MONITOR_PARALLEL_CHECKS"),
-		MetricsEnabled:     getEnvBool("METRICS"),
-	}
-}
-
-func NewMetrics() *Metrics {
-	return &Metrics{
-		UptimeStart:      time.Now(),
-		MinCheckDuration: time.Hour,
-	}
-}
-
-func (m *Metrics) RecordCheck(success bool, duration time.Duration) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	
-	m.TotalChecks++
-	m.LastCheckTime = time.Now()
-	m.LastCheckDuration = duration
-	
-	if duration > m.MaxCheckDuration {
-		m.MaxCheckDuration = duration
-	}
-	if duration < m.MinCheckDuration {
-		m.MinCheckDuration = duration
-	}
-	if m.AvgCheckDuration == 0 {
-		m.AvgCheckDuration = duration
-	} else {
-		m.AvgCheckDuration = (m.AvgCheckDuration*9 + duration) / 10
-	}
-	
-	if success {
-		m.SuccessfulChecks++
-	} else {
-		m.FailedChecks++
-	}
-}
-
-func (m *Metrics) RecordWANCheck(success bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	
-	m.WANChecksTotal++
-	if !success {
-		m.WANChecksFailed++
-	}
-}
-
-func (m *Metrics) UpdateVPNInfo(server, ip string, rx, tx int64) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	
-	if m.CurrentServer != server && server != "" {
-		m.ConnectedAt = time.Now()
-		m.CurrentServer = server
-	}
-	
-	if m.CurrentServer != "" {
-		m.ServerUptime = time.Since(m.ConnectedAt)
-	}
-	
-	m.CurrentIP = ip
-	m.BytesReceived = rx
-	m.BytesTransmitted = tx
-}
-
-func (m *Metrics) SetServerLatency(latency int64) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.ServerLatency = latency
-}
-
-func (m *Metrics) RecordReconnect() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.TotalReconnects++
-}
-
-func (m *Metrics) GetStats() map[string]interface{} {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	
-	uptime := time.Since(m.UptimeStart)
-	successRate := float64(0)
-	if m.TotalChecks > 0 {
-		successRate = float64(m.SuccessfulChecks) / float64(m.TotalChecks) * 100
-	}
-	
-	wanSuccessRate := float64(100)
-	if m.WANChecksTotal > 0 {
-		wanSuccessRate = float64(m.WANChecksTotal-m.WANChecksFailed) / float64(m.WANChecksTotal) * 100
-	}
-	
-	return map[string]interface{}{
-		"total_checks":           m.TotalChecks,
-		"successful_checks":      m.SuccessfulChecks,
-		"failed_checks":          m.FailedChecks,
-		"success_rate":           fmt.Sprintf("%.2f%%", successRate),
-		"success_rate_decimal":   successRate / 100,
-		"total_reconnects":       m.TotalReconnects,
-		"uptime_seconds":         int(uptime.Seconds()),
-		"uptime_formatted":       formatDuration(uptime),
-		"last_check":             m.LastCheckTime.Format("2006-01-02 15:04:05"),
-		"last_check_duration_ms": m.LastCheckDuration.Milliseconds(),
-		"avg_check_duration_ms":  m.AvgCheckDuration.Milliseconds(),
-		"max_check_duration_ms":  m.MaxCheckDuration.Milliseconds(),
-		"min_check_duration_ms":  m.MinCheckDuration.Milliseconds(),
-		"current_server":         m.CurrentServer,
-		"current_ip":             m.CurrentIP,
-		"bytes_received":         m.BytesReceived,
-		"bytes_transmitted":      m.BytesTransmitted,
-		"total_bytes":            m.BytesReceived + m.BytesTransmitted,
-		"server_latency_ms":      m.ServerLatency,
-		"server_uptime_seconds":  int(m.ServerUptime.Seconds()),
-		"server_uptime_formatted": formatDuration(m.ServerUptime),
-		"wan_checks_total":       m.WANChecksTotal,
-		"wan_checks_failed":      m.WANChecksFailed,
-		"wan_success_rate":       fmt.Sprintf("%.2f%%", wanSuccessRate),
+		CheckInterval:   getEnvDuration("CHECK_INTERVAL", 15),
+		MaxFailures:     getEnvInt("MAX_FAILURES", 3),
+		RestartServices: os.Getenv("RESTART_SERVICES"),
+		DebugMode:       getEnvInt("_LOG_LEVEL", 0) == 2,
+		ParallelChecks:  getEnvBool("MONITOR_PARALLEL_CHECKS"),
+		MetricsEnabled:  getEnvBool("METRICS"),
 	}
 }
 
@@ -223,7 +72,7 @@ func formatDuration(d time.Duration) string {
 	days := int(d.Hours()) / 24
 	hours := int(d.Hours()) % 24
 	minutes := int(d.Minutes()) % 60
-	
+
 	if days > 0 {
 		return fmt.Sprintf("%dd %dh %dm", days, hours, minutes)
 	} else if hours > 0 {
@@ -232,376 +81,11 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dm", minutes)
 }
 
-const (
-	colorReset  = "\033[0m"
-	colorRed    = "\033[0;31m"
-	colorGreen  = "\033[0;32m"
-	colorBlue   = "\033[0;34m"
-	colorYellow = "\033[0;33m"
-)
-
 func (m *Monitor) debugLog(format string, args ...interface{}) {
 	if m.config.DebugMode {
 		timestamp := time.Now().Format("15:04:05")
 		msg := fmt.Sprintf(format, args...)
 		fmt.Fprintf(os.Stderr, "    %s[DEBUG]%s %s - %s\n", colorBlue, colorReset, timestamp, msg)
-	}
-}
-
-func (m *Monitor) getCurrentServer() string {
-	data, err := os.ReadFile("/tmp/meta_cn")
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
-
-func (m *Monitor) getServerLatency() int64 {
-	data, err := os.ReadFile("/tmp/server_latency")
-	if err != nil {
-		return 0
-	}
-	latency, _ := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
-	return latency
-}
-
-func (m *Monitor) getCurrentIP() string {
-	cmd := exec.Command("ip", "addr", "show", "pia")
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "inet ") {
-			fields := strings.Fields(line)
-			for i, field := range fields {
-				if field == "inet" && i+1 < len(fields) {
-					ip := strings.Split(fields[i+1], "/")[0]
-					return ip
-				}
-			}
-		}
-	}
-	return ""
-}
-
-func (m *Monitor) isInterfaceUp() bool {
-	m.debugLog("Checking interface status")
-	
-	cmd := exec.Command("ip", "link", "show", "pia")
-	if err := cmd.Run(); err != nil {
-		m.debugLog("Interface not found")
-		return false
-	}
-
-	cmd = exec.Command("ip", "addr", "show", "pia")
-	output, err := cmd.Output()
-	if err == nil && strings.Contains(string(output), "inet ") {
-		m.debugLog("Interface has IP address")
-		return true
-	}
-
-	cmd = exec.Command("wg", "show", "pia", "peers")
-	output, err = cmd.Output()
-	if err == nil && len(strings.TrimSpace(string(output))) > 0 {
-		m.debugLog("Interface has WireGuard peers")
-		return true
-	}
-
-	cmd = exec.Command("ip", "link", "show", "pia")
-	output, err = cmd.Output()
-	if err == nil && !strings.Contains(string(output), "state DOWN") {
-		m.debugLog("Interface is not DOWN")
-		return true
-	}
-
-	m.debugLog("All interface checks failed")
-	return false
-}
-
-func (m *Monitor) checkConnectivityPing(ctx context.Context, host string) bool {
-	cmd := exec.CommandContext(ctx, "ping", "-c", "1", "-W", "5", host)
-	return cmd.Run() == nil
-}
-
-func (m *Monitor) checkConnectivityHTTP(ctx context.Context, url string) bool {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return false
-	}
-	
-	client := &http.Client{
-		Timeout: 8 * time.Second,
-	}
-	resp, err := client.Do(req)
-	if err == nil {
-		resp.Body.Close()
-		return true
-	}
-	return false
-}
-
-func (m *Monitor) checkExternalConnectivityParallel() bool {
-	m.debugLog("Checking external connectivity (parallel mode)")
-	
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
-	
-	type checkResult struct {
-		name    string
-		success bool
-	}
-	
-	results := make(chan checkResult, 3)
-	
-	go func() {
-		success := m.checkConnectivityPing(ctx, "1.1.1.1")
-		results <- checkResult{"ping-1.1.1.1", success}
-	}()
-	
-	go func() {
-		success := m.checkConnectivityPing(ctx, "8.8.8.8")
-		results <- checkResult{"ping-8.8.8.8", success}
-	}()
-	
-	go func() {
-		success := m.checkConnectivityHTTP(ctx, "http://1.1.1.1")
-		results <- checkResult{"http-1.1.1.1", success}
-	}()
-	
-	for i := 0; i < 3; i++ {
-		result := <-results
-		if result.success {
-			m.debugLog("Connectivity check passed: %s", result.name)
-			return true
-		}
-	}
-	
-	m.debugLog("All parallel connectivity checks failed")
-	return false
-}
-
-func (m *Monitor) checkExternalConnectivitySerial() bool {
-	m.debugLog("Checking external connectivity (serial mode)")
-	
-	cmd := exec.Command("ping", "-c", "1", "-W", "5", "1.1.1.1")
-	if err := cmd.Run(); err == nil {
-		m.debugLog("Ping to 1.1.1.1 successful")
-		return true
-	}
-
-	cmd = exec.Command("ping", "-c", "1", "-W", "5", "8.8.8.8")
-	if err := cmd.Run(); err == nil {
-		m.debugLog("Ping to 8.8.8.8 successful")
-		return true
-	}
-
-	client := &http.Client{
-		Timeout: 8 * time.Second,
-	}
-	resp, err := client.Get("http://1.1.1.1")
-	if err == nil {
-		resp.Body.Close()
-		m.debugLog("HTTP request to 1.1.1.1 successful")
-		return true
-	}
-
-	m.debugLog("All connectivity checks failed")
-	return false
-}
-
-func (m *Monitor) checkExternalConnectivity() bool {
-	if m.config.ParallelChecks {
-		return m.checkExternalConnectivityParallel()
-	}
-	return m.checkExternalConnectivitySerial()
-}
-
-// Check WAN connectivity using bypass routes (no firewall manipulation needed!)
-// These IPs (1.1.1.1, 8.8.8.8) are in routing table 100 and bypass the VPN
-func (m *Monitor) checkWANConnectivity(timeout time.Duration) bool {
-    m.debugLog("Checking WAN connectivity (bypass routes)")
-
-    dialer := &net.Dialer{Timeout: timeout}
-
-    // NIST time servers on TCP port 13 (DAYTIME)
-    targets := []string{
-        "129.6.15.28:13",   // time-a-g.nist.gov
-        "129.6.15.29:13",   // time-b-g.nist.gov
-        "132.163.96.1:13",  // time-a-b.nist.gov
-        "132.163.97.1:13",  // time-a-wwv.nist.gov
-        "128.138.140.44:13", // utcnist.colorado.edu
-    }
-
-    for _, target := range targets {
-        conn, err := dialer.Dial("tcp", target)
-        if err == nil {
-            conn.Close()
-            m.debugLog("WAN check successful (%s)", target)
-            return true
-        }
-        m.debugLog("%s failed: %v", target, err)
-    }
-
-    m.debugLog("All WAN checks failed")
-    return false
-}
-
-// Wait for WAN with exponential backoff (infinite loop until success)
-func (m *Monitor) waitForWAN() bool {
-	fmt.Printf("\n%s▶%s Testing WAN before reconnect...\n", colorBlue, colorReset)
-	
-	// Record start time for downtime calculation
-	downSince := time.Now()
-	
-	// Initial quick check
-	if m.checkWANConnectivity(5 * time.Second) {
-		m.showSuccess("Internet up")
-		if m.metrics != nil {
-			m.metrics.RecordWANCheck(true)
-		}
-		return true
-	}
-	
-	// WAN is down, wait with exponential backoff
-	m.showError("Internet down, waiting...")
-	if m.metrics != nil {
-		m.metrics.RecordWANCheck(false)
-	}
-	
-	// Exponential backoff: 5s, 10s, 20s, 40s, 80s, then 160s forever
-	delays := []int{5, 10, 20, 40, 80}
-	maxDelay := 160
-	attempt := 1
-	
-	// First 5 attempts with exponential backoff
-	for _, delay := range delays {
-		// Use \r to overwrite the previous line
-		time.Sleep(time.Duration(delay) * time.Second)
-		
-		if m.checkWANConnectivity(5 * time.Second) {
-			downtime := time.Since(downSince)
-			fmt.Printf("\r")
-			m.showSuccess(fmt.Sprintf("Internet restored (down for %s)", formatDuration(downtime)))
-			if m.metrics != nil {
-				m.metrics.RecordWANCheck(true)
-			}
-			return true
-		}
-		
-		if m.metrics != nil {
-			m.metrics.RecordWANCheck(false)
-		}
-		attempt++
-	}
-	
-	// Continue checking every 160s indefinitely
-	for {
-		time.Sleep(time.Duration(maxDelay) * time.Second)
-		
-		if m.checkWANConnectivity(5 * time.Second) {
-			downtime := time.Since(downSince)
-			fmt.Printf("\r")
-			m.showSuccess(fmt.Sprintf("Internet restored (down for %s)", formatDuration(downtime)))
-			if m.metrics != nil {
-				m.metrics.RecordWANCheck(true)
-			}
-			return true
-		}
-		
-		if m.metrics != nil {
-			m.metrics.RecordWANCheck(false)
-		}
-		attempt++
-	}
-}
-
-func (m *Monitor) getTransferBytes() (rx, tx int64, err error) {
-	cmd := exec.Command("wg", "show", "pia", "transfer")
-	output, err := cmd.Output()
-	if err != nil {
-		return 0, 0, err
-	}
-	
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(lines) == 0 {
-		return 0, 0, fmt.Errorf("no transfer data")
-	}
-	
-	parts := strings.Fields(lines[0])
-	if len(parts) < 3 {
-		return 0, 0, fmt.Errorf("interface transitioning")
-	}
-	
-	rx, err = strconv.ParseInt(parts[1], 10, 64)
-	if err != nil {
-		return 0, 0, err
-	}
-	
-	tx, err = strconv.ParseInt(parts[2], 10, 64)
-	if err != nil {
-		return 0, 0, err
-	}
-	
-	return rx, tx, nil
-}
-
-func (m *Monitor) checkVPNHealth() (*HealthCheckResult, error) {
-	m.debugLog("Starting health check")
-	start := time.Now()
-	
-	result := &HealthCheckResult{}
-	
-	if !m.isInterfaceUp() {
-		m.debugLog("Interface check failed")
-		result.CheckDuration = time.Since(start)
-		result.Error = fmt.Errorf("interface is down")
-		return result, result.Error
-	}
-	
-	result.InterfaceUp = true
-	m.debugLog("Interface is up")
-
-	if m.checkExternalConnectivity() {
-		m.debugLog("Connectivity passed")
-		result.Connectivity = true
-		result.CheckDuration = time.Since(start)
-		return result, nil
-	}
-
-	m.debugLog("First check failed, retrying...")
-	time.Sleep(3 * time.Second)
-	
-	if m.checkExternalConnectivity() {
-		m.debugLog("Retry passed")
-		result.Connectivity = true
-		result.CheckDuration = time.Since(start)
-		return result, nil
-	}
-
-	m.debugLog("All checks failed")
-	result.CheckDuration = time.Since(start)
-	result.Error = fmt.Errorf("connectivity check failed")
-	return result, result.Error
-}
-
-func (m *Monitor) triggerReconnect() {
-	m.mu.Lock()
-	m.reconnectAttempts++
-	m.mu.Unlock()
-
-	// Check WAN connectivity before reconnecting
-	m.waitForWAN()
-
-	// Write to named pipe (non-blocking, opens and closes immediately)
-	if err := os.WriteFile("/tmp/vpn_reconnect_pipe", []byte("health_check_failed\n"), 0644); err != nil {
-		log.Printf("Failed to signal reconnect via pipe: %v", err)
-	}
-
-	if m.metrics != nil {
-		m.metrics.RecordReconnect()
 	}
 }
 
@@ -618,122 +102,122 @@ func (m *Monitor) showError(msg string) {
 }
 
 func (m *Monitor) monitorLoop(ctx context.Context) {
-    ticker := time.NewTicker(m.config.CheckInterval)
-    defer ticker.Stop()
-    
-    failChan := make(chan struct{}, 1)
-    
-    if m.metrics != nil {
-        latency := m.getServerLatency()
-        if latency > 0 {
-            m.metrics.SetServerLatency(latency)
-        }
-    }
+	ticker := time.NewTicker(m.config.CheckInterval)
+	defer ticker.Stop()
 
-    for {
-        select {
-        case <-ctx.Done():
-            m.debugLog("Monitor loop received shutdown signal")
-            return
-        
-        case <-failChan:
-            m.mu.Lock()
-            m.failureCount = m.config.MaxFailures
-            m.consecutiveSuccess = 0
-            m.mu.Unlock()
-            m.triggerReconnect()
-            m.mu.Lock()
-            m.failureCount = 0
-            m.mu.Unlock()
-            
-        case <-ticker.C:
-            // Check for port forwarding signature failure flag
+	failChan := make(chan struct{}, 1)
+
+	if m.metrics != nil {
+		latency := m.getServerLatency()
+		if latency > 0 {
+			m.metrics.SetServerLatency(latency)
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			m.debugLog("Monitor loop received shutdown signal")
+			return
+
+		case <-failChan:
+			m.mu.Lock()
+			m.failureCount = m.config.MaxFailures
+			m.consecutiveSuccess = 0
+			m.mu.Unlock()
+			m.triggerReconnect()
+			m.mu.Lock()
+			m.failureCount = 0
+			m.mu.Unlock()
+
+		case <-ticker.C:
+			// Check for port forwarding signature failure flag
 			if _, err := os.Stat("/tmp/pf_signature_failed"); err == nil {
-			    if removeErr := os.Remove("/tmp/pf_signature_failed"); removeErr != nil {
-			        m.debugLog("Failed to remove PF failure flag: %v", removeErr)
-			    }
+				if removeErr := os.Remove("/tmp/pf_signature_failed"); removeErr != nil {
+					m.debugLog("Failed to remove PF failure flag: %v", removeErr)
+				}
 				m.triggerReconnect()
 				continue
 			}
-            
-            // Skip checks during active reconnection to avoid races
-            if _, err := os.Stat("/tmp/reconnecting"); err == nil {
-                m.debugLog("Skipping health check during active reconnection")
-                m.mu.Lock()
-                if m.failureCount > 0 {
-                    m.failureCount = 0  // Forgive failures during reconnect
-                }
-                m.mu.Unlock()
-                continue
-            }
 
-            result, err := m.checkVPNHealth()
-            
-            if m.metrics != nil {
-                rx, tx, _ := m.getTransferBytes()
-                server := m.getCurrentServer()
-                ip := m.getCurrentIP()
-                m.metrics.UpdateVPNInfo(server, ip, rx, tx)
-            }
-            
-            if m.metrics != nil {
-                m.metrics.RecordCheck(err == nil, result.CheckDuration)
-            }
-            
-            m.mu.Lock()
-            if err == nil {
-                if m.failureCount > 0 {
-                    fmt.Printf("\r%s\r", strings.Repeat(" ", 60))
-                    m.failureCount = 0
-                    m.reconnectAttempts = 0
-                }
-                m.consecutiveSuccess++
-            } else {
-                m.failureCount++
-                m.consecutiveSuccess = 0
+			// Skip checks during active reconnection to avoid races
+			if _, err := os.Stat("/tmp/reconnecting"); err == nil {
+				m.debugLog("Skipping health check during active reconnection")
+				m.mu.Lock()
+				if m.failureCount > 0 {
+					m.failureCount = 0 // Forgive failures during reconnect
+				}
+				m.mu.Unlock()
+				continue
+			}
 
-                if m.failureCount < m.config.MaxFailures {
-                    
-                    if m.config.DebugMode && m.failureCount == 1 {
-                        fmt.Printf("  %sℹ%s Debug info:\n", colorYellow, colorReset)
-                        cmd := exec.Command("wg", "show", "pia")
-                        output, err := cmd.Output()
-                        if err == nil {
-                            lines := strings.Split(string(output), "\n")
-                            for i, line := range lines {
-                                if i >= 5 {
-                                    break
-                                }
-                                fmt.Printf("    %s\n", line)
-                            }
-                        }
-                    }
-                } else {
-                    // Print the final error only when reaching MaxFailures
-                    fmt.Printf("\n  %s✗%s VPN connection lost (%d/%d)%s\n", 
-                        colorRed, colorReset, m.failureCount, m.config.MaxFailures, strings.Repeat(" ", 20))
+			result, err := m.checkVPNHealth()
+
+			if m.metrics != nil {
+				rx, tx, _ := m.getTransferBytes()
+				server := m.getCurrentServer()
+				ip := m.getCurrentIP()
+				m.metrics.UpdateVPNInfo(server, ip, rx, tx)
+			}
+
+			if m.metrics != nil {
+				m.metrics.RecordCheck(err == nil, result.CheckDuration)
+			}
+
+			m.mu.Lock()
+			if err == nil {
+				if m.failureCount > 0 {
+					fmt.Printf("\r%s\r", strings.Repeat(" ", 60))
+					m.failureCount = 0
+					m.reconnectAttempts = 0
+				}
+				m.consecutiveSuccess++
+			} else {
+				m.failureCount++
+				m.consecutiveSuccess = 0
+
+				if m.failureCount < m.config.MaxFailures {
+
+					if m.config.DebugMode && m.failureCount == 1 {
+						fmt.Printf("  %sℹ%s Debug info:\n", colorYellow, colorReset)
+						cmd := exec.Command("wg", "show", "pia")
+						output, err := cmd.Output()
+						if err == nil {
+							lines := strings.Split(string(output), "\n")
+							for i, line := range lines {
+								if i >= 5 {
+									break
+								}
+								fmt.Printf("    %s\n", line)
+							}
+						}
+					}
+				} else {
+					// Print the final error only when reaching MaxFailures
+					fmt.Printf("\n  %s✗%s VPN connection lost (%d/%d)%s\n",
+						colorRed, colorReset, m.failureCount, m.config.MaxFailures, strings.Repeat(" ", 20))
 					exec.Command("pkill", "-f", "portforward").Run()
-                    m.mu.Unlock()
-                    m.triggerReconnect()
-                    m.mu.Lock()
-                    m.failureCount = 0
-                    m.mu.Unlock()
-                    m.mu.Lock()
-                }
-            }
-            m.mu.Unlock()
-        }
-    }
+					m.mu.Unlock()
+					m.triggerReconnect()
+					m.mu.Lock()
+					m.failureCount = 0
+					m.mu.Unlock()
+					m.mu.Lock()
+				}
+			}
+			m.mu.Unlock()
+		}
+	}
 }
 
 func main() {
 	config := loadConfig()
-	
+
 	var metrics *Metrics
 	if config.MetricsEnabled {
 		metrics = NewMetrics()
 	}
-	
+
 	monitor := &Monitor{
 		config:  config,
 		metrics: metrics,
@@ -741,10 +225,10 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
-	
+
 	go func() {
 		<-sigChan
 		monitor.debugLog("Received shutdown signal")
@@ -753,7 +237,7 @@ func main() {
 
 	_, err := net.LookupHost("google.com")
 	if err != nil {
-		log.Printf("Warning: DNS resolution may not be working: %v", err)
+		fmt.Fprintf(os.Stderr, "Warning: DNS resolution may not be working: %v\n", err)
 	}
 
 	if config.MetricsEnabled {
@@ -761,116 +245,4 @@ func main() {
 	}
 
 	monitor.monitorLoop(ctx)
-}
-
-func startMetricsServer(m *Monitor) {
-	http.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		if m.metrics == nil {
-			http.Error(w, "Metrics not enabled", http.StatusNotFound)
-			return
-		}
-		
-		stats := m.metrics.GetStats()
-		
-		acceptHeader := r.Header.Get("Accept")
-		if strings.Contains(acceptHeader, "text/plain") || r.URL.Query().Get("format") == "prometheus" {
-			w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-			
-			fmt.Fprintf(w, "# HELP vpn_uptime_seconds Total uptime in seconds\n")
-			fmt.Fprintf(w, "# TYPE vpn_uptime_seconds gauge\n")
-			fmt.Fprintf(w, "vpn_uptime_seconds %d\n\n", stats["uptime_seconds"])
-			
-			fmt.Fprintf(w, "# HELP vpn_health_checks_total Total number of health checks performed\n")
-			fmt.Fprintf(w, "# TYPE vpn_health_checks_total counter\n")
-			fmt.Fprintf(w, "vpn_health_checks_total %d\n\n", stats["total_checks"])
-			
-			fmt.Fprintf(w, "# HELP vpn_health_checks_successful_total Total number of successful health checks\n")
-			fmt.Fprintf(w, "# TYPE vpn_health_checks_successful_total counter\n")
-			fmt.Fprintf(w, "vpn_health_checks_successful_total %d\n\n", stats["successful_checks"])
-			
-			fmt.Fprintf(w, "# HELP vpn_health_checks_failed_total Total number of failed health checks\n")
-			fmt.Fprintf(w, "# TYPE vpn_health_checks_failed_total counter\n")
-			fmt.Fprintf(w, "vpn_health_checks_failed_total %d\n\n", stats["failed_checks"])
-			
-			fmt.Fprintf(w, "# HELP vpn_success_rate Health check success rate (0-1)\n")
-			fmt.Fprintf(w, "# TYPE vpn_success_rate gauge\n")
-			fmt.Fprintf(w, "vpn_success_rate %.4f\n\n", stats["success_rate_decimal"])
-			
-			fmt.Fprintf(w, "# HELP vpn_reconnects_total Total number of reconnections\n")
-			fmt.Fprintf(w, "# TYPE vpn_reconnects_total counter\n")
-			fmt.Fprintf(w, "vpn_reconnects_total %d\n\n", stats["total_reconnects"])
-			
-			fmt.Fprintf(w, "# HELP vpn_check_duration_milliseconds Last health check duration in milliseconds\n")
-			fmt.Fprintf(w, "# TYPE vpn_check_duration_milliseconds gauge\n")
-			fmt.Fprintf(w, "vpn_check_duration_milliseconds %d\n\n", stats["last_check_duration_ms"])
-			
-			fmt.Fprintf(w, "# HELP vpn_check_duration_avg_milliseconds Average health check duration in milliseconds\n")
-			fmt.Fprintf(w, "# TYPE vpn_check_duration_avg_milliseconds gauge\n")
-			fmt.Fprintf(w, "vpn_check_duration_avg_milliseconds %d\n\n", stats["avg_check_duration_ms"])
-			
-			fmt.Fprintf(w, "# HELP vpn_bytes_received_total Total bytes received through VPN\n")
-			fmt.Fprintf(w, "# TYPE vpn_bytes_received_total counter\n")
-			fmt.Fprintf(w, "vpn_bytes_received_total %d\n\n", stats["bytes_received"])
-			
-			fmt.Fprintf(w, "# HELP vpn_bytes_transmitted_total Total bytes transmitted through VPN\n")
-			fmt.Fprintf(w, "# TYPE vpn_bytes_transmitted_total counter\n")
-			fmt.Fprintf(w, "vpn_bytes_transmitted_total %d\n\n", stats["bytes_transmitted"])
-			
-			fmt.Fprintf(w, "# HELP vpn_server_latency_milliseconds Initial connection latency to VPN server\n")
-			fmt.Fprintf(w, "# TYPE vpn_server_latency_milliseconds gauge\n")
-			fmt.Fprintf(w, "vpn_server_latency_milliseconds %d\n\n", stats["server_latency_ms"])
-			
-			fmt.Fprintf(w, "# HELP vpn_server_uptime_seconds Time connected to current server\n")
-			fmt.Fprintf(w, "# TYPE vpn_server_uptime_seconds gauge\n")
-			fmt.Fprintf(w, "vpn_server_uptime_seconds %d\n\n", stats["server_uptime_seconds"])
-			
-			fmt.Fprintf(w, "# HELP vpn_wan_checks_total Total number of WAN connectivity checks\n")
-			fmt.Fprintf(w, "# TYPE vpn_wan_checks_total counter\n")
-			fmt.Fprintf(w, "vpn_wan_checks_total %d\n\n", stats["wan_checks_total"])
-			
-			fmt.Fprintf(w, "# HELP vpn_wan_checks_failed_total Total number of failed WAN checks\n")
-			fmt.Fprintf(w, "# TYPE vpn_wan_checks_failed_total counter\n")
-			fmt.Fprintf(w, "vpn_wan_checks_failed_total %d\n\n", stats["wan_checks_failed"])
-			
-			if server, ok := stats["current_server"].(string); ok && server != "" {
-				fmt.Fprintf(w, "# HELP vpn_info VPN connection information\n")
-				fmt.Fprintf(w, "# TYPE vpn_info gauge\n")
-				fmt.Fprintf(w, "vpn_info{server=\"%s\",ip=\"%s\"} 1\n\n", 
-					stats["current_server"], stats["current_ip"])
-			}
-		} else {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(stats)
-		}
-	})
-	
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		result, err := m.checkVPNHealth()
-		
-		status := "healthy"
-		statusCode := http.StatusOK
-		if err != nil {
-			status = "unhealthy"
-			statusCode = http.StatusServiceUnavailable
-		}
-		
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(statusCode)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":         status,
-			"interface_up":   result.InterfaceUp,
-			"connectivity":   result.Connectivity,
-			"check_duration": result.CheckDuration.String(),
-			"error":          fmt.Sprintf("%v", err),
-		})
-	})
-	
-	port := os.Getenv("METRICS_PORT")
-	if port == "" {
-		port = "9090"
-	}
-	
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		log.Printf("Metrics server error: %v", err)
-	}
 }
