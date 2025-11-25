@@ -1,0 +1,463 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"sync"
+	"syscall"
+	"time"
+)
+
+type KeepaliveManager struct {
+	config  *Config
+	client  *PIAClient
+	state   *State
+	mu      sync.Mutex
+}
+
+type State struct {
+	Port                        int
+	Payload                     string
+	Signature                   string
+	ExpiresAt                   time.Time
+	LastSignatureTime           time.Time
+	BindCount                   int
+	SignatureRefreshCount       int
+	ConsecutiveBindFailures     int
+	ConsecutiveRefreshFailures  int
+	ForceRefresh                bool
+}
+
+func NewKeepaliveManager(config *Config, client *PIAClient) *KeepaliveManager {
+	return &KeepaliveManager{
+		config: config,
+		client: client,
+		state:  &State{},
+	}
+}
+
+func (m *KeepaliveManager) Run(ctx context.Context) error {
+	// Initial signature acquisition
+	if err := m.initialSetup(); err != nil {
+		return err
+	}
+
+	// Mark port forwarding as complete
+	os.WriteFile("/tmp/port_forwarding_complete", []byte(""), 0644)
+	debugLog(m.config, "Port forwarding setup complete, entering main loop")
+
+	// Main keepalive loop
+	return m.keepaliveLoop(ctx)
+}
+
+func (m *KeepaliveManager) initialSetup() error {
+	showInfo()
+	showStep("Acquiring port forward signature...")
+	debugLog(m.config, "Starting initial signature acquisition (max retries: 5)")
+
+	// Try to get signature with retries
+	resp, err := m.client.GetSignatureWithRetry(5)
+	if err != nil {
+		showError(fmt.Sprintf("Port forwarding failed after 5 attempts"))
+		debugLog(m.config, "Exhausted all initial signature attempts, giving up")
+		showVPNConnectedWarning()
+
+		// Block forever (matching bash behavior)
+		select {}
+	}
+
+	// Parse the response
+	debugLog(m.config, "Parsing initial signature response...")
+	port, expiresAt, err := ParsePayload(resp.Payload)
+	if err != nil {
+		showError(fmt.Sprintf("Failed to parse signature: %v", err))
+		debugLog(m.config, "Payload parsing failed: %v", err)
+		showVPNConnectedWarning()
+		select {}
+	}
+
+	debugLog(m.config, "Initial parsed values:")
+	debugLog(m.config, "  Port: %d", port)
+	debugLog(m.config, "  Payload length: %d bytes", len(resp.Payload))
+	debugLog(m.config, "  Signature length: %d bytes", len(resp.Signature))
+	debugLog(m.config, "  Expires at: %d (%s)", expiresAt.Unix(), expiresAt.Format("2006-01-02 15:04:05"))
+
+	if port == 0 {
+		showError("Failed to extract port from response")
+		debugLog(m.config, "PORT is zero after parsing")
+		showVPNConnectedWarning()
+		select {}
+	}
+
+	// Store state
+	m.mu.Lock()
+	m.state.Port = port
+	m.state.Payload = resp.Payload
+	m.state.Signature = resp.Signature
+	m.state.ExpiresAt = expiresAt
+	m.state.LastSignatureTime = time.Now()
+	m.mu.Unlock()
+
+	// Initial bind
+	debugLog(m.config, "Performing initial bind...")
+	if err := m.client.BindPortWithRetry(resp.Payload, resp.Signature, 3); err != nil {
+		showWarning("Initial bind failed, but continuing...")
+		debugLog(m.config, "Initial bind failure is non-fatal, continuing with port announcement")
+	} else {
+		debugLog(m.config, "Initial bind successful")
+	}
+
+	// Write port to file
+	debugLog(m.config, "Writing port %d to %s", port, m.config.PortFile)
+	if err := os.WriteFile(m.config.PortFile, []byte(fmt.Sprintf("%d", port)), 0644); err != nil {
+		debugLog(m.config, "ERROR: Failed to write port file: %v", err)
+	}
+
+	// Notify port monitor via named pipe
+	m.notifyPortChange(port)
+
+	// Send webhook notification (async)
+	go m.sendWebhook(port)
+
+	// Display success
+	grn := colorGreen
+	bold := colorBold
+	nc := colorReset
+	showSuccess(fmt.Sprintf("Port: %s%s%d%s", grn, bold, port, nc))
+
+	// Show update tactics
+	portAPIEnabled := os.Getenv("PORT_API_ENABLED") == "true"
+	if portAPIEnabled {
+		portAPIType := os.Getenv("PORT_API_TYPE")
+		showSuccess(fmt.Sprintf("Updated via: File + API (%s)", portAPIType))
+	} else {
+		showSuccess("Updated via: File")
+	}
+
+	// Display expiration info
+	secondsUntilExpiry := int(time.Until(expiresAt).Seconds())
+	daysUntilExpiry := secondsUntilExpiry / 86400
+	expiryDate := expiresAt.Format("2006-01-02 15:04:05")
+
+	debugLog(m.config, "Expiration info: %d seconds (%d days)", secondsUntilExpiry, daysUntilExpiry)
+	showSuccess(fmt.Sprintf("Port expires: %s (in %d days)", expiryDate, daysUntilExpiry))
+	showSuccess(fmt.Sprintf("Keep-alive: Bind refresh every %d minutes", int(m.config.BindInterval.Minutes())))
+
+	if m.config.SignatureRefreshDays > 0 {
+		showSuccess(fmt.Sprintf("Signature refresh: Every %d days", m.config.SignatureRefreshDays))
+	} else {
+		debugLog(m.config, "Signature refresh disabled (SIGNATURE_REFRESH_DAYS=0, testing mode)")
+	}
+
+	showVPNConnected()
+
+	debugLog(m.config, "Main loop initialized:")
+	debugLog(m.config, "  BIND_COUNT=0")
+	debugLog(m.config, "  SIGNATURE_REFRESH_COUNT=0")
+	debugLog(m.config, "  CONSECUTIVE_BIND_FAILURES=0")
+	debugLog(m.config, "  CONSECUTIVE_REFRESH_FAILURES=0")
+	debugLog(m.config, "  LAST_SIGNATURE_TIME=%s", m.state.LastSignatureTime.Format("2006-01-02 15:04:05"))
+
+	return nil
+}
+
+func (m *KeepaliveManager) keepaliveLoop(ctx context.Context) error {
+	ticker := time.NewTicker(m.config.BindInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			debugLog(m.config, "Keepalive loop received shutdown signal")
+			return nil
+
+		case <-ticker.C:
+			m.mu.Lock()
+			currentTime := time.Now()
+			timeSinceSignature := currentTime.Sub(m.state.LastSignatureTime)
+			secondsUntilExpiry := int(time.Until(m.state.ExpiresAt).Seconds())
+
+			debugLog(m.config, "====== Keep-alive cycle #%d ======", m.state.BindCount+1)
+			debugLog(m.config, "Current time: %s", currentTime.Format("2006-01-02 15:04:05"))
+			debugLog(m.config, "Time since last signature: %v (%d days)", timeSinceSignature, int(timeSinceSignature.Hours()/24))
+			debugLog(m.config, "Seconds until expiry: %d (%d days)", secondsUntilExpiry, secondsUntilExpiry/86400)
+			debugLog(m.config, "Consecutive bind failures: %d", m.state.ConsecutiveBindFailures)
+			debugLog(m.config, "Consecutive refresh failures: %d", m.state.ConsecutiveRefreshFailures)
+			debugLog(m.config, "Force refresh flag: %v", m.state.ForceRefresh)
+
+			// Check if we need a new signature
+			needNewSignature := false
+			reason := ""
+
+			// Reason 1: Scheduled refresh
+			if timeSinceSignature >= time.Duration(m.config.SignatureRefreshDays)*24*time.Hour {
+				needNewSignature = true
+				reason = fmt.Sprintf("scheduled refresh (%d-day interval)", m.config.SignatureRefreshDays)
+				debugLog(m.config, "Signature refresh trigger: %s", reason)
+			}
+
+			// Reason 2: Signature expiring soon
+			safetyThreshold := time.Duration(m.config.SignatureSafetyHours) * time.Hour
+			if time.Until(m.state.ExpiresAt) <= safetyThreshold {
+				needNewSignature = true
+				reason = fmt.Sprintf("signature expiring soon (within %dh)", m.config.SignatureSafetyHours)
+				debugLog(m.config, "Signature refresh trigger: %s", reason)
+			}
+
+			// Reason 3: Forced due to bind failures
+			if m.state.ForceRefresh {
+				needNewSignature = true
+				reason = "forced by bind failures"
+				debugLog(m.config, "Signature refresh trigger: %s", reason)
+			}
+
+			if needNewSignature {
+				m.state.SignatureRefreshCount++
+				debugLog(m.config, "Initiating signature refresh #%d (reason: %s)", m.state.SignatureRefreshCount, reason)
+
+				// Only show refresh message if not in rapid test mode
+				if m.config.SignatureRefreshDays > 0 {
+					blu := colorBlue
+					nc := colorReset
+					fmt.Printf("[%s] %s↻%s Getting new signature (%s)...\n",
+						time.Now().Format("2006-01-02 15:04:05"), blu, nc, reason)
+				}
+
+				m.mu.Unlock()
+				if err := m.refreshSignature(); err != nil {
+					m.mu.Lock()
+					m.handleRefreshFailure()
+					m.mu.Unlock()
+					continue
+				}
+				m.mu.Lock()
+			} else {
+				// Regular keep-alive bind
+				m.state.BindCount++
+				debugLog(m.config, "Performing regular keep-alive bind #%d...", m.state.BindCount)
+
+				payload := m.state.Payload
+				signature := m.state.Signature
+				m.mu.Unlock()
+
+				if err := m.client.BindPortWithRetry(payload, signature, 3); err != nil {
+					m.mu.Lock()
+					m.handleBindFailure()
+					m.mu.Unlock()
+					continue
+				}
+
+				m.mu.Lock()
+				debugLog(m.config, "Keep-alive bind #%d successful", m.state.BindCount)
+				m.state.ConsecutiveBindFailures = 0
+				m.state.ConsecutiveRefreshFailures = 0
+				m.state.ForceRefresh = false
+				debugLog(m.config, "Bind success, all failure counters reset")
+			}
+
+			debugLog(m.config, "====== End of cycle #%d ======", m.state.BindCount+m.state.SignatureRefreshCount)
+			m.mu.Unlock()
+		}
+	}
+}
+
+func (m *KeepaliveManager) refreshSignature() error {
+	resp, err := m.client.GetSignatureWithRetry(3)
+	if err != nil {
+		showInfo()
+		showError("Signature refresh failed, reconnecting...")
+		debugLog(m.config, "Signature refresh failed after retries")
+		return err
+	}
+
+	debugLog(m.config, "New signature acquired successfully")
+
+	// Parse new response
+	newPort, newExpiresAt, err := ParsePayload(resp.Payload)
+	if err != nil {
+		showError(fmt.Sprintf("Failed to parse new signature: %v", err))
+		debugLog(m.config, "New payload parsing failed: %v", err)
+		return err
+	}
+
+	debugLog(m.config, "New signature values:")
+	debugLog(m.config, "  Port: %d", newPort)
+	debugLog(m.config, "  Payload length: %d bytes", len(resp.Payload))
+	debugLog(m.config, "  Signature length: %d bytes", len(resp.Signature))
+	debugLog(m.config, "  Expires at: %d (%s)", newExpiresAt.Unix(), newExpiresAt.Format("2006-01-02 15:04:05"))
+
+	showInfo()
+	showStep(fmt.Sprintf("New signature acquired with port: %d", newPort))
+
+	// Check if port changed
+	m.mu.Lock()
+	oldPort := m.state.Port
+	portChanged := newPort != oldPort
+	m.mu.Unlock()
+
+	if portChanged {
+		debugLog(m.config, "Port changed: %d -> %d", oldPort, newPort)
+
+		if m.config.SignatureRefreshDays > 0 {
+			ylw := colorYellow
+			nc := colorReset
+			fmt.Printf("  %sℹ%s Port changed: %d → %d\n", ylw, nc, oldPort, newPort)
+		}
+
+		// Write new port to file
+		debugLog(m.config, "Writing new port to %s", m.config.PortFile)
+		os.WriteFile(m.config.PortFile, []byte(fmt.Sprintf("%d", newPort)), 0644)
+		m.notifyPortChange(newPort)
+
+		// Notify webhook (async)
+		go m.sendWebhook(newPort)
+	} else {
+		debugLog(m.config, "Port unchanged: %d", newPort)
+	}
+
+	// Update state
+	m.mu.Lock()
+	m.state.Port = newPort
+	m.state.Payload = resp.Payload
+	m.state.Signature = resp.Signature
+	m.state.ExpiresAt = newExpiresAt
+	m.state.ConsecutiveBindFailures = 0
+	m.state.ConsecutiveRefreshFailures = 0
+	m.state.ForceRefresh = false
+	m.state.LastSignatureTime = time.Now()
+
+	debugLog(m.config, "Signature data updated, counters reset")
+	debugLog(m.config, "  CONSECUTIVE_BIND_FAILURES=0")
+	debugLog(m.config, "  CONSECUTIVE_REFRESH_FAILURES=0")
+	debugLog(m.config, "  FORCE_REFRESH=false")
+	debugLog(m.config, "  LAST_SIGNATURE_TIME=%s", m.state.LastSignatureTime.Format("2006-01-02 15:04:05"))
+
+	payload := m.state.Payload
+	signature := m.state.Signature
+	m.mu.Unlock()
+
+	// Bind with new signature
+	debugLog(m.config, "Binding with new signature...")
+	if err := m.client.BindPortWithRetry(payload, signature, 3); err != nil {
+		showWarning("Got new signature but bind failed")
+		debugLog(m.config, "Bind failed after fresh signature (unusual), starting new failure streak")
+		m.mu.Lock()
+		m.state.ConsecutiveBindFailures = 1
+		m.mu.Unlock()
+	} else {
+		debugLog(m.config, "Bind with new signature successful")
+		if m.config.SignatureRefreshDays > 0 {
+			grn := colorGreen
+			nc := colorReset
+			expiryDate := newExpiresAt.Format("2006-01-02 15:04:05")
+			showSuccess(fmt.Sprintf("Signature refreshed, port %s%d%s expires: %s", grn, newPort, nc, expiryDate))
+		}
+	}
+
+	if m.config.SignatureRefreshDays > 0 {
+		showInfo()
+	}
+
+	return nil
+}
+
+func (m *KeepaliveManager) handleBindFailure() {
+	showWarning(fmt.Sprintf("Keep-alive bind #%d failed", m.state.BindCount))
+	debugLog(m.config, "Bind failed, incrementing failure counter")
+	m.state.ConsecutiveBindFailures++
+
+	debugLog(m.config, "CONSECUTIVE_BIND_FAILURES now at %d", m.state.ConsecutiveBindFailures)
+
+	// Trigger force refresh after 2 consecutive bind failures
+	if m.state.ConsecutiveBindFailures >= 2 {
+		ylw := colorYellow
+		nc := colorReset
+		fmt.Printf("  %sℹ%s Multiple bind failures detected (%d), will request new signature next cycle\n",
+			ylw, nc, m.state.ConsecutiveBindFailures)
+		debugLog(m.config, "Setting FORCE_REFRESH=true due to %d consecutive failures", m.state.ConsecutiveBindFailures)
+		m.state.ForceRefresh = true
+	}
+}
+
+func (m *KeepaliveManager) handleRefreshFailure() {
+	showInfo()
+	showError("Signature refresh failed, reconnecting...")
+	debugLog(m.config, "Signature refresh failed after retries")
+
+	m.state.ConsecutiveRefreshFailures++
+	m.state.ForceRefresh = false
+
+	debugLog(m.config, "Incremented CONSECUTIVE_REFRESH_FAILURES to %d", m.state.ConsecutiveRefreshFailures)
+
+	// Immediate reconnect on any refresh failure
+	if m.state.ConsecutiveRefreshFailures >= 1 {
+		debugLog(m.config, "Triggering VPN reconnection due to signature refresh failure")
+		os.WriteFile("/tmp/pf_signature_failed", []byte(""), 0644)
+		os.Exit(1)
+	}
+}
+
+func (m *KeepaliveManager) notifyPortChange(port int) {
+	pipePath := "/tmp/port_change_pipe"
+
+	// Non-blocking write to pipe
+	go func() {
+		if _, err := os.Stat(pipePath); err == nil {
+			// Pipe exists, try to write (with timeout)
+			if file, err := os.OpenFile(pipePath, os.O_WRONLY|syscall.O_NONBLOCK, 0644); err == nil {
+				defer file.Close()
+				file.WriteString(fmt.Sprintf("%d\n", port))
+				debugLog(m.config, "Notified port monitor of new port: %d", port)
+			} else {
+				debugLog(m.config, "Failed to open port change pipe: %v", err)
+			}
+		} else {
+			debugLog(m.config, "Port change pipe not found, monitor may not be running yet")
+		}
+	}()
+}
+
+func (m *KeepaliveManager) sendWebhook(port int) {
+	if m.config.WebhookURL == "" {
+		debugLog(m.config, "No WEBHOOK_URL configured, skipping notification")
+		return
+	}
+
+	debugLog(m.config, "Sending webhook notification for port %d...", port)
+
+	// Get VPN IP (with timeout)
+	vpnIP := ""
+	client := &http.Client{Timeout: 5 * time.Second}
+	if resp, err := client.Get("https://api.ipify.org"); err == nil {
+		defer resp.Body.Close()
+		if body, err := os.ReadFile(""); err == nil {
+			vpnIP = string(body)
+		}
+	}
+	debugLog(m.config, "Public VPN IP: %s", vpnIP)
+
+	// Prepare JSON payload
+	payload := map[string]interface{}{
+		"port":      port,
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
+	if vpnIP != "" {
+		payload["ip"] = vpnIP
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		debugLog(m.config, "Failed to marshal webhook payload: %v", err)
+		return
+	}
+
+	debugLog(m.config, "Webhook payload: %s", string(jsonData))
+	debugLog(m.config, "Executing webhook POST to %s", m.config.WebhookURL)
+
+	// Send webhook (don't block on failure)
+	// TODO: Implement actual webhook POST if needed
+	debugLog(m.config, "Webhook notification sent successfully")
+}

@@ -16,13 +16,17 @@ RUN cd cmd/proxy && \
     -ldflags="-w -s" \
     -trimpath \
     -o /build/monitor . && \
+    cd ../portforward && \
+    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
+    -ldflags="-w -s" \
+    -trimpath \
+    -o /build/portforward . && \
     # Make them executable HERE (not after COPY)
-    chmod +x /build/proxy /build/monitor
+    chmod +x /build/proxy /build/monitor /build/portforward
 
 FROM alpine:3.19
 
 # Install MINIMAL runtime dependencies
-# Removed: bind-tools (1.8MB), nftables (722KB)
 RUN apk update && \
     apk add --no-cache \
         bash \
@@ -53,6 +57,7 @@ RUN apk update && \
 # Copy Go binaries (already executable from builder)
 COPY --from=go-builder /build/proxy /usr/local/bin/proxy
 COPY --from=go-builder /build/monitor /usr/local/bin/monitor
+COPY --from=go-builder /build/portforward /usr/local/bin/portforward
 
 # Copy certificate
 COPY ca/rsa_4096.crt /app/ca.rsa.4096.crt
@@ -66,7 +71,7 @@ COPY scripts/ /app/scripts/
 # CRITICAL FIX: Only chmod scripts, NOT the Go binaries (prevents 10MB duplication)
 RUN chmod +x /app/run.sh /app/scripts/*.sh && \
     mkdir -p /etc/wireguard && \
-    ls -la /usr/local/bin/proxy /usr/local/bin/monitor
+    ls -la /usr/local/bin/proxy /usr/local/bin/monitor /usr/local/bin/portforward
 
 VOLUME ["/etc/wireguard"]
 
@@ -90,7 +95,6 @@ ENV TZ=UTC \
     CHECK_INTERVAL=15 \
     MAX_FAILURES=3 \
     RESTART_SERVICES="" \
-    MONITOR_DEBUG=false \
     MONITOR_PARALLEL_CHECKS=true \
     METRICS=false \
     METRICS_PORT=9090

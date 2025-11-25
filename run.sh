@@ -56,7 +56,7 @@ cleanup() {
     pkill -f "monitor" 2>/dev/null || true
     
     show_debug "Cleanup: Killing port forwarding processes"
-    pkill -f "port_forwarding.sh" 2>/dev/null || true
+    pkill -f "portforward" 2>/dev/null || true
     pkill -f "port_monitor.sh" 2>/dev/null || true
 
     teardown_wireguard
@@ -155,7 +155,7 @@ perform_reconnection() {
 
     if $PF_ENABLED; then
         show_debug "Stopping port forwarding processes"
-        pkill -f "port_forwarding.sh" 2>/dev/null || true
+        pkill -f "portforward" 2>/dev/null || true
         pkill -f "port_monitor.sh" 2>/dev/null || true
     fi
     
@@ -177,8 +177,8 @@ perform_reconnection() {
         fi
 
         if $PF_ENABLED; then
-            show_debug "Starting port forwarding script"
-            /app/scripts/port_forwarding.sh &
+            show_debug "Starting port forwarding service"
+            /usr/local/bin/portforward &
 
             # Wait for port forwarding to complete (max 30s)
             local waited=0
@@ -235,8 +235,8 @@ main_loop() {
     fi
 
     if $PF_ENABLED; then
-        show_debug "Starting port forwarding script"
-        /app/scripts/port_forwarding.sh &
+        show_debug "Starting port forwarding service"
+        /usr/local/bin/portforward &
 
         # Wait for port forwarding to complete (max 30s)
         local waited=0

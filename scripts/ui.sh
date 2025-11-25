@@ -27,9 +27,6 @@ case "${LOG_LEVEL,,}" in
     *)       _LOG_LEVEL=1 ;; # default to info
 esac
 
-# Backward compatibility: MONITOR_DEBUG overrides LOG_LEVEL
-[ "${MONITOR_DEBUG:-false}" = "true" ] && _LOG_LEVEL=2
-
 # Export for child processes
 export LOG_LEVEL _LOG_LEVEL
 

@@ -96,7 +96,7 @@ func loadConfig() Config {
 		CheckInterval:      getEnvDuration("CHECK_INTERVAL", 15),
 		MaxFailures:        getEnvInt("MAX_FAILURES", 3),
 		RestartServices:    os.Getenv("RESTART_SERVICES"),
-		DebugMode:          getEnvBool("MONITOR_DEBUG"),
+		DebugMode: 			getEnvInt("_LOG_LEVEL", 0) == 2,
 		ParallelChecks:     getEnvBool("MONITOR_PARALLEL_CHECKS"),
 		MetricsEnabled:     getEnvBool("METRICS"),
 	}
@@ -244,7 +244,7 @@ func (m *Monitor) debugLog(format string, args ...interface{}) {
 	if m.config.DebugMode {
 		timestamp := time.Now().Format("15:04:05")
 		msg := fmt.Sprintf(format, args...)
-		fmt.Fprintf(os.Stderr, "  %s[DEBUG]%s %s - %s\n", colorBlue, colorReset, timestamp, msg)
+		fmt.Fprintf(os.Stderr, "    %s[DEBUG]%s %s - %s\n", colorBlue, colorReset, timestamp, msg)
 	}
 }
 
@@ -712,7 +712,7 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
                     // Print the final error only when reaching MaxFailures
                     fmt.Printf("\n  %s✗%s VPN connection lost (%d/%d)%s\n", 
                         colorRed, colorReset, m.failureCount, m.config.MaxFailures, strings.Repeat(" ", 20))
-					exec.Command("pkill", "-f", "port_forwarding.sh").Run()
+					exec.Command("pkill", "-f", "portforward").Run()
                     m.mu.Unlock()
                     m.triggerReconnect()
                     m.mu.Lock()
