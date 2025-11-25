@@ -1,8 +1,8 @@
-FROM golang:1.21-alpine AS go-builder
+FROM golang:1.23-alpine AS go-builder
 
 WORKDIR /build
 
-COPY go.mod ./
+COPY go.mod go.sum ./
 COPY cmd/ ./cmd/
 
 # Build with maximum optimization

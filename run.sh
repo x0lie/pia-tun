@@ -262,9 +262,8 @@ main_loop() {
 
     if [ "$METRICS" = "true" ]; then
         show_success "Metrics available on port ${METRICS_PORT:-9090}"
-        show_info "      Prometheus:  http://<container-ip>:${METRICS_PORT:-9090}/metrics?format=prometheus"
-        show_info "      JSON:        http://<container-ip>:${METRICS_PORT:-9090}/metrics"
-        show_info "      Health:      http://<container-ip>:${METRICS_PORT:-9090}/health"
+        show_info "      Prometheus:  http://<container-ip>:${METRICS_PORT:-9090}/metrics"
+        show_info "      JSON:        http://<container-ip>:${METRICS_PORT:-9090}/metrics?format=json"
     fi
 
     # Start port monitor if PF and API updater are enabled

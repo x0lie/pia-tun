@@ -1,0 +1,4 @@
+# Compiled binaries
+cmd/monitor/monitor
+cmd/proxy/proxy
+cmd/portforward/portforward
