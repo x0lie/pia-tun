@@ -11,6 +11,7 @@
 set -euo pipefail
 
 source /app/scripts/ui.sh
+source /app/scripts/killswitch.sh
 source /app/scripts/port_api_updater.sh
 
 trap 'show_debug "port_monitor: Received termination signal, exiting"; exit 0' SIGTERM SIGINT
@@ -61,6 +62,12 @@ monitor_port_changes() {
         INITIAL_PORT=$(cat "$PORT_FILE" 2>/dev/null)
         if [[ -n "$INITIAL_PORT" && "$INITIAL_PORT" =~ ^[0-9]+$ ]]; then
             show_debug "Initial port from file: $INITIAL_PORT"
+
+            # Update firewall to allow forwarded port
+            if ! add_forwarded_port_to_input "$INITIAL_PORT"; then
+                show_warning "Failed to add port forwarding rule to firewall (may not be ready yet)"
+            fi
+
             if update_port_api "$INITIAL_PORT"; then
                 show_success "[$(date '+%H:%M:%S')] $PORT_API_TYPE port set to $INITIAL_PORT"
                 LAST_UPDATE_SUCCESS=true
@@ -122,6 +129,13 @@ monitor_port_changes() {
         # Try to update if needed
         if [ "$should_update" = true ]; then
             show_debug "Attempting API update: $reason"
+
+            # Update firewall if port changed
+            if [ "$CURRENT_PORT" != "$LAST_PORT" ]; then
+                if ! add_forwarded_port_to_input "$CURRENT_PORT"; then
+                    show_warning "Failed to add port forwarding rule to firewall"
+                fi
+            fi
 
             if update_port_api "$CURRENT_PORT"; then
                 # Success!

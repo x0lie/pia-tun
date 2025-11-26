@@ -164,7 +164,7 @@ go fmt ./...
 
 **Networking:**
 - `LOCAL_NETWORK`: CIDR ranges for LAN access (e.g., `192.168.1.0/24,172.17.0.0/16`)
-- `KILLSWITCH_EXEMPT_PORTS`: Ports exempt from killswitch (comma-separated)
+- `LOCAL_PORTS`: Ports accessible from LAN (e.g., `8080,9091` for qBittorrent, Transmission)
 - `DNS`: DNS server (`pia` or custom IP)
 - `DISABLE_IPV6`: Block IPv6 (default: `true`)
 

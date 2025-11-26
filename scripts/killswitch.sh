@@ -91,17 +91,15 @@ nft_setup_base_table() {
     nft add table inet vpn_filter 2>/dev/null || nft flush table inet vpn_filter
     show_debug "Creating output chain (priority -100)"
     nft add chain inet vpn_filter output { type filter hook output priority -100 \; policy accept \; }
-    show_debug "Creating input chain (priority 0)"
-    nft add chain inet vpn_filter input { type filter hook input priority 0 \; policy accept \; }
+    show_debug "Creating input chain (priority 0, policy drop)"
+    nft add chain inet vpn_filter input { type filter hook input priority 0 \; policy drop \; }
 }
 
 nft_create_sets() {
     show_debug "Creating nftables sets for efficient lookups"
     nft add set inet vpn_filter local_nets_v4 { type ipv4_addr \; flags interval \; }
     nft add set inet vpn_filter local_nets_v6 { type ipv6_addr \; flags interval \; }
-    nft add set inet vpn_filter allowed_ports { type inet_service \; }
-    nft add set inet vpn_filter exempt_ports { type inet_service \; }
-    show_debug "Created 4 sets: local_nets_v4, local_nets_v6, allowed_ports, exempt_ports"
+    show_debug "Created 2 sets: local_nets_v4, local_nets_v6"
 }
 
 nft_populate_local_networks() {
@@ -142,54 +140,6 @@ nft_populate_local_networks() {
     fi
 }
 
-nft_populate_ports() {
-    local ports=()
-    
-    if [ "${PROXY_ENABLED}" = "true" ]; then
-        show_debug "Adding proxy ports: SOCKS5=${SOCKS5_PORT:-1080}, HTTP=${HTTP_PROXY_PORT:-8888}"
-        ports+=("${SOCKS5_PORT:-1080}")
-        ports+=("${HTTP_PROXY_PORT:-8888}")
-    fi
-    
-    if [ "${METRICS}" = "true" ]; then
-        show_debug "Adding metrics port: ${METRICS_PORT:-9090}"
-        ports+=("${METRICS_PORT:-9090}")
-    fi
-    
-    if [ ${#ports[@]} -gt 0 ]; then
-        local port_list=$(IFS=', '; echo "${ports[*]}")
-        show_debug "Populating allowed_ports set: $port_list"
-        nft add element inet vpn_filter allowed_ports { $port_list }
-        
-        [ "${PROXY_ENABLED}" = "true" ] && \
-            show_success "Proxy ports allowed: SOCKS5=${SOCKS5_PORT:-1080}, HTTP=${HTTP_PROXY_PORT:-8888}"
-        [ "${METRICS}" = "true" ] && \
-            show_success "Metrics port allowed: ${METRICS_PORT:-9090}"
-    else
-        show_debug "No allowed ports configured"
-    fi
-}
-
-nft_populate_exempt_ports() {
-    if [ -n "${KILLSWITCH_EXEMPT_PORTS:-}" ]; then
-        show_debug "Processing exempt ports: $KILLSWITCH_EXEMPT_PORTS"
-        local ports=()
-        IFS=',' read -ra PORTS <<< "$KILLSWITCH_EXEMPT_PORTS"
-        for port in "${PORTS[@]}"; do
-            port=$(echo "$port" | xargs)
-            show_debug "Adding exempt port: $port"
-            ports+=("$port")
-        done
-        
-        [ ${#ports[@]} -gt 0 ] && {
-            local port_list=$(IFS=', '; echo "${ports[*]}")
-            nft add element inet vpn_filter exempt_ports { $port_list }
-            show_success "Exempted ports: $KILLSWITCH_EXEMPT_PORTS"
-        }
-    else
-        show_debug "No exempt ports configured"
-    fi
-}
 
 # Apply baseline killswitch (everything blocked except local/VPN/exemptions)
 nft_apply_baseline_killswitch() {
@@ -234,18 +184,9 @@ nft_apply_baseline_killswitch() {
     # 5. VPN interface (if up)
     # Note: This will be added by nft_add_vpn_interface() when VPN is up
     show_debug "Rule 5: VPN interface rules (will be added after VPN is up)"
-    
-    # 6. Exempted ports (if any)
-    nft_populate_exempt_ports
-    if [ -n "${KILLSWITCH_EXEMPT_PORTS:-}" ]; then
-        show_debug "Rule 6: Allow exempted ports (from set)"
-        nft add rule inet vpn_filter output tcp dport @exempt_ports accept
-    else
-        show_debug "Rule 6: Skipped (no exempt ports)"
-    fi
-    
-    # 7. Drop everything else
-    show_debug "Rule 7: DROP all other traffic (default deny)"
+
+    # 6. Drop everything else
+    show_debug "Rule 6: DROP all other traffic (default deny)"
     nft add rule inet vpn_filter output drop
     
     # IPv6 protection
@@ -254,14 +195,59 @@ nft_apply_baseline_killswitch() {
     else
         show_success "IPv6 routed through VPN only"
     fi
-    
-    # Input rules for proxy/metrics
-    nft_populate_ports
-    if [ "${PROXY_ENABLED}" = "true" ] || [ "${METRICS}" = "true" ]; then
-        show_debug "Adding input rule for allowed ports"
-        nft add rule inet vpn_filter input tcp dport @allowed_ports accept
+
+    # INPUT chain rules (policy drop - only allow specific traffic)
+    show_debug "Building INPUT chain rules"
+
+    # 1. Loopback (localhost access to proxy/metrics)
+    show_debug "INPUT Rule 1: Allow loopback"
+    nft add rule inet vpn_filter input iifname "lo" accept
+
+    # 2. Established/Related (responses to our outgoing connections)
+    show_debug "INPUT Rule 2: Allow established/related"
+    nft add rule inet vpn_filter input ct state established,related accept
+
+    # 3. Local networks (if configured - allows LAN access to proxy/metrics on specific ports only)
+    if [ "${LOCAL_NETWORK:-}" = "all" ] || [ -n "${LOCAL_NETWORK:-}" ]; then
+        show_debug "INPUT Rule 3: Allow from local networks to specific ports"
+
+        # Build list of allowed ports
+        local allowed_ports=""
+        if [ "${PROXY_ENABLED}" = "true" ]; then
+            allowed_ports="${SOCKS5_PORT:-1080}, ${HTTP_PROXY_PORT:-8888}"
+        fi
+        if [ "${METRICS}" = "true" ]; then
+            [ -n "$allowed_ports" ] && allowed_ports+=", "
+            allowed_ports+="${METRICS_PORT:-9090}"
+        fi
+
+        # Add user-specified LOCAL_PORTS (for dependent services like qBittorrent)
+        if [ -n "${LOCAL_PORTS:-}" ]; then
+            [ -n "$allowed_ports" ] && allowed_ports+=", "
+            # Replace commas with ", " for nftables syntax
+            allowed_ports+=$(echo "$LOCAL_PORTS" | tr ',' '\n' | xargs | tr ' ' ',')
+        fi
+
+        # Only add rule if there are ports to allow
+        if [ -n "$allowed_ports" ]; then
+            show_debug "Allowing LAN access to ports: $allowed_ports"
+            nft add rule inet vpn_filter input ip saddr @local_nets_v4 tcp dport { $allowed_ports } accept
+            if [ "${DISABLE_IPV6}" != "true" ]; then
+                show_debug "INPUT Rule 3b: Allow from local IPv6 networks to specific ports"
+                nft add rule inet vpn_filter input ip6 saddr @local_nets_v6 tcp dport { $allowed_ports } accept
+            fi
+        else
+            show_debug "No proxy/metrics/local ports configured, skipping LAN port rules"
+        fi
+    else
+        show_debug "INPUT Rule 3: Skipped (no local networks)"
     fi
-    
+
+    # 4. Port forwarding will be added by add_forwarded_port_to_input() when available
+    show_debug "INPUT Rule 4: Port forwarding (will be added when port is allocated)"
+
+    # Policy drop handles everything else (proxy/metrics NOT exposed to internet via VPN)
+
     show_debug "Baseline killswitch applied successfully"
 }
 
@@ -352,14 +338,56 @@ nft_remove_exemption() {
 # Remove all temporary exemptions
 nft_remove_all_exemptions() {
     show_debug "Removing all temporary exemptions"
-    
+
     local removed=0
     nft -a list chain inet vpn_filter output 2>/dev/null | grep "comment \"temp_" | awk '{print $NF}' | while read handle; do
         nft delete rule inet vpn_filter output handle "$handle" 2>/dev/null || true
         removed=$((removed + 1))
     done
-    
+
     show_debug "Removed $removed temporary exemption(s)"
+}
+
+# Add forwarded port to INPUT chain (called when port is allocated)
+nft_add_forwarded_port() {
+    local port="$1"
+
+    if [ -z "$port" ]; then
+        show_debug "No port specified, skipping forwarded port rule"
+        return 0
+    fi
+
+    show_debug "Adding forwarded port to INPUT: $port"
+
+    # Verify INPUT chain exists before trying to add rule
+    if ! nft list chain inet vpn_filter input >/dev/null 2>&1; then
+        show_error "INPUT chain not found in killswitch - cannot add port forwarding rule"
+        return 1
+    fi
+
+    # Remove any existing forwarded port rule first
+    nft_remove_forwarded_port
+
+    # Add new rule allowing traffic on this port from VPN interface
+    if nft add rule inet vpn_filter input iifname "pia" tcp dport "$port" accept comment "port_forward" 2>/dev/null; then
+        show_success "Port forwarding enabled: $port"
+    else
+        show_error "Failed to add port forwarding rule for port $port"
+        return 1
+    fi
+}
+
+# Remove forwarded port from INPUT chain
+nft_remove_forwarded_port() {
+    show_debug "Removing forwarded port from INPUT"
+
+    local removed=0
+    nft -a list chain inet vpn_filter input 2>/dev/null | grep "comment \"port_forward\"" | awk '{print $NF}' | while read handle; do
+        nft delete rule inet vpn_filter input handle "$handle" 2>/dev/null || true
+        removed=$((removed + 1))
+    done
+
+    [ $removed -gt 0 ] && show_debug "Removed $removed port forwarding rule(s)"
 }
 
 nft_cleanup() {
@@ -420,44 +448,144 @@ ipt_apply_local_network_rules() {
     fi
 }
 
-ipt_apply_proxy_rules() {
-    local chain=$1
-    
-    show_debug "Applying proxy/metrics rules (chain: $chain)"
-    
-    if [ "${PROXY_ENABLED}" = "true" ]; then
-        show_debug "Creating PROXY_PORTS chain"
-        iptables -N PROXY_PORTS 2>/dev/null || iptables -F PROXY_PORTS
-        iptables -A PROXY_PORTS -p tcp -m multiport --dports "${SOCKS5_PORT:-1080},${HTTP_PROXY_PORT:-8888}" -j ACCEPT
-        iptables -I INPUT 1 -j PROXY_PORTS
-        
-        [ "$chain" = "VPN_OUT" ] && show_success "Proxy ports allowed: SOCKS5=${SOCKS5_PORT:-1080}, HTTP=${HTTP_PROXY_PORT:-8888}"
+
+ipt_setup_input_chain() {
+    show_debug "Setting up iptables INPUT chain (policy drop)"
+
+    # Set up VPN_IN chain with DROP policy
+    iptables -P INPUT ACCEPT 2>/dev/null || true
+    iptables -F INPUT 2>/dev/null || true
+    iptables -X VPN_IN 2>/dev/null || true
+    iptables -N VPN_IN
+
+    # 1. Loopback (localhost access to proxy/metrics)
+    show_debug "INPUT Rule 1: Allow loopback"
+    iptables -A VPN_IN -i lo -j ACCEPT
+
+    # 2. Established/Related (responses to our outgoing connections)
+    show_debug "INPUT Rule 2: Allow established/related"
+    iptables -A VPN_IN -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+    # 3. Local networks (if configured - allows LAN access to proxy/metrics on specific ports only)
+    if [ "${LOCAL_NETWORK:-}" = "all" ] || [ -n "${LOCAL_NETWORK:-}" ]; then
+        show_debug "INPUT Rule 3: Allow from local networks to specific ports"
+
+        # Build list of allowed ports
+        local allowed_ports=""
+        if [ "${PROXY_ENABLED}" = "true" ]; then
+            allowed_ports="${SOCKS5_PORT:-1080},${HTTP_PROXY_PORT:-8888}"
+        fi
+        if [ "${METRICS}" = "true" ]; then
+            [ -n "$allowed_ports" ] && allowed_ports+=","
+            allowed_ports+="${METRICS_PORT:-9090}"
+        fi
+
+        # Add user-specified LOCAL_PORTS (for dependent services like qBittorrent)
+        if [ -n "${LOCAL_PORTS:-}" ]; then
+            [ -n "$allowed_ports" ] && allowed_ports+=","
+            # Clean up LOCAL_PORTS (remove spaces, ensure comma-separated)
+            allowed_ports+=$(echo "$LOCAL_PORTS" | tr -d ' ')
+        fi
+
+        # Only add rules if there are ports to allow
+        if [ -n "$allowed_ports" ]; then
+            show_debug "Allowing LAN access to ports: $allowed_ports"
+            if [ "${LOCAL_NETWORK:-}" = "all" ]; then
+                iptables -A VPN_IN -s 10.0.0.0/8 -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
+                iptables -A VPN_IN -s 172.16.0.0/12 -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
+                iptables -A VPN_IN -s 192.168.0.0/16 -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
+                iptables -A VPN_IN -s 169.254.0.0/16 -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
+            else
+                IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORK"
+                for network in "${NETWORKS[@]}"; do
+                    network=$(echo "$network" | xargs)
+                    if [[ "$network" != *":"* ]]; then
+                        iptables -A VPN_IN -s "$network" -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
+                    fi
+                done
+            fi
+        else
+            show_debug "No proxy/metrics/local ports configured, skipping LAN port rules"
+        fi
+    else
+        show_debug "INPUT Rule 3: Skipped (no local networks)"
     fi
 
-    if [ "${METRICS}" = "true" ]; then
-        show_debug "Adding metrics port rule"
-        iptables -I INPUT 1 -p tcp --dport "${METRICS_PORT:-9090}" -j ACCEPT
-        [ "$chain" = "VPN_OUT" ] && show_success "Metrics port allowed: ${METRICS_PORT:-9090}"
-    fi
+    # 4. Port forwarding will be added by ipt_add_forwarded_port() when available
+    show_debug "INPUT Rule 4: Port forwarding (will be added when port is allocated)"
+
+    # DROP everything else
+    show_debug "Adding final INPUT DROP rule"
+    iptables -A VPN_IN -j DROP
+
+    # Insert into INPUT chain
+    show_debug "Inserting VPN_IN into INPUT chain"
+    iptables -I INPUT 1 -j VPN_IN
 }
 
 ipt_setup_ipv6_protection() {
     show_debug "Setting up IPv6 protection"
-    
+
     ip6tables -F OUTPUT 2>/dev/null || true
     ip6tables -F FORWARD 2>/dev/null || true
+    ip6tables -F INPUT 2>/dev/null || true
+    ip6tables -X VPN_IN6 2>/dev/null || true
+    ip6tables -X VPN_OUT6 2>/dev/null || true
+
+    # IPv6 INPUT chain
+    ip6tables -N VPN_IN6 2>/dev/null || ip6tables -F VPN_IN6
+    ip6tables -A VPN_IN6 -i lo -j ACCEPT
+    ip6tables -A VPN_IN6 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+    # Build list of allowed ports for IPv6 (same as IPv4)
+    if [ "${LOCAL_NETWORK:-}" = "all" ] || [ -n "${LOCAL_NETWORK:-}" ]; then
+        local allowed_ports=""
+        if [ "${PROXY_ENABLED}" = "true" ]; then
+            allowed_ports="${SOCKS5_PORT:-1080},${HTTP_PROXY_PORT:-8888}"
+        fi
+        if [ "${METRICS}" = "true" ]; then
+            [ -n "$allowed_ports" ] && allowed_ports+=","
+            allowed_ports+="${METRICS_PORT:-9090}"
+        fi
+
+        # Add user-specified LOCAL_PORTS (for dependent services like qBittorrent)
+        if [ -n "${LOCAL_PORTS:-}" ]; then
+            [ -n "$allowed_ports" ] && allowed_ports+=","
+            allowed_ports+=$(echo "$LOCAL_PORTS" | tr -d ' ')
+        fi
+
+        if [ -n "$allowed_ports" ]; then
+            if [ "${LOCAL_NETWORK:-}" = "all" ]; then
+                ip6tables -A VPN_IN6 -s fe80::/10 -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
+                ip6tables -A VPN_IN6 -s fc00::/7 -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
+            else
+                IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORK"
+                for network in "${NETWORKS[@]}"; do
+                    network=$(echo "$network" | xargs)
+                    if [[ "$network" == *":"* ]]; then
+                        ip6tables -A VPN_IN6 -s "$network" -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
+                    fi
+                done
+            fi
+        fi
+    fi
+
+    ip6tables -A VPN_IN6 -j DROP
+    ip6tables -I INPUT 1 -j VPN_IN6
+
+    # IPv6 OUTPUT chain
     ip6tables -N VPN_OUT6 2>/dev/null || ip6tables -F VPN_OUT6
-    
+
     ipt_add_fw_rule "VPN_OUT6" -o lo -j ACCEPT
     ipt_add_fw_rule "VPN_OUT6" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-    
+
     ipt_apply_local_network_rules "VPN_OUT6" "true"
-    
+
     [ "${DISABLE_IPV6}" != "true" ] && ipt_add_fw_rule "VPN_OUT6" -o pia -j ACCEPT
-    
+
     ipt_add_fw_rule "VPN_OUT6" -j DROP
     ip6tables -I OUTPUT 1 -j VPN_OUT6
-    
+
     [ "${DISABLE_IPV6}" = "true" ] && show_success "IPv6 completely blocked" || \
         show_success "IPv6 routed through VPN only"
 }
@@ -503,39 +631,22 @@ ipt_add_standard_rules() {
         fi
         ipt_add_fw_rule "VPN_OUT" -o pia -j ACCEPT -m comment --comment "vpn_interface"
     fi
-    
-    ipt_apply_proxy_rules "VPN_OUT"
 }
 
 ipt_apply_baseline_killswitch() {
     show_step "Applying baseline killswitch..."
-    
+
     show_debug "Cleaning up existing iptables configuration"
     ipt_cleanup 2>/dev/null || true
-    
+
     ipt_setup_ipv6_protection
+    ipt_setup_input_chain
     ipt_setup_iptables_chain
     ipt_add_standard_rules "false"
-    
-    if [ -n "${KILLSWITCH_EXEMPT_PORTS:-}" ]; then
-        show_debug "Adding exempted ports: $KILLSWITCH_EXEMPT_PORTS"
-        IFS=',' read -ra PORTS <<< "$KILLSWITCH_EXEMPT_PORTS"
-        if [ ${#PORTS[@]} -gt 1 ]; then
-            local port_list=$(IFS=','; echo "${PORTS[*]}")
-            ipt_add_fw_rule "VPN_OUT" -p tcp -m multiport --dports "$port_list" -j ACCEPT
-            show_success "Exempted ports: $KILLSWITCH_EXEMPT_PORTS"
-        else
-            for port in "${PORTS[@]}"; do
-                port=$(echo "$port" | xargs)
-                ipt_add_fw_rule "VPN_OUT" -p tcp --dport "$port" -j ACCEPT
-            done
-            show_success "Exempted ports: $KILLSWITCH_EXEMPT_PORTS"
-        fi
-    fi
-    
+
     show_debug "Adding final DROP rule"
     ipt_add_fw_rule "VPN_OUT" -j DROP
-    
+
     show_debug "Inserting VPN_OUT into OUTPUT chain"
     iptables -I OUTPUT 1 -j VPN_OUT
 }
@@ -574,12 +685,49 @@ ipt_add_vpn_interface() {
 
 ipt_remove_vpn_interface() {
     show_debug "Removing VPN interface from iptables killswitch"
-    
+
     # Remove VPN-related rules
     iptables -D VPN_OUT -m comment --comment "vpn_fwmark" -j ACCEPT 2>/dev/null || true
     iptables -D VPN_OUT -m comment --comment "vpn_interface" -j ACCEPT 2>/dev/null || true
-    
+
     ip6tables -D VPN_OUT6 -o pia -j ACCEPT 2>/dev/null || true
+}
+
+# Add forwarded port to INPUT chain (called when port is allocated)
+ipt_add_forwarded_port() {
+    local port="$1"
+
+    if [ -z "$port" ]; then
+        show_debug "No port specified, skipping forwarded port rule"
+        return 0
+    fi
+
+    show_debug "Adding forwarded port to INPUT: $port"
+
+    # Verify VPN_IN chain exists before trying to add rule
+    if ! iptables -L VPN_IN -n >/dev/null 2>&1; then
+        show_error "VPN_IN chain not found in killswitch - cannot add port forwarding rule"
+        return 1
+    fi
+
+    # Remove any existing forwarded port rule first
+    ipt_remove_forwarded_port
+
+    # Insert rule before the final DROP (should be position 4 or so)
+    # Add rule to VPN_IN chain allowing traffic on this port from VPN interface
+    if iptables -I VPN_IN 4 -i pia -p tcp --dport "$port" -j ACCEPT -m comment --comment "port_forward" 2>/dev/null; then
+        show_success "Port forwarding enabled: $port"
+    else
+        show_error "Failed to add port forwarding rule for port $port"
+        return 1
+    fi
+}
+
+# Remove forwarded port from INPUT chain
+ipt_remove_forwarded_port() {
+    show_debug "Removing forwarded port from INPUT"
+
+    iptables -D VPN_IN -m comment --comment "port_forward" -j ACCEPT 2>/dev/null || true
 }
 
 ipt_add_exemption() {
@@ -617,21 +765,22 @@ ipt_remove_all_exemptions() {
 
 ipt_cleanup() {
     show_debug "Cleaning up iptables configuration"
-    
+
+    # OUTPUT chains
     iptables -D OUTPUT -j VPN_OUT 2>/dev/null || true
     iptables -F VPN_OUT 2>/dev/null || true
     iptables -X VPN_OUT 2>/dev/null || true
     ip6tables -D OUTPUT -j VPN_OUT6 2>/dev/null || true
     ip6tables -F VPN_OUT6 2>/dev/null || true
     ip6tables -X VPN_OUT6 2>/dev/null || true
-    
-    iptables -D INPUT -j PROXY_PORTS 2>/dev/null || true
-    iptables -F PROXY_PORTS 2>/dev/null || true
-    iptables -X PROXY_PORTS 2>/dev/null || true
-    
-    iptables -D INPUT -p tcp --dport "${SOCKS5_PORT:-1080}" -j ACCEPT 2>/dev/null || true
-    iptables -D INPUT -p tcp --dport "${HTTP_PROXY_PORT:-8888}" -j ACCEPT 2>/dev/null || true
-    iptables -D INPUT -p tcp --dport "${METRICS_PORT:-9090}" -j ACCEPT 2>/dev/null || true
+
+    # INPUT chains
+    iptables -D INPUT -j VPN_IN 2>/dev/null || true
+    iptables -F VPN_IN 2>/dev/null || true
+    iptables -X VPN_IN 2>/dev/null || true
+    ip6tables -D INPUT -j VPN_IN6 2>/dev/null || true
+    ip6tables -F VPN_IN6 2>/dev/null || true
+    ip6tables -X VPN_IN6 2>/dev/null || true
 }
 
 #═══════════════════════════════════════════════════════════════════════════════
@@ -791,11 +940,31 @@ remove_temporary_exemption() {
 # Remove all temporary exemptions (cleanup on error)
 remove_all_temporary_exemptions() {
     show_debug "Removing all temporary exemptions"
-    
+
     if $USE_NFTABLES; then
         nft_remove_all_exemptions
     else
         ipt_remove_all_exemptions
+    fi
+}
+
+# Add forwarded port to INPUT chain (called when port forwarding is enabled)
+add_forwarded_port_to_input() {
+    local port="$1"
+
+    if $USE_NFTABLES; then
+        nft_add_forwarded_port "$port"
+    else
+        ipt_add_forwarded_port "$port"
+    fi
+}
+
+# Remove forwarded port from INPUT chain (called when port changes or forwarding disabled)
+remove_forwarded_port_from_input() {
+    if $USE_NFTABLES; then
+        nft_remove_forwarded_port
+    else
+        ipt_remove_forwarded_port
     fi
 }
 
@@ -819,23 +988,24 @@ cleanup_killswitch() {
 show_ruleset_stats() {
     if $USE_NFTABLES; then
         local output_rules=$(nft list chain inet vpn_filter output 2>/dev/null | grep -c "^\s*\(oifname\|ct state\|ip daddr\|ip6 daddr\|mark\|tcp dport\|udp dport\|drop\|accept\)")
-        local input_rules=$(nft list chain inet vpn_filter input 2>/dev/null | grep -c "^\s*tcp dport")
+        local input_rules=$(nft list chain inet vpn_filter input 2>/dev/null | grep -c "^\s*\(iifname\|ct state\|ip saddr\|ip6 saddr\|tcp dport\)")
         local set_elements=0
-        for set_name in local_nets_v4 local_nets_v6 allowed_ports exempt_ports; do
+        for set_name in local_nets_v4 local_nets_v6; do
             local count=$(nft list set inet vpn_filter "$set_name" 2>/dev/null | grep -c "elements" | head -1)
             [ -n "$count" ] && [ "$count" -gt 0 ] 2>/dev/null && set_elements=$((set_elements + 1))
         done
-        
+
         local total_rules=$((output_rules + input_rules))
         show_debug "nftables stats: $output_rules output rules, $input_rules input rules, $set_elements sets"
         show_success "Firewall: ${total_rules} rules, ${set_elements} sets, nftables"
     else
-        local ipv4_rules=$(iptables -L VPN_OUT 2>/dev/null | grep -c "^ACCEPT\|^DROP")
-        local ipv6_rules=$(ip6tables -L VPN_OUT6 2>/dev/null | grep -c "^ACCEPT\|^DROP")
-        local input_rules=$(iptables -L INPUT 2>/dev/null | grep -c "PROXY_PORTS\|tcp dpt:")
-        
-        local total_rules=$((ipv4_rules + ipv6_rules + input_rules))
-        show_debug "iptables stats: $ipv4_rules IPv4 rules, $ipv6_rules IPv6 rules, $input_rules input rules"
+        local ipv4_out_rules=$(iptables -L VPN_OUT 2>/dev/null | grep -c "^ACCEPT\|^DROP")
+        local ipv4_in_rules=$(iptables -L VPN_IN 2>/dev/null | grep -c "^ACCEPT\|^DROP")
+        local ipv6_out_rules=$(ip6tables -L VPN_OUT6 2>/dev/null | grep -c "^ACCEPT\|^DROP")
+        local ipv6_in_rules=$(ip6tables -L VPN_IN6 2>/dev/null | grep -c "^ACCEPT\|^DROP")
+
+        local total_rules=$((ipv4_out_rules + ipv4_in_rules + ipv6_out_rules + ipv6_in_rules))
+        show_debug "iptables stats: $ipv4_out_rules IPv4 out, $ipv4_in_rules IPv4 in, $ipv6_out_rules IPv6 out, $ipv6_in_rules IPv6 in"
         show_success "Firewall: ${total_rules} rules, iptables"
     fi
 }
