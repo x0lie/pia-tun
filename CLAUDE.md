@@ -24,14 +24,16 @@ The codebase is organized into three main layers:
    - `run.sh`: Main entrypoint, orchestrates initial connection and reconnection loop
    - `vpn.sh`: PIA authentication, server selection, WireGuard configuration
    - `killswitch.sh`: Firewall management (nftables/iptables) with surgical exemptions
-   - `port_forwarding.sh`: PF signature acquisition and binding
-   - `port_monitor.sh`: Monitors forwarded port and updates torrent client APIs
-   - `connectivity_check.sh`: External connectivity verification
+   - `port_monitor.sh`: Monitors forwarded port and when necessary calls port_api_updater.sh
+   - `port_api_updater.sh`: Updates the port of dependent via API
+   - `proxy_go.sh`: Manages go proxy binary process
+   - `verify_connection.sh`: Verifies the state of the VPN after connecting
    - `ui.sh`: Logging and UI utilities
 
 2. **Go Applications** (`cmd/`): Performance-critical monitoring and proxy
    - `cmd/monitor/`: VPN health monitor with metrics collection
    - `cmd/proxy/`: SOCKS5/HTTP proxy implementation
+   - `cmd/portfoward/`: PF signature acquisition and binding
 
 3. **Docker**: Single container deployment with minimal attack surface
 
@@ -121,8 +123,7 @@ docker run ... -e LOG_LEVEL=debug pia-tun
 
 # Check metrics
 curl http://localhost:9090/metrics
-curl http://localhost:9090/metrics?format=prometheus
-curl http://localhost:9090/health
+curl http://localhost:9090/metrics?format=json
 
 # Test killswitch (should block non-VPN traffic)
 docker exec pia-tun nft list table inet vpn_filter

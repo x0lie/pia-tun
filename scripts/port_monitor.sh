@@ -24,9 +24,9 @@ show_debug "  PORT_API_TYPE=${PORT_API_TYPE:-none}"
 show_debug "  PORT_API_URL=${PORT_API_URL:-none}"
 
 # Internal constants
-readonly CHECK_INTERVAL=30  # Check every 30 seconds
+readonly RETRY_INTERVAL=60  # Retry failed updates every 60 seconds
 
-show_debug "Check interval: ${CHECK_INTERVAL}s"
+show_debug "Retry interval: ${RETRY_INTERVAL}s"
 
 # State tracking
 LAST_PORT=""
@@ -85,8 +85,8 @@ monitor_port_changes() {
         show_debug "====== Port monitor cycle #$cycle (waiting for port change) ======"
 
         # Block until port_forwarding.sh signals a change (with timeout for retry logic)
-        # Using read with timeout allows periodic retry of failed updates
-        if read -t 300 -r new_port < "$PORT_CHANGE_PIPE" 2>/dev/null; then
+        # Timeout serves dual purpose: catch port changes immediately + periodic retry attempts
+        if read -t $RETRY_INTERVAL -r new_port < "$PORT_CHANGE_PIPE" 2>/dev/null; then
             show_debug "Port change notification received: $new_port"
             CURRENT_PORT="$new_port"
         else
@@ -150,9 +150,6 @@ monitor_port_changes() {
         else
             show_debug "No update needed (port stable: $CURRENT_PORT, last_success: $LAST_UPDATE_SUCCESS)"
         fi
-
-        show_debug "Sleeping ${CHECK_INTERVAL}s until next check"
-        sleep $CHECK_INTERVAL
     done
 }
 

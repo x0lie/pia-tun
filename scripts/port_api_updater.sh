@@ -1,6 +1,7 @@
 #!/bin/bash
-# Port forwarding API updater - Optimized version
+# Port forwarding API updater
 # Supports: qBittorrent, Transmission, Deluge, rTorrent
+# Performs quick retries for transient failures; caller handles long-term retry strategy
 
 source /app/scripts/ui.sh
 
@@ -12,20 +13,12 @@ readonly PORT_API_USER=${PORT_API_USER:-""}
 readonly PORT_API_PASS=${PORT_API_PASS:-""}
 readonly CURL_TIMEOUT="--connect-timeout 5 --max-time 10"
 
-# Retry configuration
-readonly RETRY_INITIAL_DELAY=${PORT_API_RETRY_INITIAL_DELAY:-5}      # Initial retry delay (seconds)
-readonly RETRY_MAX_DELAY=${PORT_API_RETRY_MAX_DELAY:-300}            # Max retry delay (seconds)
-readonly RETRY_BACKOFF_MULTIPLIER=${PORT_API_RETRY_BACKOFF:-2}       # Backoff multiplier
-
 show_debug "Port API updater configuration:"
 show_debug "  PORT_API_ENABLED=$PORT_API_ENABLED"
 show_debug "  PORT_API_TYPE=$PORT_API_TYPE"
 show_debug "  PORT_API_URL=$PORT_API_URL"
 show_debug "  PORT_API_USER=${PORT_API_USER:+set}"
 show_debug "  PORT_API_PASS=${PORT_API_PASS:+set}"
-show_debug "  RETRY_INITIAL_DELAY=${RETRY_INITIAL_DELAY}s"
-show_debug "  RETRY_MAX_DELAY=${RETRY_MAX_DELAY}s"
-show_debug "  RETRY_BACKOFF_MULTIPLIER=${RETRY_BACKOFF_MULTIPLIER}x"
 
 # Update qBittorrent port via API
 update_qbittorrent() {
@@ -228,7 +221,8 @@ _update_port_api_attempt() {
     return $result
 }
 
-# Main update function with infinite retry and exponential backoff
+# Main update function with short retry for transient failures
+# Returns 0 on success, 1 on failure (caller should handle long-term retry)
 update_port_api() {
     local port=$1
 
@@ -245,13 +239,9 @@ update_port_api() {
         return 1
     fi
 
-    # Retry loop with exponential backoff
-    local attempt=0
-    local delay=$RETRY_INITIAL_DELAY
-    local first_failure=true
-
-    while true; do
-        attempt=$((attempt + 1))
+    # Try 3 times with short delays for transient network failures
+    local max_attempts=3
+    for attempt in $(seq 1 $max_attempts); do
         show_debug "Update attempt #$attempt (port=$port)"
 
         # Attempt update
@@ -260,23 +250,18 @@ update_port_api() {
             return 0
         fi
 
-        # Update failed - log and prepare for retry
-        if [ "$first_failure" = true ]; then
-            show_debug "Update failed on attempt #$attempt, entering retry loop"
-            first_failure=false
+        # Failed - wait before retry (unless last attempt)
+        if [ $attempt -lt $max_attempts ]; then
+            show_debug "Update failed on attempt #$attempt, retrying in 2s"
+            sleep 2
         else
-            show_debug "Update failed on attempt #$attempt, will retry in ${delay}s"
-        fi
-
-        # Wait before retry
-        sleep "$delay"
-
-        # Calculate next delay with exponential backoff (capped at max)
-        delay=$((delay * RETRY_BACKOFF_MULTIPLIER))
-        if [ $delay -gt $RETRY_MAX_DELAY ]; then
-            delay=$RETRY_MAX_DELAY
+            show_debug "Update failed on attempt #$attempt (final attempt)"
         fi
     done
+
+    # All attempts failed - caller should handle long-term retry
+    show_debug "All $max_attempts attempts failed, returning error"
+    return 1
 }
 
 # Export for use in other scripts
