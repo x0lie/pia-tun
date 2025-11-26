@@ -20,11 +20,11 @@ source /app/scripts/ui.sh
 
 # Detect firewall backend at runtime
 USE_NFTABLES=false
-if command -v nft >/dev/null 2>&1; then
+if nft list tables >/dev/null 2>&1; then
     USE_NFTABLES=true
     show_debug "Firewall backend: nftables"
 else
-    show_warning "nftables not available, falling back to iptables"
+    show_warning "nftables kernel support not available, falling back to iptables"
     show_debug "Firewall backend: iptables (fallback)"
 fi
 
