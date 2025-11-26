@@ -638,27 +638,118 @@ ipt_cleanup() {
 # UNIFIED PUBLIC API
 #═══════════════════════════════════════════════════════════════════════════════
 
+# Verify baseline killswitch is actually active (CRITICAL for leak prevention)
+verify_baseline_killswitch() {
+    show_debug "Verifying baseline killswitch is active"
+
+    if $USE_NFTABLES; then
+        # Check that output chain exists and has DROP rule
+        if ! nft list chain inet vpn_filter output 2>/dev/null | grep -q "drop"; then
+            show_error "Killswitch verification failed: No DROP rule found in nftables"
+            return 1
+        fi
+
+        # Check that bypass routes are allowed (WAN health checks)
+        if ! nft list chain inet vpn_filter output 2>/dev/null | grep -q "bypass_routes"; then
+            show_error "Killswitch verification failed: Bypass routes not found"
+            return 1
+        fi
+    else
+        # Check that VPN_OUT chain exists and has DROP rule
+        if ! iptables -L VPN_OUT 2>/dev/null | grep -q "DROP"; then
+            show_error "Killswitch verification failed: No DROP rule found in iptables"
+            return 1
+        fi
+
+        # Check that VPN_OUT is actually in OUTPUT chain
+        if ! iptables -L OUTPUT 2>/dev/null | grep -q "VPN_OUT"; then
+            show_error "Killswitch verification failed: VPN_OUT not in OUTPUT chain"
+            return 1
+        fi
+    fi
+
+    show_debug "Baseline killswitch verification passed"
+    return 0
+}
+
+# Verify VPN interface is allowed in killswitch
+verify_vpn_in_killswitch() {
+    show_debug "Verifying VPN is allowed in killswitch"
+
+    if $USE_NFTABLES; then
+        if ! nft list chain inet vpn_filter output 2>/dev/null | grep -q "vpn_interface"; then
+            show_error "VPN interface rule not found in killswitch"
+            return 1
+        fi
+    else
+        if ! iptables -L VPN_OUT 2>/dev/null | grep -q "vpn_interface"; then
+            show_error "VPN interface rule not found in killswitch"
+            return 1
+        fi
+    fi
+
+    show_debug "VPN killswitch verification passed"
+    return 0
+}
+
 # Setup baseline killswitch + bypass routes (called once at startup)
 setup_baseline_killswitch() {
     show_debug "Setting up baseline killswitch"
-    setup_bypass_routes || return 1
-    
+
+    # Remove any stale flag file
+    rm -f /tmp/killswitch_ready
+
+    setup_bypass_routes || {
+        show_error "Failed to setup bypass routes"
+        return 1
+    }
+
     if $USE_NFTABLES; then
-        nft_apply_baseline_killswitch
+        nft_apply_baseline_killswitch || {
+            show_error "Failed to apply nftables killswitch"
+            return 1
+        }
     else
-        ipt_apply_baseline_killswitch
+        ipt_apply_baseline_killswitch || {
+            show_error "Failed to apply iptables killswitch"
+            return 1
+        }
     fi
-    
+
+    # CRITICAL: Verify killswitch is actually active before proceeding
+    verify_baseline_killswitch || {
+        show_error "Killswitch verification failed - this is a critical security issue"
+        return 1
+    }
+
+    # Create flag file for health checks ONLY after verification passes
+    touch /tmp/killswitch_ready
+    show_debug "Created /tmp/killswitch_ready flag file"
+
     show_success "Killswitch ready"
 }
 
 # Add VPN interface to killswitch (called after VPN is up)
 add_vpn_to_killswitch() {
     if $USE_NFTABLES; then
-        nft_add_vpn_interface
+        nft_add_vpn_interface || {
+            show_error "Failed to add VPN to nftables killswitch"
+            return 1
+        }
     else
-        ipt_add_vpn_interface
+        ipt_add_vpn_interface || {
+            show_error "Failed to add VPN to iptables killswitch"
+            return 1
+        }
     fi
+
+    # CRITICAL: Verify VPN was actually added to killswitch
+    verify_vpn_in_killswitch || {
+        show_error "VPN killswitch verification failed - VPN may not be protected"
+        return 1
+    }
+
+    return 0
 }
 
 # Remove VPN interface from killswitch (called before VPN teardown)
@@ -712,12 +803,16 @@ remove_all_temporary_exemptions() {
 cleanup_killswitch() {
     show_debug "Full killswitch cleanup"
     cleanup_bypass_routes
-    
+
     if $USE_NFTABLES; then
         nft_cleanup
     else
         ipt_cleanup
     fi
+
+    # Remove killswitch flag file
+    rm -f /tmp/killswitch_ready
+    show_debug "Removed /tmp/killswitch_ready flag file"
 }
 
 # Show firewall statistics

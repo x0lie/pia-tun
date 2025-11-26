@@ -85,7 +85,11 @@ initial_connect() {
 
     # Setup baseline killswitch first (includes bypass route allowances)
     if [ "$restart" != "true" ]; then
-        setup_baseline_killswitch
+        setup_baseline_killswitch || {
+            show_error "CRITICAL: Killswitch setup failed - cannot safely connect to VPN"
+            show_error "This is a security issue. Exiting to prevent potential IP leaks."
+            exit 1
+        }
         show_info
 
         # Debug: Show killswitch rules
@@ -130,11 +134,19 @@ initial_connect() {
 
     # Add VPN to killswitch (now it's safe to route through VPN)
     if [ "$restart" != "true" ]; then
-        add_vpn_to_killswitch
+        add_vpn_to_killswitch || {
+            show_error "CRITICAL: Failed to add VPN to killswitch"
+            show_error "VPN traffic may not be properly protected. Tearing down VPN."
+            teardown_wireguard
+            exit 1
+        }
         show_ruleset_stats
     else
         show_debug "Adding VPN to killswitch (reconnection, suppressing output)"
-        add_vpn_to_killswitch >/dev/null 2>&1
+        add_vpn_to_killswitch >/dev/null 2>&1 || {
+            show_error "CRITICAL: Failed to add VPN to killswitch during reconnection"
+            return 1
+        }
     fi
 
     show_info
