@@ -48,19 +48,26 @@ trap cleanup SIGTERM SIGINT SIGQUIT
 cleanup() {
     show_info
     show_step "Shutting down..."
-    
+
     show_debug "Cleanup: Stopping proxies (enabled=$PROXY_ENABLED_FLAG)"
     $PROXY_ENABLED_FLAG && stop_proxies
-    
+
     show_debug "Cleanup: Killing monitor processes"
     pkill -f "monitor" 2>/dev/null || true
-    
+
     show_debug "Cleanup: Killing port forwarding processes"
     pkill -f "portforward" 2>/dev/null || true
     pkill -f "port_monitor.sh" 2>/dev/null || true
 
+    show_debug "Cleanup: Tearing down VPN tunnel"
     teardown_wireguard
-    
+
+    # CRITICAL: Clean up killswitch to prevent network namespace pollution
+    # This prevents orphaned DROP rules from affecting subsequent containers
+    # in Kubernetes environments where network namespaces may be reused
+    show_debug "Cleanup: Removing killswitch rules"
+    cleanup_killswitch
+
     show_success "Cleanup complete"
     exit 0
 }

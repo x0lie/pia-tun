@@ -867,6 +867,12 @@ setup_baseline_killswitch() {
     # Remove any stale flag file
     rm -f /tmp/killswitch_ready
 
+    # DEFENSIVE: Clean up any orphaned rules from previous container runs
+    # This handles cases where cleanup didn't run due to crash, OOM kill, etc.
+    # Critical for Kubernetes where network namespaces may be reused
+    show_debug "Cleaning up any orphaned killswitch rules from previous runs"
+    cleanup_killswitch 2>/dev/null || true
+
     setup_bypass_routes || {
         show_error "Failed to setup bypass routes"
         return 1
