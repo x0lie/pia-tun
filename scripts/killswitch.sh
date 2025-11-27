@@ -365,7 +365,7 @@ nft_add_forwarded_port() {
     # Add rules for both TCP and UDP (required for torrenting: TCP for peers, UDP for DHT/uTP)
     if nft add rule inet vpn_filter input iifname "pia" tcp dport "$port" accept comment "port_forward_tcp" 2>/dev/null && \
        nft add rule inet vpn_filter input iifname "pia" udp dport "$port" accept comment "port_forward_udp" 2>/dev/null; then
-        show_success "Port forwarding enabled: $port (TCP+UDP)"
+        show_debug "Port forwarding enabled: $port (TCP+UDP)"
     else
         show_error "Failed to add port forwarding rules for port $port"
         return 1
@@ -726,7 +726,7 @@ ipt_add_forwarded_port() {
     # Add rules for both TCP and UDP (required for torrenting: TCP for peers, UDP for DHT/uTP)
     if iptables -I VPN_IN 4 -i pia -p tcp --dport "$port" -j ACCEPT -m comment --comment "port_forward_tcp" 2>/dev/null && \
        iptables -I VPN_IN 4 -i pia -p udp --dport "$port" -j ACCEPT -m comment --comment "port_forward_udp" 2>/dev/null; then
-        show_success "Port forwarding enabled: $port (TCP+UDP)"
+        show_debug "Port forwarding enabled: $port (TCP+UDP)"
     else
         show_error "Failed to add port forwarding rules for port $port"
         return 1

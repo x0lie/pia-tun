@@ -310,8 +310,8 @@ func (m *KeepaliveManager) refreshSignature(ctx context.Context) error {
 	debugLog(m.config, "  Signature length: %d bytes", len(resp.Signature))
 	debugLog(m.config, "  Expires at: %d (%s)", newExpiresAt.Unix(), newExpiresAt.Format("2006-01-02 15:04:05"))
 
-	showInfo()
-	showStep(fmt.Sprintf("New signature acquired with port: %d", newPort))
+	//showInfo()
+	//showStep(fmt.Sprintf("New signature acquired with port: %d", newPort))
 
 	// Check if port changed
 	m.mu.Lock()
