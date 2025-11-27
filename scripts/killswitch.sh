@@ -89,10 +89,12 @@ cleanup_bypass_routes() {
 nft_setup_base_table() {
     show_debug "Setting up nftables base table: inet vpn_filter"
     nft add table inet vpn_filter 2>/dev/null || nft flush table inet vpn_filter
-    show_debug "Creating output chain (priority -100)"
-    nft add chain inet vpn_filter output { type filter hook output priority -100 \; policy accept \; }
+    show_debug "Creating output chain (priority 0, policy drop)"
+    nft add chain inet vpn_filter output { type filter hook output priority 0 \; policy drop \; }
     show_debug "Creating input chain (priority 0, policy drop)"
     nft add chain inet vpn_filter input { type filter hook input priority 0 \; policy drop \; }
+    show_debug "Creating forward chain (priority 0, policy drop)"
+    nft add chain inet vpn_filter forward { type filter hook forward priority 0 \; policy drop \; }
 }
 
 nft_create_sets() {
@@ -152,42 +154,41 @@ nft_apply_baseline_killswitch() {
     nft_create_sets
     nft_populate_local_networks "${LOCAL_NETWORK:-}"
     
-    # Build rules in optimal order (most-matched first)
+    # Build rules in optimal order (performance-optimized for active VPN)
     show_debug "Building nftables ruleset (optimal order for performance)"
-    
-    # 1. Loopback (most frequent)
+
+    # 1. Loopback (very frequent)
     show_debug "Rule 1: Allow loopback (lo)"
     nft add rule inet vpn_filter output oifname "lo" accept
-    
-    # 2. Bypass routing destinations (1.1.1.1, 8.8.8.8, 1.0.0.1)
+
+    # 2. Bypass routing destinations (WAN health checks via DAYTIME protocol)
     # MUST come before established/related to allow initial SYN packets!
+    # Restricted to: eth0 interface + TCP + port 13 (DAYTIME) only
     # These are handled by routing table 100
-    show_debug "Rule 2: Allow bypass routing destinations (WAN checks)"
-    nft add rule inet vpn_filter output ip daddr { 129.6.15.28, 129.6.15.29, 132.163.96.1, 132.163.97.1, 128.138.140.44 } accept comment "bypass_routes"
-    
-    # 3. Established/Related (bulk of traffic)
-    show_debug "Rule 3: Allow established/related connections"
+    show_debug "Rule 2: Allow bypass routing destinations (WAN checks via TCP/13)"
+    nft add rule inet vpn_filter output oifname "eth0" ip daddr { 129.6.15.28, 129.6.15.29, 132.163.96.1, 132.163.97.1, 128.138.140.44 } tcp dport 13 accept comment "bypass_routes"
+
+    # 3. VPN interface (will be added by nft_add_vpn_interface() when VPN is up)
+    # This will be the most-matched rule for active VPN traffic (~90% of packets)
+    show_debug "Rule 3: VPN interface (will be added after VPN is up)"
+
+    # 4. Established/Related (return packets from bypass routes, local nets, etc.)
+    show_debug "Rule 4: Allow established/related connections"
     nft add rule inet vpn_filter output ct state established,related accept
-    
-    # 4. Local networks (if configured)
+
+    # 5. Local networks (if configured)
     if [ "${LOCAL_NETWORK:-}" = "all" ] || [ -n "${LOCAL_NETWORK:-}" ]; then
-        show_debug "Rule 4: Allow local networks (from sets)"
+        show_debug "Rule 5: Allow local networks (from sets)"
         nft add rule inet vpn_filter output ip daddr @local_nets_v4 accept
         if [ "${DISABLE_IPV6}" != "true" ]; then
-            show_debug "Rule 4b: Allow local IPv6 networks"
+            show_debug "Rule 5b: Allow local IPv6 networks"
             nft add rule inet vpn_filter output ip6 daddr @local_nets_v6 accept
         fi
     else
-        show_debug "Rule 4: Skipped (no local networks)"
+        show_debug "Rule 5: Skipped (no local networks)"
     fi
-    
-    # 5. VPN interface (if up)
-    # Note: This will be added by nft_add_vpn_interface() when VPN is up
-    show_debug "Rule 5: VPN interface rules (will be added after VPN is up)"
 
-    # 6. Drop everything else
-    show_debug "Rule 6: DROP all other traffic (default deny)"
-    nft add rule inet vpn_filter output drop
+    # 6. Drop everything else (handled by policy drop, no explicit rule needed)
     
     # IPv6 protection
     if [ "${DISABLE_IPV6}" = "true" ]; then
@@ -230,11 +231,14 @@ nft_apply_baseline_killswitch() {
 
         # Only add rule if there are ports to allow
         if [ -n "$allowed_ports" ]; then
-            show_debug "Allowing LAN access to ports: $allowed_ports"
+            show_debug "Allowing LAN access to ports: $allowed_ports (TCP+UDP)"
+            # Add both TCP and UDP rules (many services need both: DNS, Plex discovery, HTTP/3, etc.)
             nft add rule inet vpn_filter input ip saddr @local_nets_v4 tcp dport { $allowed_ports } accept
+            nft add rule inet vpn_filter input ip saddr @local_nets_v4 udp dport { $allowed_ports } accept
             if [ "${DISABLE_IPV6}" != "true" ]; then
-                show_debug "INPUT Rule 3b: Allow from local IPv6 networks to specific ports"
+                show_debug "INPUT Rule 3b: Allow from local IPv6 networks to specific ports (TCP+UDP)"
                 nft add rule inet vpn_filter input ip6 saddr @local_nets_v6 tcp dport { $allowed_ports } accept
+                nft add rule inet vpn_filter input ip6 saddr @local_nets_v6 udp dport { $allowed_ports } accept
             fi
         else
             show_debug "No proxy/metrics/local ports configured, skipping LAN port rules"
@@ -256,30 +260,30 @@ nft_add_vpn_interface() {
     show_debug "Adding VPN interface to killswitch"
     local fwmark=$(wg show pia fwmark 2>/dev/null)
     show_debug "VPN fwmark: ${fwmark:-off}"
-    
-    # Get handle of the DROP rule so we can insert before it
-    local drop_handle=$(nft -a list chain inet vpn_filter output 2>/dev/null | grep "drop" | grep -v "comment" | tail -1 | sed -n 's/.*# handle \([0-9]*\).*/\1/p')
-    
-    if [ -z "$drop_handle" ]; then
-        show_error "Cannot find DROP rule in killswitch"
-        show_debug "DROP rule handle not found in nftables output chain"
+
+    # Get handle of the established/related rule to insert VPN rules before it
+    # This puts VPN rules at positions 3-4 (after lo and bypass_routes)
+    local conntrack_handle=$(nft -a list chain inet vpn_filter output 2>/dev/null | grep "ct state" | sed -n 's/.*# handle \([0-9]*\).*/\1/p')
+
+    if [ -z "$conntrack_handle" ]; then
+        show_error "Cannot find conntrack rule in killswitch"
+        show_debug "conntrack rule handle not found in nftables output chain"
         return 1
     fi
-    
-    show_debug "DROP rule handle: $drop_handle"
-    
-    # Insert VPN rules before the DROP rule
+
+    show_debug "conntrack rule handle: $conntrack_handle"
+
+    # Insert VPN interface rule first (most common - user traffic through tunnel)
+    show_debug "Inserting VPN interface rule before conntrack (handle $conntrack_handle)"
+    nft insert rule inet vpn_filter output handle "$conntrack_handle" oifname "pia" accept comment "vpn_interface"
+
+    # Insert fwmark rule for WireGuard protocol packets (to VPN endpoint via eth0)
     if [ -n "$fwmark" ] && [ "$fwmark" != "off" ]; then
-        show_debug "Inserting fwmark rule before DROP (handle $drop_handle)"
-        nft insert rule inet vpn_filter output handle "$drop_handle" mark "$fwmark" accept comment "vpn_fwmark"
-        show_success "VPN added to killswitch (fwmark: $fwmark)"
-    else
-        show_debug "No fwmark, using interface-based rule only"
-        show_success "VPN added to killswitch (interface-based)"
+        show_debug "Inserting fwmark rule before conntrack (handle $conntrack_handle)"
+        nft insert rule inet vpn_filter output handle "$conntrack_handle" mark "$fwmark" accept comment "vpn_fwmark"
     fi
-    
-    show_debug "Inserting interface rule before DROP (handle $drop_handle)"
-    nft insert rule inet vpn_filter output handle "$drop_handle" oifname "pia" accept comment "vpn_interface"
+
+    show_success "VPN added to killswitch (interface + fwmark)"
 }
 
 # Remove VPN interface from killswitch (called before VPN teardown)
@@ -303,21 +307,11 @@ nft_add_exemption() {
     local port="$2"
     local proto="$3"
     local comment="$4"
-    
+
     show_debug "Adding temporary exemption: $ip:$port/$proto (tag: temp_$comment)"
-    
-    # Add rule to chain - nftables evaluates in order, and we'll add before the final DROP
-    # We need to get the handle of the DROP rule and insert before it
-    local drop_handle=$(nft -a list chain inet vpn_filter output 2>/dev/null | grep "drop" | grep -v "comment" | tail -1 | sed -n 's/.*# handle \([0-9]*\).*/\1/p')
-    
-    if [ -n "$drop_handle" ]; then
-        # Insert rule right before the DROP rule
-        nft insert rule inet vpn_filter output handle "$drop_handle" ip daddr "$ip" "$proto" dport "$port" accept comment "temp_$comment" 2>/dev/null
-    else
-        # Fallback: just add the rule (will be before any DROP if DROP doesn't exist yet)
-        show_debug "DROP rule not found, appending exemption rule"
-        nft add rule inet vpn_filter output ip daddr "$ip" "$proto" dport "$port" accept comment "temp_$comment" 2>/dev/null
-    fi
+
+    # Append rule to end of chain (will be evaluated before policy drop)
+    nft add rule inet vpn_filter output ip daddr "$ip" "$proto" dport "$port" accept comment "temp_$comment" 2>/dev/null
 }
 
 # Remove temporary exemption
@@ -357,7 +351,7 @@ nft_add_forwarded_port() {
         return 0
     fi
 
-    show_debug "Adding forwarded port to INPUT: $port"
+    show_debug "Adding forwarded port to INPUT: $port (TCP + UDP)"
 
     # Verify INPUT chain exists before trying to add rule
     if ! nft list chain inet vpn_filter input >/dev/null 2>&1; then
@@ -365,14 +359,15 @@ nft_add_forwarded_port() {
         return 1
     fi
 
-    # Remove any existing forwarded port rule first
+    # Remove any existing forwarded port rules first
     nft_remove_forwarded_port
 
-    # Add new rule allowing traffic on this port from VPN interface
-    if nft add rule inet vpn_filter input iifname "pia" tcp dport "$port" accept comment "port_forward" 2>/dev/null; then
-        show_success "Port forwarding enabled: $port"
+    # Add rules for both TCP and UDP (required for torrenting: TCP for peers, UDP for DHT/uTP)
+    if nft add rule inet vpn_filter input iifname "pia" tcp dport "$port" accept comment "port_forward_tcp" 2>/dev/null && \
+       nft add rule inet vpn_filter input iifname "pia" udp dport "$port" accept comment "port_forward_udp" 2>/dev/null; then
+        show_success "Port forwarding enabled: $port (TCP+UDP)"
     else
-        show_error "Failed to add port forwarding rule for port $port"
+        show_error "Failed to add port forwarding rules for port $port"
         return 1
     fi
 }
@@ -382,7 +377,8 @@ nft_remove_forwarded_port() {
     show_debug "Removing forwarded port from INPUT"
 
     local removed=0
-    nft -a list chain inet vpn_filter input 2>/dev/null | grep "comment \"port_forward\"" | awk '{print $NF}' | while read handle; do
+    # Remove both TCP and UDP rules (match both old "port_forward" and new "port_forward_tcp/udp" comments)
+    nft -a list chain inet vpn_filter input 2>/dev/null | grep -E "comment \"port_forward" | awk '{print $NF}' | while read handle; do
         nft delete rule inet vpn_filter input handle "$handle" 2>/dev/null || true
         removed=$((removed + 1))
     done
@@ -489,18 +485,25 @@ ipt_setup_input_chain() {
 
         # Only add rules if there are ports to allow
         if [ -n "$allowed_ports" ]; then
-            show_debug "Allowing LAN access to ports: $allowed_ports"
+            show_debug "Allowing LAN access to ports: $allowed_ports (TCP+UDP)"
             if [ "${LOCAL_NETWORK:-}" = "all" ]; then
+                # TCP rules
                 iptables -A VPN_IN -s 10.0.0.0/8 -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
                 iptables -A VPN_IN -s 172.16.0.0/12 -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
                 iptables -A VPN_IN -s 192.168.0.0/16 -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
                 iptables -A VPN_IN -s 169.254.0.0/16 -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
+                # UDP rules (for DNS, Plex discovery, HTTP/3, etc.)
+                iptables -A VPN_IN -s 10.0.0.0/8 -p udp -m multiport --dports "$allowed_ports" -j ACCEPT
+                iptables -A VPN_IN -s 172.16.0.0/12 -p udp -m multiport --dports "$allowed_ports" -j ACCEPT
+                iptables -A VPN_IN -s 192.168.0.0/16 -p udp -m multiport --dports "$allowed_ports" -j ACCEPT
+                iptables -A VPN_IN -s 169.254.0.0/16 -p udp -m multiport --dports "$allowed_ports" -j ACCEPT
             else
                 IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORK"
                 for network in "${NETWORKS[@]}"; do
                     network=$(echo "$network" | xargs)
                     if [[ "$network" != *":"* ]]; then
                         iptables -A VPN_IN -s "$network" -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
+                        iptables -A VPN_IN -s "$network" -p udp -m multiport --dports "$allowed_ports" -j ACCEPT
                     fi
                 done
             fi
@@ -556,14 +559,19 @@ ipt_setup_ipv6_protection() {
 
         if [ -n "$allowed_ports" ]; then
             if [ "${LOCAL_NETWORK:-}" = "all" ]; then
+                # TCP rules
                 ip6tables -A VPN_IN6 -s fe80::/10 -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
                 ip6tables -A VPN_IN6 -s fc00::/7 -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
+                # UDP rules (for DNS, Plex discovery, HTTP/3, etc.)
+                ip6tables -A VPN_IN6 -s fe80::/10 -p udp -m multiport --dports "$allowed_ports" -j ACCEPT
+                ip6tables -A VPN_IN6 -s fc00::/7 -p udp -m multiport --dports "$allowed_ports" -j ACCEPT
             else
                 IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORK"
                 for network in "${NETWORKS[@]}"; do
                     network=$(echo "$network" | xargs)
                     if [[ "$network" == *":"* ]]; then
                         ip6tables -A VPN_IN6 -s "$network" -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
+                        ip6tables -A VPN_IN6 -s "$network" -p udp -m multiport --dports "$allowed_ports" -j ACCEPT
                     fi
                 done
             fi
@@ -608,12 +616,13 @@ ipt_add_standard_rules() {
     
     # Bypass routing destinations MUST come before established/related
     # to allow initial SYN packets!
-    show_debug "Adding bypass route rules"
-    ipt_add_fw_rule "VPN_OUT" -d 129.6.15.28 -j ACCEPT -m comment --comment "bypass_routes"
-    ipt_add_fw_rule "VPN_OUT" -d 129.6.15.29 -j ACCEPT -m comment --comment "bypass_routes"
-    ipt_add_fw_rule "VPN_OUT" -d 132.163.96.1 -j ACCEPT -m comment --comment "bypass_routes"
-    ipt_add_fw_rule "VPN_OUT" -d 132.163.97.1 -j ACCEPT -m comment --comment "bypass_routes"
-    ipt_add_fw_rule "VPN_OUT" -d 128.138.140.44 -j ACCEPT -m comment --comment "bypass_routes"
+    # Restricted to: eth0 interface + TCP + port 13 (DAYTIME) only
+    show_debug "Adding bypass route rules (TCP/13 via eth0)"
+    ipt_add_fw_rule "VPN_OUT" -o eth0 -p tcp --dport 13 -d 129.6.15.28 -j ACCEPT -m comment --comment "bypass_routes"
+    ipt_add_fw_rule "VPN_OUT" -o eth0 -p tcp --dport 13 -d 129.6.15.29 -j ACCEPT -m comment --comment "bypass_routes"
+    ipt_add_fw_rule "VPN_OUT" -o eth0 -p tcp --dport 13 -d 132.163.96.1 -j ACCEPT -m comment --comment "bypass_routes"
+    ipt_add_fw_rule "VPN_OUT" -o eth0 -p tcp --dport 13 -d 132.163.97.1 -j ACCEPT -m comment --comment "bypass_routes"
+    ipt_add_fw_rule "VPN_OUT" -o eth0 -p tcp --dport 13 -d 128.138.140.44 -j ACCEPT -m comment --comment "bypass_routes"
     
     ipt_add_fw_rule "VPN_OUT" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
     
@@ -702,7 +711,7 @@ ipt_add_forwarded_port() {
         return 0
     fi
 
-    show_debug "Adding forwarded port to INPUT: $port"
+    show_debug "Adding forwarded port to INPUT: $port (TCP + UDP)"
 
     # Verify VPN_IN chain exists before trying to add rule
     if ! iptables -L VPN_IN -n >/dev/null 2>&1; then
@@ -710,15 +719,16 @@ ipt_add_forwarded_port() {
         return 1
     fi
 
-    # Remove any existing forwarded port rule first
+    # Remove any existing forwarded port rules first
     ipt_remove_forwarded_port
 
-    # Insert rule before the final DROP (should be position 4 or so)
-    # Add rule to VPN_IN chain allowing traffic on this port from VPN interface
-    if iptables -I VPN_IN 4 -i pia -p tcp --dport "$port" -j ACCEPT -m comment --comment "port_forward" 2>/dev/null; then
-        show_success "Port forwarding enabled: $port"
+    # Insert rules before the final DROP (position 4)
+    # Add rules for both TCP and UDP (required for torrenting: TCP for peers, UDP for DHT/uTP)
+    if iptables -I VPN_IN 4 -i pia -p tcp --dport "$port" -j ACCEPT -m comment --comment "port_forward_tcp" 2>/dev/null && \
+       iptables -I VPN_IN 4 -i pia -p udp --dport "$port" -j ACCEPT -m comment --comment "port_forward_udp" 2>/dev/null; then
+        show_success "Port forwarding enabled: $port (TCP+UDP)"
     else
-        show_error "Failed to add port forwarding rule for port $port"
+        show_error "Failed to add port forwarding rules for port $port"
         return 1
     fi
 }
@@ -727,6 +737,9 @@ ipt_add_forwarded_port() {
 ipt_remove_forwarded_port() {
     show_debug "Removing forwarded port from INPUT"
 
+    # Remove both TCP and UDP rules (handle both old "port_forward" and new "port_forward_tcp/udp" comments)
+    iptables -D VPN_IN -m comment --comment "port_forward_tcp" -j ACCEPT 2>/dev/null || true
+    iptables -D VPN_IN -m comment --comment "port_forward_udp" -j ACCEPT 2>/dev/null || true
     iptables -D VPN_IN -m comment --comment "port_forward" -j ACCEPT 2>/dev/null || true
 }
 
@@ -792,15 +805,21 @@ verify_baseline_killswitch() {
     show_debug "Verifying baseline killswitch is active"
 
     if $USE_NFTABLES; then
-        # Check that output chain exists and has DROP rule
-        if ! nft list chain inet vpn_filter output 2>/dev/null | grep -q "drop"; then
-            show_error "Killswitch verification failed: No DROP rule found in nftables"
+        # Check that output chain exists with policy drop
+        if ! nft list chain inet vpn_filter output 2>/dev/null | grep -q "policy drop"; then
+            show_error "Killswitch verification failed: OUTPUT chain policy is not drop"
             return 1
         fi
 
         # Check that bypass routes are allowed (WAN health checks)
         if ! nft list chain inet vpn_filter output 2>/dev/null | grep -q "bypass_routes"; then
             show_error "Killswitch verification failed: Bypass routes not found"
+            return 1
+        fi
+
+        # Check that loopback is allowed
+        if ! nft list chain inet vpn_filter output 2>/dev/null | grep -q "oifname \"lo\""; then
+            show_error "Killswitch verification failed: Loopback rule not found"
             return 1
         fi
     else
