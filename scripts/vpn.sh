@@ -645,14 +645,6 @@ teardown_wireguard() {
     # Clean up local network exceptions
     cleanup_local_exceptions
     
-    # Restore working DNS (uses bypass route to 1.0.0.1)
-    show_debug "Restoring DNS to Cloudflare (for reconnection)"
-    {
-        echo "# DNS for reconnection"
-        echo "nameserver 1.0.0.1"
-        echo "nameserver 1.1.1.1"
-    } > /etc/resolv.conf
-    
     show_debug "Teardown complete"
 }
 

@@ -113,35 +113,81 @@ update_deluge() {
 
     show_debug "update_deluge: port=$port, url=$base_url, password=${password:+set}"
     show_debug "Created temp cookie jar: $cookie_jar"
-    
+
     # Login
     show_debug "Attempting Deluge login to $base_url/json"
     local login_response=$(curl -s $CURL_TIMEOUT -c "$cookie_jar" \
+        -H "Content-Type: application/json" \
         -d "{\"method\":\"auth.login\",\"params\":[\"$password\"],\"id\":1}" \
         "$base_url/json" 2>/dev/null)
 
     show_debug "Deluge login response: ${login_response:0:100}..."
 
-    if ! echo "$login_response" | grep -q '"result":true'; then
+    if ! echo "$login_response" | grep -q '"result": *true'; then
         show_debug "Deluge login failed"
         rm -f "$cookie_jar"
         return 1
     fi
-    
+
     show_debug "Deluge login successful"
+
+    # Check if web UI is connected to daemon
+    show_debug "Checking if web UI is connected to daemon"
+    local connected=$(curl -s $CURL_TIMEOUT -b "$cookie_jar" \
+        -H "Content-Type: application/json" \
+        -d "{\"method\":\"web.connected\",\"params\":[],\"id\":2}" \
+        "$base_url/json" 2>/dev/null)
+
+    show_debug "Connection status: ${connected:0:100}..."
+
+    # If not connected, connect to the first available host
+    if echo "$connected" | grep -q '"result": *false'; then
+        show_debug "Web UI not connected to daemon, attempting to connect"
+
+        # Get available hosts
+        local hosts=$(curl -s $CURL_TIMEOUT -b "$cookie_jar" \
+            -H "Content-Type: application/json" \
+            -d "{\"method\":\"web.get_hosts\",\"params\":[],\"id\":3}" \
+            "$base_url/json" 2>/dev/null)
+
+        show_debug "Available hosts: ${hosts:0:100}..."
+
+        # Extract first host_id (32-character hex string)
+        local host_id=$(echo "$hosts" | grep -o '"[a-f0-9]\{32\}"' | head -1 | tr -d '"')
+
+        if [ -n "$host_id" ]; then
+            show_debug "Connecting to daemon host: $host_id"
+            local connect_response=$(curl -s $CURL_TIMEOUT -b "$cookie_jar" \
+                -H "Content-Type: application/json" \
+                -d "{\"method\":\"web.connect\",\"params\":[\"$host_id\"],\"id\":4}" \
+                "$base_url/json" 2>/dev/null)
+
+            show_debug "Connect response: ${connect_response:0:100}..."
+
+            # Wait a moment for connection to establish
+            sleep 1
+        else
+            show_debug "No daemon hosts found"
+            rm -f "$cookie_jar"
+            return 1
+        fi
+    else
+        show_debug "Web UI already connected to daemon"
+    fi
 
     # Update listen ports
     show_debug "Setting Deluge listen ports to $port-$port"
     local response=$(curl -s $CURL_TIMEOUT -b "$cookie_jar" \
-        -d "{\"method\":\"core.set_config\",\"params\":[{\"listen_ports\":[$port,$port]}],\"id\":2}" \
+        -H "Content-Type: application/json" \
+        -d "{\"method\":\"core.set_config\",\"params\":[{\"listen_ports\":[$port,$port]}],\"id\":5}" \
         "$base_url/json" 2>/dev/null)
 
     show_debug "Deluge set_config response: ${response:0:100}..."
-    
+
     rm -f "$cookie_jar"
     show_debug "Cleaned up cookie jar"
-    
-    if echo "$response" | grep -q '"error":null'; then
+
+    if echo "$response" | grep -q '"error": *null'; then
         show_debug "Deluge port update successful"
         return 0
     else
@@ -152,18 +198,34 @@ update_deluge() {
 
 # Update rTorrent port via XMLRPC
 update_rtorrent() {
-    local port=$1 base_url=$2
+    local port=$1 base_url=$2 username=$3 password=$4
 
-    show_debug "update_rtorrent: port=$port, url=$base_url"
+    show_debug "update_rtorrent: port=$port, url=$base_url, user=${username:+set}"
     show_debug "Setting rTorrent port range to $port-$port"
-    
-    local response=$(curl -s $CURL_TIMEOUT "$base_url" \
-        -d "<?xml version='1.0'?><methodCall><methodName>network.port_range.set</methodName><params><param><value><string>$port-$port</string></value></param></params></methodCall>" \
+
+    # Build auth option if credentials provided
+    local auth_opt=""
+    if [ -n "$username" ] && [ -n "$password" ]; then
+        auth_opt="-u $username:$password"
+        show_debug "Using basic authentication"
+    fi
+
+    local response=$(curl -s $CURL_TIMEOUT \
+        -X POST \
+        -H "Content-Type: text/xml" \
+        $auth_opt \
+        "$base_url" \
+        -d "<?xml version='1.0'?><methodCall><methodName>network.port_range.set</methodName><params><param><value><string></string></value></param><param><value><string>$port-$port</string></value></param></params></methodCall>" \
         2>/dev/null)
 
-    show_debug "rTorrent response: ${response:0:100}..."
-    
+    show_debug "rTorrent response: $response"
+
     if echo "$response" | grep -q '<methodResponse>'; then
+        # Check for fault response
+        if echo "$response" | grep -q '<fault>'; then
+            show_debug "rTorrent returned fault response"
+            return 1
+        fi
         show_debug "rTorrent port update successful"
         return 0
     else
@@ -195,7 +257,7 @@ _update_port_api_attempt() {
             ;;
         rtorrent|rutorrent)
             show_debug "Using rTorrent updater"
-            update_rtorrent "$port" "$PORT_API_URL"
+            update_rtorrent "$port" "$PORT_API_URL" "$PORT_API_USER" "$PORT_API_PASS"
             result=$?
             ;;
         custom)

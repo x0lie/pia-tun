@@ -168,7 +168,6 @@ initial_connect() {
 }
 
 perform_reconnection() {
-    show_debug "Reconnection requested"
     show_reconnecting
     touch /tmp/reconnecting
 
