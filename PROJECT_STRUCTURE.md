@@ -582,11 +582,12 @@ This document provides a comprehensive map of the pia-tun codebase, organized by
 - Returns signature response on success
 
 **Get Signature with Retry (`GetSignatureWithRetry()`):**
-- Retries up to `maxRetries` times (default: 5 for initial, 3 for refresh)
+- Time-based retry: 5 minutes for initial setup, 2 minutes for refresh
 - Exponential backoff: 2s → 4s → 8s → 16s → 30s (capped)
-- Stops retrying on API errors (status != OK) - requires reconnection
+- Immediately stops on API errors (status != OK) and logs error - triggers reconnection
+- Logs network errors only when retry duration is exceeded
 - Context-aware: cancels on shutdown signal
-- Returns error after all retries exhausted
+- Returns error after retry duration exceeded
 
 **Bind Port (`BindPort()`):**
 - Sends request to `https://<PF_GATEWAY>:19999/bindPort?payload=<PAYLOAD>&signature=<SIGNATURE>`
@@ -595,11 +596,12 @@ This document provides a comprehensive map of the pia-tun codebase, organized by
 - Returns nil on success
 
 **Bind Port with Retry (`BindPortWithRetry()`):**
-- Retries up to `maxRetries` times (default: 3-5)
+- Time-based retry: 3 minutes for all bind operations
 - Exponential backoff with 30s cap
-- Stops retrying on API errors
+- Immediately stops on API errors (status != OK) and logs error - triggers signature refresh
+- Logs network errors only when retry duration is exceeded
 - Context-aware cancellation
-- Returns error after all retries exhausted
+- Returns error after retry duration exceeded
 
 **Parse Payload (`ParsePayload()`):**
 - Base64-decodes payload string
@@ -616,14 +618,14 @@ This document provides a comprehensive map of the pia-tun codebase, organized by
 
 ## cmd/portforward/keepalive.go
 
-**Purpose:** Manages port forwarding signature refresh and binding keepalive (every 10 minutes).
+**Purpose:** Manages port forwarding signature refresh and binding keepalive with optimized failure escalation.
 
 ### What it Does
 
 **Initial Setup (`initialSetup()`):**
-1. Acquires initial signature (5 retries with backoff)
+1. Acquires initial signature (5-minute retry window)
 2. Parses payload to extract port and expiry
-3. Performs initial port binding (3 retries)
+3. Performs initial port binding (3-minute retry window)
 4. Writes port to file (`/etc/wireguard/port`)
 5. Notifies port monitor via named pipe (`/tmp/port_change_pipe`)
 6. Sends webhook notification (async)
@@ -639,20 +641,23 @@ This document provides a comprehensive map of the pia-tun codebase, organized by
   - **Reason 1**: Scheduled refresh (31-day interval)
   - **Reason 2**: Signature expiring soon (within 24-hour safety margin)
 - Performs regular bind if signature still valid
-- Handles bind failures:
-  - **API error**: Immediately requests new signature
-  - **Network error**: Logs warning, retries next cycle
+- **Bind failure escalation (maintains port within 24-minute death window):**
+  - **API error (status != OK)**: Immediately escalates to signature refresh
+  - **Network error after 3 minutes**: Escalates to signature refresh
+- **Port death timing safety:** 15min bind + 3min bind retry + 2min signature retry = 20min max before reconnect (4-minute safety margin)
 
 **Signature Refresh (`refreshSignature()`):**
-1. Requests new signature (3 retries)
+1. Requests new signature (2-minute retry window)
 2. Parses new payload
 3. Compares port: displays change notification if different
 4. Updates port file and notifies monitor if changed
 5. Sends webhook notification (async)
 6. Updates internal state (port, payload, signature, expiry, timestamp)
-7. Binds with new signature (3 retries)
+7. Binds with new signature (3-minute retry window)
 8. Displays success message
-9. On failure: calls `handleRefreshFailure()`
+9. **Signature failure escalation:**
+   - **API error (status != OK)**: Immediately triggers reconnection
+   - **Network error after 2 minutes**: Triggers reconnection
 
 **Refresh Failure Handling (`handleRefreshFailure()`):**
 - Displays error message

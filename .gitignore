@@ -2,3 +2,10 @@
 cmd/monitor/monitor
 cmd/proxy/proxy
 cmd/portforward/portforward
+bin/
+
+# Test artifacts
+test-logs.txt
+trivy-results.sarif
+
+/bin

@@ -6,3 +6,5 @@ GEMINI.md
 Dockerfile
 notes/
 docker-compose/
+testing/
+bin/

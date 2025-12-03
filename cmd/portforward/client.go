@@ -34,6 +34,20 @@ type BindResponse struct {
 	Message string `json:"message"`
 }
 
+// APIError represents an error response from the PIA API (non-OK status)
+type APIError struct {
+	Operation string
+	Status    string
+	Message   string
+}
+
+func (e *APIError) Error() string {
+	if e.Message != "" {
+		return fmt.Sprintf("%s failed: status=%s, message=%s", e.Operation, e.Status, e.Message)
+	}
+	return fmt.Sprintf("%s failed: status=%s", e.Operation, e.Status)
+}
+
 func NewPIAClient(config *Config) *PIAClient {
 	// Create custom transport with interface binding
 	transport := &http.Transport{
@@ -102,7 +116,12 @@ func (c *PIAClient) GetSignature() (*SignatureResponse, error) {
 	params.Add("token", c.config.Token)
 	fullURL := baseURL + "?" + params.Encode()
 
-	debugLog(c.config, "Executing: GET %s", baseURL)
+	// Redact token in logs (show first 8 chars only)
+	tokenPreview := c.config.Token
+	if len(tokenPreview) > 8 {
+		tokenPreview = tokenPreview[:8] + "..."
+	}
+	debugLog(c.config, "Executing: GET %s?token=%s", baseURL, tokenPreview)
 
 	// Initial delay (matching bash behavior)
 	time.Sleep(2 * time.Second)
@@ -134,29 +153,43 @@ func (c *PIAClient) GetSignature() (*SignatureResponse, error) {
 		return nil, fmt.Errorf("invalid JSON: %w", err)
 	}
 
-	debugLog(c.config, "getSignature status: '%s'", sigResp.Status)
+	debugLog(c.config, "getSignature response - status: '%s'", sigResp.Status)
 
 	if sigResp.Status != "OK" {
-		debugLog(c.config, "Non-OK status '%s' from getSignature", sigResp.Status)
-		return nil, fmt.Errorf("non-OK status: %s", sigResp.Status)
+		return nil, &APIError{
+			Operation: "getSignature",
+			Status:    sigResp.Status,
+			Message:   "",
+		}
 	}
 
 	debugLog(c.config, "getSignature successful")
 	return &sigResp, nil
 }
 
-func (c *PIAClient) GetSignatureWithRetry(ctx context.Context, maxRetries int) (*SignatureResponse, error) {
+func (c *PIAClient) GetSignatureWithRetry(ctx context.Context, retryDuration time.Duration) (*SignatureResponse, error) {
 	var lastErr error
 	backoff := 2 * time.Second
+	maxBackoff := 30 * time.Second
+	startTime := time.Now()
+	attempt := 0
 
-	for attempt := 1; attempt <= maxRetries; attempt++ {
+	for {
+		attempt++
+
 		// Check if context is cancelled
 		if ctx.Err() != nil {
-			debugLog(c.config, "GetSignatureWithRetry cancelled via context (attempt %d/%d)", attempt, maxRetries)
+			debugLog(c.config, "GetSignatureWithRetry cancelled via context (attempt %d)", attempt)
 			return nil, ctx.Err()
 		}
 
-		debugLog(c.config, "Signature attempt %d/%d", attempt, maxRetries)
+		// Check if we've exceeded the retry duration
+		if attempt > 1 && time.Since(startTime) >= retryDuration {
+			debugLog(c.config, "Retry duration of %v exceeded after %d attempts", retryDuration, attempt-1)
+			return nil, fmt.Errorf("failed after %v: %w", retryDuration, lastErr)
+		}
+
+		debugLog(c.config, "Signature attempt %d (elapsed: %v)", attempt, time.Since(startTime).Round(time.Second))
 
 		if attempt > 1 {
 			debugLog(c.config, "Waiting %v before retry...", backoff)
@@ -170,7 +203,11 @@ func (c *PIAClient) GetSignatureWithRetry(ctx context.Context, maxRetries int) (
 				return nil, ctx.Err()
 			}
 
-			backoff *= 2 // Exponential backoff
+			// Exponential backoff with 30s cap
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
 		}
 
 		resp, err := c.GetSignature()
@@ -178,12 +215,16 @@ func (c *PIAClient) GetSignatureWithRetry(ctx context.Context, maxRetries int) (
 			return resp, nil
 		}
 
+		// Check if this is an API error (status != OK)
+		// Don't retry API errors - need to reconnect instead
+		if _, isAPIError := err.(*APIError); isAPIError {
+			showError(fmt.Sprintf("getSignature API error: %v", err))
+			return nil, err
+		}
+
 		lastErr = err
 		debugLog(c.config, "Attempt %d failed: %v", attempt, err)
 	}
-
-	debugLog(c.config, "All %d attempts failed", maxRetries)
-	return nil, fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 func (c *PIAClient) BindPort(payload, signature string) error {
@@ -226,29 +267,44 @@ func (c *PIAClient) BindPort(payload, signature string) error {
 		return fmt.Errorf("invalid JSON: %w", err)
 	}
 
-	debugLog(c.config, "bindPort status: '%s'", bindResp.Status)
+	debugLog(c.config, "bindPort response - status: '%s', message: '%s'", bindResp.Status, bindResp.Message)
 
 	if bindResp.Status != "OK" {
-		debugLog(c.config, "ERROR: bindPort failed with status '%s'", bindResp.Status)
-		debugLog(c.config, "Response content: %s", string(body))
-		return fmt.Errorf("bindPort failed: %s", bindResp.Status)
+		return &APIError{
+			Operation: "bindPort",
+			Status:    bindResp.Status,
+			Message:   bindResp.Message,
+		}
 	}
 
+	debugLog(c.config, "bindPort successful")
 	return nil
 }
 
-func (c *PIAClient) BindPortWithRetry(ctx context.Context, payload, signature string, maxRetries int) error {
+func (c *PIAClient) BindPortWithRetry(ctx context.Context, payload, signature string, retryDuration time.Duration) error {
 	var lastErr error
 	backoff := 2 * time.Second
+	maxBackoff := 30 * time.Second
+	startTime := time.Now()
+	attempt := 0
 
-	for attempt := 1; attempt <= maxRetries; attempt++ {
+	for {
+		attempt++
+
 		// Check if context is cancelled
 		if ctx.Err() != nil {
-			debugLog(c.config, "BindPortWithRetry cancelled via context (attempt %d/%d)", attempt, maxRetries)
+			debugLog(c.config, "BindPortWithRetry cancelled via context (attempt %d)", attempt)
 			return ctx.Err()
 		}
 
-		debugLog(c.config, "Bind attempt %d/%d", attempt, maxRetries)
+		// Check if we've exceeded the retry duration
+		if attempt > 1 && time.Since(startTime) >= retryDuration {
+			debugLog(c.config, "Retry duration of %v exceeded after %d attempts", retryDuration, attempt-1)
+			showError(fmt.Sprintf("bindPort failed after %v: %v", retryDuration, lastErr))
+			return fmt.Errorf("failed after %v: %w", retryDuration, lastErr)
+		}
+
+		debugLog(c.config, "Bind attempt %d (elapsed: %v)", attempt, time.Since(startTime).Round(time.Second))
 
 		if attempt > 1 {
 			debugLog(c.config, "Waiting %v before retry...", backoff)
@@ -262,7 +318,11 @@ func (c *PIAClient) BindPortWithRetry(ctx context.Context, payload, signature st
 				return ctx.Err()
 			}
 
-			backoff *= 2 // Exponential backoff
+			// Exponential backoff with 30s cap
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
 		}
 
 		err := c.BindPort(payload, signature)
@@ -270,12 +330,16 @@ func (c *PIAClient) BindPortWithRetry(ctx context.Context, payload, signature st
 			return nil
 		}
 
+		// Check if this is an API error (status != OK)
+		// Don't retry API errors - the signature/payload is the problem
+		if _, isAPIError := err.(*APIError); isAPIError {
+			showError(fmt.Sprintf("bindPort API error: %v", err))
+			return err
+		}
+
 		lastErr = err
 		debugLog(c.config, "Attempt %d failed: %v", attempt, err)
 	}
-
-	debugLog(c.config, "All %d attempts failed", maxRetries)
-	return fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 // ParsePayload decodes the base64 payload and extracts port and expiry

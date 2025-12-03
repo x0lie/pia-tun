@@ -19,16 +19,13 @@ type KeepaliveManager struct {
 }
 
 type State struct {
-	Port                        int
-	Payload                     string
-	Signature                   string
-	ExpiresAt                   time.Time
-	LastSignatureTime           time.Time
-	BindCount                   int
-	SignatureRefreshCount       int
-	ConsecutiveBindFailures     int
-	ConsecutiveRefreshFailures  int
-	ForceRefresh                bool
+	Port                   int
+	Payload                string
+	Signature              string
+	ExpiresAt              time.Time
+	LastSignatureTime      time.Time
+	BindCount              int
+	SignatureRefreshCount  int
 }
 
 func NewKeepaliveManager(config *Config, client *PIAClient) *KeepaliveManager {
@@ -61,10 +58,10 @@ func (m *KeepaliveManager) initialSetup() error {
 	// Use background context for initial setup (no cancellation during startup)
 	ctx := context.Background()
 
-	// Try to get signature with retries
-	resp, err := m.client.GetSignatureWithRetry(ctx, 5)
+	// Try to get signature with retries (5 minutes for initial setup)
+	resp, err := m.client.GetSignatureWithRetry(ctx, 5*time.Minute)
 	if err != nil {
-		showError(fmt.Sprintf("Port forwarding failed after 5 attempts"))
+		showError(fmt.Sprintf("Port forwarding failed after 5 minutes"))
 		debugLog(m.config, "Exhausted all initial signature attempts, giving up")
 		showVPNConnectedWarning()
 
@@ -104,9 +101,9 @@ func (m *KeepaliveManager) initialSetup() error {
 	m.state.LastSignatureTime = time.Now()
 	m.mu.Unlock()
 
-	// Initial bind
+	// Initial bind (3 minutes)
 	debugLog(m.config, "Performing initial bind...")
-	if err := m.client.BindPortWithRetry(ctx, resp.Payload, resp.Signature, 3); err != nil {
+	if err := m.client.BindPortWithRetry(ctx, resp.Payload, resp.Signature, 3*time.Minute); err != nil {
 		showWarning("Initial bind failed, but continuing...")
 		debugLog(m.config, "Initial bind failure is non-fatal, continuing with port announcement")
 	} else {
@@ -160,8 +157,6 @@ func (m *KeepaliveManager) initialSetup() error {
 	debugLog(m.config, "Main loop initialized:")
 	debugLog(m.config, "  BIND_COUNT=0")
 	debugLog(m.config, "  SIGNATURE_REFRESH_COUNT=0")
-	debugLog(m.config, "  CONSECUTIVE_BIND_FAILURES=0")
-	debugLog(m.config, "  CONSECUTIVE_REFRESH_FAILURES=0")
 	debugLog(m.config, "  LAST_SIGNATURE_TIME=%s", m.state.LastSignatureTime.Format("2006-01-02 15:04:05"))
 
 	return nil
@@ -187,9 +182,6 @@ func (m *KeepaliveManager) keepaliveLoop(ctx context.Context) error {
 			debugLog(m.config, "Current time: %s", currentTime.Format("2006-01-02 15:04:05"))
 			debugLog(m.config, "Time since last signature: %v (%d days)", timeSinceSignature, int(timeSinceSignature.Hours()/24))
 			debugLog(m.config, "Seconds until expiry: %d (%d days)", secondsUntilExpiry, secondsUntilExpiry/86400)
-			debugLog(m.config, "Consecutive bind failures: %d", m.state.ConsecutiveBindFailures)
-			debugLog(m.config, "Consecutive refresh failures: %d", m.state.ConsecutiveRefreshFailures)
-			debugLog(m.config, "Force refresh flag: %v", m.state.ForceRefresh)
 
 			// Check if we need a new signature
 			needNewSignature := false
@@ -207,13 +199,6 @@ func (m *KeepaliveManager) keepaliveLoop(ctx context.Context) error {
 			if time.Until(m.state.ExpiresAt) <= safetyThreshold {
 				needNewSignature = true
 				reason = fmt.Sprintf("signature expiring soon (within %dh)", m.config.SignatureSafetyHours)
-				debugLog(m.config, "Signature refresh trigger: %s", reason)
-			}
-
-			// Reason 3: Forced due to bind failures
-			if m.state.ForceRefresh {
-				needNewSignature = true
-				reason = "forced by bind failures"
 				debugLog(m.config, "Signature refresh trigger: %s", reason)
 			}
 
@@ -238,10 +223,15 @@ func (m *KeepaliveManager) keepaliveLoop(ctx context.Context) error {
 					}
 
 					m.mu.Lock()
-					m.handleRefreshFailure()
+					m.handleRefreshFailure(err)
 					m.mu.Unlock()
+					// handleRefreshFailure exits, so this line is never reached
 					continue
 				}
+
+				// Reset ticker to start next cycle immediately with new signature
+				ticker.Reset(m.config.BindInterval)
+				debugLog(m.config, "Ticker reset after scheduled signature refresh")
 				m.mu.Lock()
 			} else {
 				// Regular keep-alive bind
@@ -252,25 +242,65 @@ func (m *KeepaliveManager) keepaliveLoop(ctx context.Context) error {
 				signature := m.state.Signature
 				m.mu.Unlock()
 
-				if err := m.client.BindPortWithRetry(ctx, payload, signature, 3); err != nil {
+				if err := m.client.BindPortWithRetry(ctx, payload, signature, 3*time.Minute); err != nil {
 					// Check if we're shutting down
 					if ctx.Err() != nil {
 						debugLog(m.config, "Context cancelled during bind, exiting gracefully")
 						return nil
 					}
 
-					m.mu.Lock()
-					m.handleBindFailure()
-					m.mu.Unlock()
-					continue
-				}
+					// Check if this is an API error (status != OK)
+					if _, ok := err.(*APIError); ok {
+						// API error - signature/payload is invalid, get new signature immediately
+						debugLog(m.config, "API error detected, escalating to signature refresh immediately")
 
-				m.mu.Lock()
-				debugLog(m.config, "Keep-alive bind #%d successful", m.state.BindCount)
-				m.state.ConsecutiveBindFailures = 0
-				m.state.ConsecutiveRefreshFailures = 0
-				m.state.ForceRefresh = false
-				debugLog(m.config, "Bind success, all failure counters reset")
+						// Immediately refresh signature (don't wait for next cycle)
+						if err := m.refreshSignature(ctx); err != nil {
+							if ctx.Err() != nil {
+								debugLog(m.config, "Context cancelled during signature refresh, exiting gracefully")
+								return nil
+							}
+							m.mu.Lock()
+							m.handleRefreshFailure(err)
+							m.mu.Unlock()
+							// handleRefreshFailure exits, unreachable
+						}
+
+						// Reset ticker to start next cycle immediately with new signature
+						ticker.Reset(m.config.BindInterval)
+						debugLog(m.config, "Ticker reset after API error escalation")
+
+						// Don't continue - fall through to end of cycle to properly release lock and wait for next tick
+						m.mu.Lock()
+						debugLog(m.config, "Signature refresh complete, waiting for next cycle")
+					} else {
+						// Network error after 3 minutes - escalate to signature refresh
+						debugLog(m.config, "Network error during bind after 3 minutes, escalating to signature refresh")
+
+						// Try to get new signature
+						if err := m.refreshSignature(ctx); err != nil {
+							if ctx.Err() != nil {
+								debugLog(m.config, "Context cancelled during signature refresh, exiting gracefully")
+								return nil
+							}
+							m.mu.Lock()
+							m.handleRefreshFailure(err)
+							m.mu.Unlock()
+							// handleRefreshFailure exits, unreachable
+						}
+
+						// Reset ticker to start next cycle immediately with new signature
+						ticker.Reset(m.config.BindInterval)
+						debugLog(m.config, "Ticker reset after network error escalation")
+
+						// Don't continue - fall through to end of cycle to properly release lock and wait for next tick
+						m.mu.Lock()
+						debugLog(m.config, "Signature refresh complete, waiting for next cycle")
+					}
+				} else {
+					m.mu.Lock()
+					debugLog(m.config, "Keep-alive bind #%d successful", m.state.BindCount)
+				}
 			}
 
 			debugLog(m.config, "====== End of cycle #%d ======", m.state.BindCount+m.state.SignatureRefreshCount)
@@ -280,7 +310,7 @@ func (m *KeepaliveManager) keepaliveLoop(ctx context.Context) error {
 }
 
 func (m *KeepaliveManager) refreshSignature(ctx context.Context) error {
-	resp, err := m.client.GetSignatureWithRetry(ctx, 3)
+	resp, err := m.client.GetSignatureWithRetry(ctx, 2*time.Minute)
 	if err != nil {
 		// Check if cancelled - don't show error if shutting down
 		if ctx.Err() != nil {
@@ -288,9 +318,7 @@ func (m *KeepaliveManager) refreshSignature(ctx context.Context) error {
 			return err
 		}
 
-		showInfo()
-		showError("Signature refresh failed, reconnecting...")
-		debugLog(m.config, "Signature refresh failed after retries")
+		debugLog(m.config, "Signature refresh failed after 2 minutes")
 		return err
 	}
 
@@ -345,24 +373,18 @@ func (m *KeepaliveManager) refreshSignature(ctx context.Context) error {
 	m.state.Payload = resp.Payload
 	m.state.Signature = resp.Signature
 	m.state.ExpiresAt = newExpiresAt
-	m.state.ConsecutiveBindFailures = 0
-	m.state.ConsecutiveRefreshFailures = 0
-	m.state.ForceRefresh = false
 	m.state.LastSignatureTime = time.Now()
 
-	debugLog(m.config, "Signature data updated, counters reset")
-	debugLog(m.config, "  CONSECUTIVE_BIND_FAILURES=0")
-	debugLog(m.config, "  CONSECUTIVE_REFRESH_FAILURES=0")
-	debugLog(m.config, "  FORCE_REFRESH=false")
+	debugLog(m.config, "Signature data updated")
 	debugLog(m.config, "  LAST_SIGNATURE_TIME=%s", m.state.LastSignatureTime.Format("2006-01-02 15:04:05"))
 
 	payload := m.state.Payload
 	signature := m.state.Signature
 	m.mu.Unlock()
 
-	// Bind with new signature
+	// Bind with new signature (3 minutes)
 	debugLog(m.config, "Binding with new signature...")
-	if err := m.client.BindPortWithRetry(ctx, payload, signature, 3); err != nil {
+	if err := m.client.BindPortWithRetry(ctx, payload, signature, 3*time.Minute); err != nil {
 		// Check if cancelled
 		if ctx.Err() != nil {
 			debugLog(m.config, "Bind cancelled due to context cancellation")
@@ -370,10 +392,7 @@ func (m *KeepaliveManager) refreshSignature(ctx context.Context) error {
 		}
 
 		showWarning("Got new signature but bind failed")
-		debugLog(m.config, "Bind failed after fresh signature (unusual), starting new failure streak")
-		m.mu.Lock()
-		m.state.ConsecutiveBindFailures = 1
-		m.mu.Unlock()
+		debugLog(m.config, "Bind failed after fresh signature (unusual), will retry next cycle")
 	} else {
 		debugLog(m.config, "Bind with new signature successful")
 		if m.config.SignatureRefreshDays > 0 {
@@ -391,40 +410,15 @@ func (m *KeepaliveManager) refreshSignature(ctx context.Context) error {
 	return nil
 }
 
-func (m *KeepaliveManager) handleBindFailure() {
-	showWarning(fmt.Sprintf("Keep-alive bind #%d failed", m.state.BindCount))
-	debugLog(m.config, "Bind failed, incrementing failure counter")
-	m.state.ConsecutiveBindFailures++
-
-	debugLog(m.config, "CONSECUTIVE_BIND_FAILURES now at %d", m.state.ConsecutiveBindFailures)
-
-	// Trigger force refresh after 2 consecutive bind failures
-	if m.state.ConsecutiveBindFailures >= 2 {
-		ylw := colorYellow
-		nc := colorReset
-		fmt.Printf("  %sℹ%s Multiple bind failures detected (%d), will request new signature next cycle\n",
-			ylw, nc, m.state.ConsecutiveBindFailures)
-		debugLog(m.config, "Setting FORCE_REFRESH=true due to %d consecutive failures", m.state.ConsecutiveBindFailures)
-		m.state.ForceRefresh = true
-	}
-}
-
-func (m *KeepaliveManager) handleRefreshFailure() {
+func (m *KeepaliveManager) handleRefreshFailure(err error) {
 	showInfo()
-	showError("Signature refresh failed, reconnecting...")
-	debugLog(m.config, "Signature refresh failed after retries")
+	showError(fmt.Sprintf("Signature refresh failed: %v", err))
+	showError("Reconnecting...")
+	debugLog(m.config, "Signature refresh failed, triggering VPN reconnection")
 
-	m.state.ConsecutiveRefreshFailures++
-	m.state.ForceRefresh = false
-
-	debugLog(m.config, "Incremented CONSECUTIVE_REFRESH_FAILURES to %d", m.state.ConsecutiveRefreshFailures)
-
-	// Immediate reconnect on any refresh failure
-	if m.state.ConsecutiveRefreshFailures >= 1 {
-		debugLog(m.config, "Triggering VPN reconnection due to signature refresh failure")
-		os.WriteFile("/tmp/pf_signature_failed", []byte(""), 0644)
-		os.Exit(1)
-	}
+	// Immediate reconnect on any signature refresh failure
+	os.WriteFile("/tmp/pf_signature_failed", []byte(""), 0644)
+	os.Exit(1)
 }
 
 func (m *KeepaliveManager) notifyPortChange(port int) {

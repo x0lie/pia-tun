@@ -13,16 +13,16 @@ import (
 )
 
 type Config struct {
-	Token                  string
-	PeerIP                 string
-	MetaCN                 string
-	PFGateway              string
-	BindInterval           time.Duration
-	SignatureRefreshDays   int
-	SignatureSafetyHours   int
-	PortFile               string
-	WebhookURL             string
-	DebugMode              bool
+	Token                string
+	PeerIP               string
+	MetaCN               string
+	PFGateway            string
+	BindInterval         time.Duration
+	SignatureRefreshDays int
+	SignatureSafetyHours int
+	PortFile             string
+	WebhookURL           string
+	DebugMode            bool
 }
 
 const (
@@ -76,16 +76,16 @@ func loadConfig() (*Config, error) {
 	}
 
 	config := &Config{
-		Token:                  strings.TrimSpace(string(token)),
-		PeerIP:                 strings.TrimSpace(string(peerIP)),
-		MetaCN:                 strings.TrimSpace(string(metaCN)),
-		PFGateway:              gateway,
-		BindInterval:           time.Duration(getEnvInt("PF_BIND_INTERVAL", 600)) * time.Second,
-		SignatureRefreshDays:   getEnvInt("PF_SIGNATURE_REFRESH_DAYS", 30),
-		SignatureSafetyHours:   getEnvInt("PF_SIGNATURE_SAFETY_HOURS", 24),
-		PortFile:               getEnvOrDefault("PORT_FILE", "/etc/wireguard/port"),
-		WebhookURL:             os.Getenv("WEBHOOK_URL"),
-		DebugMode:              getEnvBool("_LOG_LEVEL"),
+		Token:                strings.TrimSpace(string(token)),
+		PeerIP:               strings.TrimSpace(string(peerIP)),
+		MetaCN:               strings.TrimSpace(string(metaCN)),
+		PFGateway:            gateway,
+		BindInterval:         time.Duration(getEnvInt("PF_BIND_INTERVAL", 900)) * time.Second,
+		SignatureRefreshDays: getEnvInt("PF_SIGNATURE_REFRESH_DAYS", 31),
+		SignatureSafetyHours: getEnvInt("PF_SIGNATURE_SAFETY_HOURS", 24),
+		PortFile:             getEnvOrDefault("PORT_FILE", "/etc/wireguard/port"),
+		WebhookURL:           os.Getenv("WEBHOOK_URL"),
+		DebugMode:            getEnvBool("_LOG_LEVEL"),
 	}
 
 	return config, nil
@@ -130,18 +130,18 @@ func showVPNConnected() {
 	grn := colorGreen
 	bold := colorBold
 	nc := colorReset
-    fmt.Printf("\n%s╔════════════════════════════════════════════════╗%s\n", grn, nc)
-    fmt.Printf("%s║%s                %s✓%s %sVPN Connected%s                 %s║%s\n", grn, nc, grn, nc, bold, nc, grn, nc)
-    fmt.Printf("%s╚════════════════════════════════════════════════╝%s\n\n", grn, nc)
+	fmt.Printf("\n%s╔════════════════════════════════════════════════╗%s\n", grn, nc)
+	fmt.Printf("%s║%s                %s✓%s %sVPN Connected%s                 %s║%s\n", grn, nc, grn, nc, bold, nc, grn, nc)
+	fmt.Printf("%s╚════════════════════════════════════════════════╝%s\n\n", grn, nc)
 }
 
 func showVPNConnectedWarning() {
 	ylw := colorYellow
 	bold := colorBold
 	nc := colorReset
-    fmt.Printf("\n%s╔════════════════════════════════════════════════╗%s\n", ylw, nc)
-    fmt.Printf("%s║%s                %s⚠%s %sVPN Connected%s                 %s║%s\n", ylw, nc, ylw, nc, bold, nc, ylw, nc)
-    fmt.Printf("%s╚════════════════════════════════════════════════╝%s\n\n", ylw, nc)
+	fmt.Printf("\n%s╔════════════════════════════════════════════════╗%s\n", ylw, nc)
+	fmt.Printf("%s║%s                %s⚠%s %sVPN Connected%s                 %s║%s\n", ylw, nc, ylw, nc, bold, nc, ylw, nc)
+	fmt.Printf("%s╚════════════════════════════════════════════════╝%s\n\n", ylw, nc)
 }
 
 func main() {
