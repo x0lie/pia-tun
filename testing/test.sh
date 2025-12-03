@@ -39,6 +39,8 @@ cleanup() {
     if docker ps -a | grep -q "$CONTAINER_NAME" 2>/dev/null; then
         echo ""
         echo -e "${BLUE}=== Cleanup ===${NC}"
+        # Try v2 first, fallback to v1
+        docker compose -f testing/docker-compose.test.yml down -v 2>/dev/null || \
         docker-compose -f testing/docker-compose.test.yml down -v 2>/dev/null || true
         docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
     fi
@@ -99,11 +101,15 @@ check_prerequisites() {
     fi
     pass "Docker is available"
 
-    if ! command -v docker-compose &> /dev/null; then
+    # Check for Docker Compose v2 (docker compose) or v1 (docker-compose)
+    if docker compose version &> /dev/null; then
+        pass "Docker Compose v2 available"
+    elif command -v docker-compose &> /dev/null; then
+        pass "Docker Compose v1 available"
+    else
         fail "Docker Compose is not installed"
         exit 1
     fi
-    pass "Docker Compose is available"
 
     if ! command -v go &> /dev/null; then
         fail "Go is not installed (required for building leak tester)"
