@@ -1,4 +1,6 @@
 .git
+.github/
+.gitignore
 README.md
 PROJECT_STRUCTURE.md
 CLAUDE.md
