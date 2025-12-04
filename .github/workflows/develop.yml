@@ -79,12 +79,12 @@ jobs:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Build and push multi-arch image with :develop tag
+      # Build and push amd64 image with :develop tag
       - name: Build and push develop image
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          platforms: linux/amd64
           push: true
           tags: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:develop
           cache-from: type=gha
@@ -101,4 +101,4 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Commit**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Platforms**: linux/amd64, linux/arm64, linux/arm/v7" >> $GITHUB_STEP_SUMMARY
+          echo "**Platform**: linux/amd64 only (multi-arch in releases)" >> $GITHUB_STEP_SUMMARY
