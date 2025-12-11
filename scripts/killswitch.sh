@@ -188,7 +188,13 @@ nft_apply_baseline_killswitch() {
         show_debug "Rule 5: Skipped (no local networks)"
     fi
 
-    # 6. Drop everything else (handled by policy drop, no explicit rule needed)
+    # 6. ICMPv6 (essential for IPv6 functionality when IPv6 is enabled)
+    if [ "${DISABLE_IPV6}" != "true" ]; then
+        show_debug "Rule 6: Allow ICMPv6 (Neighbor Discovery, Router Discovery, MTU, etc.)"
+        nft add rule inet vpn_filter output meta l4proto ipv6-icmp accept
+    fi
+
+    # 7. Drop everything else (handled by policy drop, no explicit rule needed)
     
     # IPv6 protection
     if [ "${DISABLE_IPV6}" = "true" ]; then
@@ -247,8 +253,14 @@ nft_apply_baseline_killswitch() {
         show_debug "INPUT Rule 3: Skipped (no local networks)"
     fi
 
-    # 4. Port forwarding will be added by add_forwarded_port_to_input() when available
-    show_debug "INPUT Rule 4: Port forwarding (will be added when port is allocated)"
+    # 4. ICMPv6 (essential for IPv6 functionality when IPv6 is enabled)
+    if [ "${DISABLE_IPV6}" != "true" ]; then
+        show_debug "INPUT Rule 4: Allow ICMPv6 (Neighbor Discovery, Router Discovery, MTU, etc.)"
+        nft add rule inet vpn_filter input meta l4proto ipv6-icmp accept
+    fi
+
+    # 5. Port forwarding will be added by add_forwarded_port_to_input() when available
+    show_debug "INPUT Rule 5: Port forwarding (will be added when port is allocated)"
 
     # Policy drop handles everything else (proxy/metrics NOT exposed to internet via VPN)
 
@@ -540,6 +552,12 @@ ipt_setup_ipv6_protection() {
     ip6tables -A VPN_IN6 -i lo -j ACCEPT
     ip6tables -A VPN_IN6 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
+    # Allow ICMPv6 (essential for IPv6 functionality)
+    if [ "${DISABLE_IPV6}" != "true" ]; then
+        show_debug "Adding ICMPv6 rule to VPN_IN6"
+        ip6tables -A VPN_IN6 -p ipv6-icmp -j ACCEPT
+    fi
+
     # Build list of allowed ports for IPv6 (same as IPv4)
     if [ "${LOCAL_NETWORK:-}" = "all" ] || [ -n "${LOCAL_NETWORK:-}" ]; then
         local allowed_ports=""
@@ -589,7 +607,12 @@ ipt_setup_ipv6_protection() {
 
     ipt_apply_local_network_rules "VPN_OUT6" "true"
 
-    [ "${DISABLE_IPV6}" != "true" ] && ipt_add_fw_rule "VPN_OUT6" -o pia -j ACCEPT
+    # Allow ICMPv6 (essential for IPv6 functionality)
+    if [ "${DISABLE_IPV6}" != "true" ]; then
+        show_debug "Adding ICMPv6 rule to VPN_OUT6"
+        ipt_add_fw_rule "VPN_OUT6" -p ipv6-icmp -j ACCEPT
+        ipt_add_fw_rule "VPN_OUT6" -o pia -j ACCEPT
+    fi
 
     ipt_add_fw_rule "VPN_OUT6" -j DROP
     ip6tables -I OUTPUT 1 -j VPN_OUT6
@@ -687,6 +710,7 @@ ipt_add_vpn_interface() {
     if [ "${DISABLE_IPV6}" != "true" ]; then
         show_debug "Updating IPv6 rules for VPN"
         ip6tables -D VPN_OUT6 -j DROP 2>/dev/null || true
+        ipt_add_fw_rule "VPN_OUT6" -p ipv6-icmp -j ACCEPT
         ipt_add_fw_rule "VPN_OUT6" -o pia -j ACCEPT
         ipt_add_fw_rule "VPN_OUT6" -j DROP
     fi
