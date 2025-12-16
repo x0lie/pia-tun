@@ -335,6 +335,18 @@ show_debug "  RESTART_SERVICES=$RESTART_SERVICES"
 show_debug "  METRICS=$METRICS"
 show_debug "  LOG_LEVEL=${LOG_LEVEL} (numeric: $_LOG_LEVEL)"
 
+# CAP_NET_ADMIN check – add after env debug logs (end of section 23-37)
+CAP_NET_ADMIN=0x1000  # CAP_NET_ADMIN is capability 12 (1 << 12 = 0x1000)
+cap_eff=$(grep -i '^CapEff:' /proc/self/status | awk '{print $2}')
+# Convert hex string to decimal for arithmetic comparison
+cap_eff_decimal=$((0x$cap_eff))
+if [ $((cap_eff_decimal & CAP_NET_ADMIN)) -eq 0 ]; then
+    show_error "Container missing CAP_NET_ADMIN capability"
+    show_error "Required for firewall management. Add '--cap-add=NET_ADMIN' to docker run"
+    exit 1
+fi
+show_debug "CAP_NET_ADMIN check passed (CapEff: 0x$cap_eff)"
+
 show_debug "Starting initial connection"
 if initial_connect; then
     main_loop
