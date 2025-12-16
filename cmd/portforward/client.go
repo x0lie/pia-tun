@@ -20,6 +20,7 @@ type PIAClient struct {
 
 type SignatureResponse struct {
 	Status    string `json:"status"`
+	Message   string `json:"message"`
 	Payload   string `json:"payload"`
 	Signature string `json:"signature"`
 }
@@ -159,7 +160,7 @@ func (c *PIAClient) GetSignature() (*SignatureResponse, error) {
 		return nil, &APIError{
 			Operation: "getSignature",
 			Status:    sigResp.Status,
-			Message:   "",
+			Message:   sigResp.Message,
 		}
 	}
 
@@ -218,7 +219,6 @@ func (c *PIAClient) GetSignatureWithRetry(ctx context.Context, retryDuration tim
 		// Check if this is an API error (status != OK)
 		// Don't retry API errors - need to reconnect instead
 		if _, isAPIError := err.(*APIError); isAPIError {
-			showError(fmt.Sprintf("getSignature API error: %v", err))
 			return nil, err
 		}
 
