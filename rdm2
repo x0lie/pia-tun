@@ -1,0 +1,220 @@
+# pia-tun
+
+[![Docker Image Size](https://img.shields.io/docker/image-size/x0lie/pia-tun?label=image%20size)](https://hub.docker.com/r/x0lie/pia-tun)
+[![Docker Pulls](https://img.shields.io/docker/pulls/x0lie/pia-tun)](https://hub.docker.com/r/x0lie/pia-tun)
+[![GitHub](https://img.shields.io/github/license/x0lie/pia-tun)](https://github.com/x0lie/pia-tun)
+
+A secure, multi-architecture Docker container that connects to Private Internet Access (PIA) using WireGuard with advanced features including a killswitch, port forwarding with API updates, SOCKS5/HTTP proxy support, and health monitoring with Prometheus metrics.
+
+## Features
+
+- **Secure WireGuard VPN Connection** - Establishes secure tunnels to PIA servers with automatic reconnection
+- **Advanced Killswitch** - Prevents IP leaks with nftables (fallback to iptables) with surgical exemptions
+- **Port Forwarding** - Automatic port binding with API updates to torrent clients (qBittorrent, Transmission, Deluge, rTorrent)
+- **SOCKS5 & HTTP Proxy** - Built-in proxy server with authentication support
+- **Health Monitoring** - Continuous connection monitoring with failure detection and automatic reconnection
+- **Prometheus Metrics** - Real-time monitoring data accessible via HTTP endpoint
+- **Zero-Leak Reconnection** - Ensures no IP leaks occur during VPN reconnections
+- **Multi-Architecture Support** - Builds for amd64 and arm64 (via Docker buildx)
+- **Minimal Attack Surface** - Alpine-based image with all capabilities dropped except NET_ADMIN
+
+## Architecture
+
+The pia-tun container uses a hybrid approach combining shell scripts and Go binaries for optimal performance and security:
+
+### Shell Scripts (app/scripts/)
+- `run.sh` - Main orchestrator managing lifecycle and reconnection
+- `vpn.sh` - PIA authentication and WireGuard configuration 
+- `killswitch.sh` - Firewall management with surgical exemptions
+- `verify_connection.sh` - Connection integrity verification
+- `proxy_go.sh` - Proxy service lifecycle management
+- `port_monitor.sh` - Monitors forwarded ports for API updates
+- `port_api_updater.sh` - Updates torrent client port APIs
+
+### Go Binaries (cmd/)
+- `cmd/monitor/` - Health monitoring with metrics collection
+- `cmd/proxy/` - SOCKS5/HTTP proxy server
+- `cmd/portforward/` - Port forwarding manager with signature handling
+
+## Quick Start
+
+### Docker Compose (Recommended)
+
+```yaml
+services:
+  pia-tun:
+    image: x0lie/pia-tun
+    container_name: pia-tun
+    cap_add:
+      - NET_ADMIN
+    cap_drop:
+      - ALL
+    environment:
+      - TZ=America/New_York
+      - PIA_LOCATION=ca_ontario,ca_toronto
+      - PORT_FORWARDING=true
+      - PROXY_ENABLED=true
+      - PORT_API_TYPE=qbittorrent
+      - PORT_API_URL=http://localhost:8080
+      - LOCAL_NETWORK=192.168.1.0/24
+    secrets:
+      - pia_user
+      - pia_pass
+    ports:
+      - 8080:8080  # Proxy port
+      - 1080:1080  # SOCKS5 port
+      - 9090:9090  # Metrics port
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    environment:
+      - TZ=America/New_York
+      - PUID=1000
+      - PGID=1000
+      - WEBUI_PORT=8080
+    volumes:
+      - ./qbittorrent/config:/config
+      - ./qbittorrent/downloads:/downloads
+    network_mode: "service:pia-tun"
+    depends_on:
+      - pia-tun
+
+secrets:
+  pia_user:
+    file: ./secrets/pia_user
+  pia_pass:
+    file: ./secrets/pia_pass
+```
+
+### Manual Run
+
+```bash
+docker run --rm -it \
+  --cap-add=NET_ADMIN \
+  --cap-drop=ALL \
+  -e PIA_USER=p1234567 \
+  -e PIA_PASS='password' \
+  -e PIA_LOCATION=ca_ontario \
+  -e PORT_FORWARDING=true \
+  -e PORT_API_TYPE=qbittorrent \
+  -e PORT_API_URL=http://localhost:8080 \
+  -e LOCAL_NETWORK=192.168.1.0/24 \
+  -p 8080:8080 \
+  -p 1080:1080 \
+  -p 9090:9090 \
+  x0lie/pia-tun
+```
+
+## Environment Variables
+
+### Required
+- `PIA_USER` / `/run/secrets/pia_user` - PIA username
+- `PIA_PASS` / `/run/secrets/pia_pass` - PIA password  
+- `PIA_LOCATION` - Server location(s), comma-separated (e.g., `ca_ontario,ca_toronto`)
+
+### Networking
+- `LOCAL_NETWORK` - CIDR ranges for LAN access (e.g., `192.168.1.0/24,172.17.0.0/16`)
+- `LOCAL_PORTS` - Ports accessible from LAN (e.g., `8080,9091`)
+- `DNS` - DNS server (`pia` or custom IP)
+- `DISABLE_IPV6` - Block IPv6 (default: `true`)
+
+### Port Forwarding
+- `PORT_FORWARDING` - Enable port forwarding (`true`/`false`)
+- `PORT_API_TYPE` - Auto-update torrent client (`qbittorrent`, `deluge`, `transmission`, `rtorrent`)
+- `PORT_API_URL` - API endpoint (e.g., `http://localhost:8080`)
+- `PORT_API_USER` / `PORT_API_PASS` - API credentials
+
+### Proxy
+- `PROXY_ENABLED` - Enable SOCKS5/HTTP proxy (`true`/`false`)
+- `SOCKS5_PORT` - SOCKS5 port (default: 1080)
+- `HTTP_PROXY_PORT` - HTTP proxy port (default: 8888)  
+- `PROXY_USER` / `PROXY_PASS` - Proxy authentication
+
+### Monitoring
+- `CHECK_INTERVAL` - Health check interval in seconds (default: 15)
+- `MAX_FAILURES` - Failure threshold before reconnect (default: 3)
+- `METRICS` - Enable Prometheus metrics (default: `false`)
+- `METRICS_PORT` - Metrics server port (default: 9090)
+- `LOG_LEVEL` - Logging verbosity (`info`, `debug`)
+
+## Security Features
+
+### Killswitch Implementation
+- **Three-layer defense**: Baseline killswitch, bypass routing table, surgical exemptions
+- **Auto-detection**: Uses nftables when available (O(1) lookups) or falls back to iptables
+- **Zero leak windows**: No traffic can leak during reconnection
+- **Surgical exemptions**: Temporary firewall holes for PIA API calls during setup only
+
+### Reconnection Flow
+1. Health monitor detects failure → creates `/tmp/vpn_reconnect_requested`
+2. Main loop detects flag → calls `perform_reconnection()`
+3. VPN torn down → baseline killswitch remains active
+4. New server selected → WireGuard reestablished → killswitch updated
+5. Services (proxy, port forwarding) restarted
+
+### Zero-Leak Architecture
+- Baseline killswitch stays active during reconnection
+- WAN checks via bypass routing (no firewall manipulation)
+- Surgical exemptions for setup only (removed immediately after use)
+
+## Metrics Endpoint
+
+Prometheus-compatible metrics are available at `http://<container-ip>:9090/metrics` with JSON format at `http://<container-ip>:9090/metrics?format=json`.
+
+Example metrics:
+```
+# HELP vpn_health_checks_total Total health checks performed
+# TYPE vpn_health_checks_total counter
+vpn_health_checks_total 123
+
+# HELP vpn_connection_up Current connection status (1=up, 0=down)
+# TYPE vpn_connection_up gauge
+vpn_connection_up 1
+
+# HELP vpn_server_uptime_seconds Time connected to current server
+# TYPE vpn_server_uptime_seconds gauge
+vpn_server_uptime_seconds 3600
+```
+
+## Testing and Debugging
+
+```bash
+# Check logs
+docker logs pia-tun
+
+# Test killswitch
+docker exec pia-tun nft list table inet vpn_filter
+
+# Verify WireGuard status
+docker exec pia-tun wg show pia
+
+# Check for IP leaks
+docker exec pia-tun curl ifconfig.me  # Should show VPN IP
+docker exec pia-tun curl -6 ifconfig.co  # Should fail (IPv6 blocked)
+
+# Test reconnection
+docker exec pia-tun wg set pia peer $(docker exec pia-tun wg show pia peers) remove
+```
+
+## Building
+
+```bash
+# Build Docker image
+docker build -t pia-tun .
+
+# Multi-arch build (requires buildx)
+docker buildx build --platform linux/amd64,linux/arm64 -t pia-tun .
+```
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+## Acknowledgments
+
+This project is designed for maximum security, performance, and functionality. It leverages PIA's WireGuard servers and implements industry best practices for VPN connectivity, including secure killswitches and zero-leak reconnections.
+
+## Contributing
+
+Contributions are welcome! Please submit issues and pull requests through GitHub.
