@@ -69,10 +69,10 @@ monitor_port_changes() {
             fi
 
             if update_port_api "$INITIAL_PORT"; then
-                show_success "[$(date '+%H:%M:%S')] $PORT_API_TYPE port set to $INITIAL_PORT"
+                show_success "[$(date '+%Y-%m-%d %H:%M:%S')] $PORT_API_TYPE port updated"
                 LAST_UPDATE_SUCCESS=true
             else
-                show_warning "[$(date '+%H:%M:%S')] $PORT_API_TYPE not reachable, will retry"
+                show_warning "[$(date '+%Y-%m-%d %H:%M:%S')] $PORT_API_TYPE not reachable, will retry"
                 show_debug "Initial port update failed, will retry"
                 LAST_UPDATE_SUCCESS=false
             fi
@@ -140,10 +140,10 @@ monitor_port_changes() {
             if update_port_api "$CURRENT_PORT"; then
                 # Success!
                 if [ "$CURRENT_PORT" != "$LAST_PORT" ]; then
-                    show_success "[$(date '+%H:%M:%S')] $PORT_API_TYPE port updated to $CURRENT_PORT"
+                    show_success "[$(date '+%Y-%m-%d %H:%M:%S')] $PORT_API_TYPE port updated"
                     show_debug "Port update successful (new port: $CURRENT_PORT)"
                 else
-                    show_success "[$(date '+%H:%M:%S')] $PORT_API_TYPE now reachable, port set to $CURRENT_PORT"
+                    show_success "[$(date '+%Y-%m-%d %H:%M:%S')] $PORT_API_TYPE now reachable, port updated"
                     show_debug "Retry successful (port: $CURRENT_PORT)"
                 fi
                 LAST_UPDATE_SUCCESS=true
@@ -151,7 +151,7 @@ monitor_port_changes() {
                 # Failed - will retry next cycle
                 if [ "$LAST_UPDATE_SUCCESS" = true ]; then
                     # Only log on first failure (not on every retry)
-                    show_warning "[$(date '+%H:%M:%S')] $PORT_API_TYPE not reachable, will retry"
+                    show_warning "[$(date '+%Y-%m-%d %H:%M:%S')] $PORT_API_TYPE not reachable, will retry"
                     show_debug "API update failed (first failure)"
                 else
                     show_debug "API update failed (continuing retry cycle)"

@@ -12,20 +12,20 @@ import (
 )
 
 type KeepaliveManager struct {
-	config  *Config
-	client  *PIAClient
-	state   *State
-	mu      sync.Mutex
+	config *Config
+	client *PIAClient
+	state  *State
+	mu     sync.Mutex
 }
 
 type State struct {
-	Port                   int
-	Payload                string
-	Signature              string
-	ExpiresAt              time.Time
-	LastSignatureTime      time.Time
-	BindCount              int
-	SignatureRefreshCount  int
+	Port                  int
+	Payload               string
+	Signature             string
+	ExpiresAt             time.Time
+	LastSignatureTime     time.Time
+	BindCount             int
+	SignatureRefreshCount int
 }
 
 func NewKeepaliveManager(config *Config, client *PIAClient) *KeepaliveManager {
@@ -61,7 +61,7 @@ func (m *KeepaliveManager) initialSetup() error {
 	// Try to get signature with retries (5 minutes for initial setup)
 	resp, err := m.client.GetSignatureWithRetry(ctx, 5*time.Minute)
 	if err != nil {
-		showError(fmt.Sprintf("Port forwarding failed after 5 minutes"))
+		showError("Port forwarding failed after 5 minutes")
 		debugLog(m.config, "Exhausted all initial signature attempts, giving up")
 		showVPNConnectedWarning()
 
@@ -207,12 +207,12 @@ func (m *KeepaliveManager) keepaliveLoop(ctx context.Context) error {
 				debugLog(m.config, "Initiating signature refresh #%d (reason: %s)", m.state.SignatureRefreshCount, reason)
 
 				// Only show refresh message if not in rapid test mode
-				if m.config.SignatureRefreshDays > 0 {
-					blu := colorBlue
-					nc := colorReset
-					fmt.Printf("[%s] %s↻%s Getting new signature (%s)...\n",
-						time.Now().Format("2006-01-02 15:04:05"), blu, nc, reason)
-				}
+				// if m.config.SignatureRefreshDays > 0 {
+				// 	blu := colorBlue
+				// 	nc := colorReset
+				// 	fmt.Printf("  %s↻%s [%s] Getting new signature (%s)...\n",
+				// 		time.Now().Format("2006-01-02 15:04:05"), blu, nc, reason)
+				// }
 
 				m.mu.Unlock()
 				if err := m.refreshSignature(ctx); err != nil {
@@ -350,11 +350,11 @@ func (m *KeepaliveManager) refreshSignature(ctx context.Context) error {
 	if portChanged {
 		debugLog(m.config, "Port changed: %d -> %d", oldPort, newPort)
 
-		if m.config.SignatureRefreshDays > 0 {
-			ylw := colorYellow
-			nc := colorReset
-			fmt.Printf("  %sℹ%s Port changed: %d → %d\n", ylw, nc, oldPort, newPort)
-		}
+		currentTime := time.Now()
+		blu := colorBlue
+		grn := colorGreen
+		nc := colorReset
+		fmt.Printf("\n  %s↻%s [%s] New Signature with Port: %s%d%s\n", blu, nc, currentTime.Format("2006-01-02 15:04:05"), grn, newPort, nc)
 
 		// Write new port to file
 		debugLog(m.config, "Writing new port to %s", m.config.PortFile)
@@ -395,16 +395,12 @@ func (m *KeepaliveManager) refreshSignature(ctx context.Context) error {
 		debugLog(m.config, "Bind failed after fresh signature (unusual), will retry next cycle")
 	} else {
 		debugLog(m.config, "Bind with new signature successful")
-		if m.config.SignatureRefreshDays > 0 {
-			grn := colorGreen
-			nc := colorReset
-			expiryDate := newExpiresAt.Format("2006-01-02 15:04:05")
-			showSuccess(fmt.Sprintf("Signature refreshed, port %s%d%s expires: %s", grn, newPort, nc, expiryDate))
-		}
-	}
-
-	if m.config.SignatureRefreshDays > 0 {
-		showInfo()
+		// if m.config.SignatureRefreshDays > 0 {
+		// 	grn := colorGreen
+		// 	nc := colorReset
+		// 	expiryDate := newExpiresAt.Format("2006-01-02 15:04:05")
+		// 	showSuccess(fmt.Sprintf("Signature refreshed, port %s%d%s expires: %s", grn, newPort, nc, expiryDate))
+		// }
 	}
 
 	return nil
