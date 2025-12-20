@@ -125,7 +125,7 @@ This document provides a comprehensive map of the pia-tun codebase, organized by
 - Creates firewall chains with DROP policy (blocks everything by default)
 - Allows: loopback, bypass routes, established connections, local networks
 - IPv6: Completely blocked if `DISABLE_IPV6=true`, otherwise routed through VPN only
-- Creates `/tmp/killswitch_ready` flag after verification passes
+- Creates `/tmp/killswitch_up` flag after verification passes
 
 **VPN Interface Management:**
 - `add_vpn_to_killswitch()`: Inserts rules to allow traffic through pia interface and fwmark 51820

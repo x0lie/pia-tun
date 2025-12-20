@@ -138,7 +138,7 @@ Three GitHub Actions workflows:
 ### Inter-Process Communication
 
 - **Named pipes:** `/tmp/vpn_reconnect_pipe`, `/tmp/port_change_pipe`
-- **Flag files:** `/tmp/reconnecting`, `/tmp/pf_signature_failed`, `/tmp/killswitch_ready`, `/tmp/port_forwarding_complete`
+- **Flag files:** `/tmp/reconnecting`, `/tmp/pf_signature_failed`, `/tmp/killswitch_up`, `/tmp/port_forwarding_complete`
 - **PID files:** `/tmp/proxy.pid`, `/tmp/portforward.pid`
 - **State files:** `/tmp/pia_token`, `/tmp/client_ip`, `/tmp/meta_cn`, `/tmp/pf_gateway`, `/tmp/server_latency`, `/tmp/real_ip`
 - **Config files:** `/etc/wireguard/pia.conf`, `/etc/wireguard/port`
@@ -788,7 +788,7 @@ curl http://localhost:9090/metrics?format=json
 | PIA auth token | `/tmp/pia_token` |
 | Server metadata | `/tmp/meta_cn`, `/tmp/client_ip`, `/tmp/pf_gateway` |
 | Real IP | `/tmp/real_ip` |
-| Status flags | `/tmp/{reconnecting,killswitch_ready,port_forwarding_complete,pf_signature_failed}` |
+| Status flags | `/tmp/{reconnecting,killswitch_up,port_forwarding_complete,pf_signature_failed}` |
 | Named pipes | `/tmp/{vpn_reconnect_pipe,port_change_pipe}` |
 | PID files | `/tmp/{proxy,portforward}.pid` |
 
@@ -836,7 +836,6 @@ curl http://localhost:9090/metrics?format=json
 ### Known Limitations
 
 - No Go unit tests (only integration tests)
-- No README.md yet (multiple outline drafts exist)
 - Image name inconsistency in CI (olsonalexw/k8s-wireguard-pia vs x0lie/pia-tun)
 - ARM builds removed from CI (see commit c7ae673)
 
