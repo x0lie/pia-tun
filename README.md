@@ -2,11 +2,13 @@
 
 A Docker container for Wireguard + Private Internet Access (PIA) VPN connectivity. Designed for high throughput, automatic health monitoring, and seamless integration with torrent clients and other network-dependent services.
 
+![Title image](img/pia-tun-image.png)
+
 ## Features
 
-- **WireGuard VPN** with automatic PIA server authentication and configuration
-- **Kill-Switch Firewall** - Zero-leak protection with nftables and iptables fallback. Deny-by-default design
-- **Intelligent Server Selection** - Multi-location support with automatic latency-based routing
+- **WireGuard VPN** for PIA clients with latency-based server selection
+- **Firewall** - Zero-leak with nftables and iptables fallback. Deny-by-default design
+- **Smart Server Selection** - Multi-location support with automatic latency-based selection
 - **Port Forwarding** - Automatic signature management and keep-alive with torrent client API integration
 - **SOCKS5/HTTP Proxies** - Built-in dual-protocol proxy server with optional authentication
 - **Prometheus Metrics** - Export health, connection, and performance metrics
@@ -17,183 +19,7 @@ A Docker container for Wireguard + Private Internet Access (PIA) VPN connectivit
 
 ## Quick Start
 
-### Using Docker Compose
-
-```yaml
-services:
-  pia-tun:
-    image: x0lie/pia-tun:latest
-    container_name: pia-tun
-    cap_add:
-      - NET_ADMIN
-    cap_drop:
-      - all
-    environment:
-      - TZ=America/New_York
-      - PIA_LOCATION=ca_ontario,ca_toronto
-      - PORT_FORWARDING=true
-      - LOCAL_NETWORK=192.168.1.0/24
-      - LOCAL_PORTS=8080
-    secrets:
-      - pia_user
-      - pia_pass
-    ports:
-      - 8080:8080
-
-secrets:
-  pia_user:
-    file: ./secrets/pia_user
-  pia_pass:
-    file: ./secrets/pia_pass
-```
-
-### Using Docker CLI
-
-```bash
-docker run -d \
-  --name pia-tun \
-  --cap-add=NET_ADMIN \
-  --cap-drop=all \
-  -e PIA_USER="p1234567" \
-  -e PIA_PASS="your_password" \
-  -e PIA_LOCATION="ca_ontario" \
-  -e PORT_FORWARDING=true \
-  -e LOCAL_NETWORK="192.168.1.0/24" \
-  -p 8080:8080 \
-  x0lie/pia-tun:latest
-```
-
-## Configuration
-
-### VPN Settings
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PIA_USER` | PIA username (or use `/run/secrets/pia_user`) | Required |
-| `PIA_PASS` | PIA password (or use `/run/secrets/pia_pass`) | Required |
-| `PIA_LOCATION` | Comma-separated locations (e.g., `ca_ontario,ca_toronto`). Tests latency and selects the best server. | Required |
-| `TZ` | Timezone for logging | `UTC` |
-| `DNS` | DNS provider: `pia` (default), `custom`, or specific IPs | `pia` |
-| `DISABLE_IPV6` | Block IPv6 traffic | `true` |
-| `HANDSHAKE_TIMEOUT` | WireGuard connection timeout (seconds) | `180` |
-
-### Network & Firewall
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `LOCAL_NETWORK` | CIDR ranges for LAN access (comma-separated) | None |
-| `LOCAL_PORTS` | Ports accessible from LAN (comma-separated) | None |
-
-**Example:** Allow LAN access to qBittorrent WebUI:
-```yaml
-environment:
-  - LOCAL_NETWORK=192.168.1.0/24,172.17.0.0/16
-  - LOCAL_PORTS=8080
-ports:
-  - 8080:8080
-```
-
-### Port Forwarding
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PORT_FORWARDING` | Enable PIA port forwarding | `false` |
-| `PORT_API_TYPE` | Torrent client type: `qbittorrent`, `transmission`, `deluge`, `rtorrent`, `custom` | None |
-| `PORT_API_URL` | Client API endpoint (e.g., `http://localhost:8080`) | None |
-| `PORT_API_USER` | Client API username | None |
-| `PORT_API_PASS` | Client API password | None |
-| `PORT_API_CMD` | Custom command for port updates (use `{PORT}` placeholder) | None |
-| `PORT_FILE` | File to write forwarded port | `/etc/wireguard/port` |
-
-**Supported Clients:**
-- **qBittorrent** - Cookie-based authentication, preferences API
-- **Transmission** - Session-based JSON-RPC
-- **Deluge** - Web UI daemon JSON-RPC
-- **rTorrent** - XML-RPC `network.port_range.set`
-- **Custom** - Define your own update command
-
-**Example with qBittorrent:**
-```yaml
-qbittorrent:
-  image: lscr.io/linuxserver/qbittorrent:latest
-  container_name: qbittorrent
-  network_mode: "service:pia-tun"
-  depends_on:
-    - pia-tun
-
-services:
-  pia-tun:
-    environment:
-      - PORT_FORWARDING=true
-      - PORT_API_TYPE=qbittorrent
-      - PORT_API_URL=http://localhost:8080
-      - PORT_API_USER=admin
-      - PORT_API_PASS=adminpass
-```
-
-### Proxy Settings
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PROXY_ENABLED` | Enable SOCKS5/HTTP proxies | `false` |
-| `SOCKS5_PORT` | SOCKS5 listen port | `1080` |
-| `HTTP_PROXY_PORT` | HTTP proxy listen port | `8888` |
-| `PROXY_USER` | Proxy authentication username (or use `/run/secrets/proxy_user`) | None |
-| `PROXY_PASS` | Proxy authentication password (or use `/run/secrets/proxy_pass`) | None |
-
-### Health Monitoring
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `CHECK_INTERVAL` | Health check frequency (seconds) | `15` |
-| `MAX_FAILURES` | Consecutive failures before reconnection | `3` |
-| `MONITOR_PARALLEL_CHECKS` | Run connectivity tests in parallel | `true` |
-
-**Health checks:**
-- WireGuard interface status
-- External connectivity (ICMP ping to 1.1.1.1, 8.8.8.8)
-- HTTP GET validation
-- WAN detection (distinguishes internet outages from VPN failures)
-
-### Metrics & Observability
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `METRICS` | Enable Prometheus metrics endpoint | `false` |
-| `METRICS_PORT` | Metrics server port | `9090` |
-
-**Endpoints:**
-- `/metrics` - Prometheus format
-- `/metrics?format=json` - JSON statistics
-
-**Exported metrics:**
-- Health check success/failure counts
-- Reconnection counter
-- Check duration histogram
-- Connection status (up/down)
-- Kill-switch active status
-- WireGuard handshake timestamp
-- Port forwarding status and port number
-- Transfer bytes (RX/TX)
-- Server latency and uptime
-
-**Example Prometheus scrape config:**
-```yaml
-scrape_configs:
-  - job_name: 'pia-tun'
-    static_configs:
-      - targets: ['pia-tun:9090']
-```
-
-### Advanced Options
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `LOG_LEVEL` | Logging verbosity: `error`, `info`, `debug` | `info` |
-
-## Usage with Torrent Clients
-
-### qBittorrent
+### Minimal Docker Compose
 
 ```yaml
 services:
@@ -206,12 +32,35 @@ services:
       - all
     environment:
       - PIA_LOCATION=ca_ontario
+    secrets:
+      - pia_user
+      - pia_pass
+
+secrets:
+  pia_user:
+    file: ./secrets/pia_user
+  pia_pass:
+    file: ./secrets/pia_pass
+```
+
+### Typical Docker Compose with qBittorrent
+
+```yaml
+services:
+  pia-tun:
+    image: x0lie/pia-tun:latest
+    container_name: pia-tun
+    cap_add:
+      - NET_ADMIN
+    cap_drop:
+      - all
+    environment:
+      - TZ=America/New_York
+      - PIA_LOCATION=ca_ontario,ca_ontario-so,ca_toronto
       - PORT_FORWARDING=true
       - PORT_API_TYPE=qbittorrent
       - PORT_API_URL=http://localhost:8080
-      - PORT_API_USER=admin                                     # Or allow passwordless LAN access in qbit settings
-      - PORT_API_PASS=adminpass
-      - LOCAL_NETWORK=192.168.1.0/24
+      - LOCAL_NETWORK=192.168.1.0/24,172.17.0.0/16
       - LOCAL_PORTS=8080
     secrets:
       - pia_user
@@ -248,45 +97,78 @@ secrets:
     file: ./secrets/pia_pass
 ```
 
-### Transmission
+## Configuration
 
-```yaml
-pia-tun:
-  environment:
-    - PORT_API_TYPE=transmission
-    - PORT_API_URL=http://localhost:9091
-    - PORT_API_USER=transmission
-    - PORT_API_PASS=password
-```
+### VPN Settings
 
-### Deluge
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PIA_USER` | PIA username (or use `/run/secrets/pia_user`) | Required |
+| `PIA_PASS` | PIA password (or use `/run/secrets/pia_pass`) | Required |
+| `PIA_LOCATION` | Comma-separated locations (e.g., `ca_ontario,ca_toronto`). Tests latency and selects the best server. | Required |
+| `TZ` | Timezone for logging | `UTC` |
+| `DNS` | DNS provider: `pia` (default), `custom`, or specific IPs | `pia` |
+| `DISABLE_IPV6` | Block IPv6 traffic | `true` |
+| `LOG_LEVEL` | Logging verbosity: `error`, `info`, `debug` | `info` |
 
-```yaml
-pia-tun:
-  environment:
-    - PORT_API_TYPE=deluge
-    - PORT_API_URL=http://localhost:8112
-    - PORT_API_PASS=deluge
-```
+### Network & Firewall
 
-### rTorrent
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LOCAL_NETWORK` | CIDR ranges for LAN access (comma-separated) | None |
+| `LOCAL_PORTS` | Ports accessible from LAN (comma-separated) | None |
 
-```yaml
-pia-tun:
-  environment:
-    - PORT_API_TYPE=rtorrent
-    - PORT_API_URL=http://localhost:8080
-```
+### Port Forwarding
 
-### Custom Client
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT_FORWARDING` | Enable PIA port forwarding | `false` |
+| `PORT_API_TYPE` | Torrent client type: `qbittorrent`, `transmission`, `deluge`, `rtorrent`, `custom` | None |
+| `PORT_API_URL` | Client API endpoint (e.g., `http://localhost:8080`) | None |
+| `PORT_API_USER` | Client API username | None |
+| `PORT_API_PASS` | Client API password | None |
+| `PORT_API_CMD` | Custom command for port updates (use `{PORT}` placeholder) | None |
+| `PORT_FILE` | File to write forwarded port | `/etc/wireguard/port` |
 
-```yaml
-pia-tun:
-  environment:
-    - PORT_FORWARDING=true
-    - PORT_API_TYPE=custom
-    - PORT_API_CMD=curl -X POST http://myapp:8080/port -d port={PORT}
-```
+### Proxy Settings
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PROXY_ENABLED` | Enable SOCKS5/HTTP proxies | `false` |
+| `SOCKS5_PORT` | SOCKS5 listen port | `1080` |
+| `HTTP_PROXY_PORT` | HTTP proxy listen port | `8888` |
+| `PROXY_USER` | Proxy authentication username (or use `/run/secrets/proxy_user`) | None |
+| `PROXY_PASS` | Proxy authentication password (or use `/run/secrets/proxy_pass`) | None |
+
+### Health Monitoring
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CHECK_INTERVAL` | Health check frequency (seconds) | `15` |
+| `MAX_FAILURES` | Consecutive failures before reconnection | `3` |
+| `MONITOR_PARALLEL_CHECKS` | Run connectivity tests in parallel | `true` |
+
+### Metrics & Observability
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `METRICS` | Enable Prometheus metrics endpoint | `false` |
+| `METRICS_PORT` | Metrics server port | `9090` |
+
+**Endpoints:**
+- `/metrics` - Prometheus format
+- `/metrics?format=json` - JSON statistics
+
+**Exported metrics:**
+- Health check success/failure counts
+- Reconnection counter
+- Check duration histogram
+- Connection status (up/down)
+- Kill-switch active status
+- WireGuard handshake timestamp
+- Port forwarding status and port number
+- Transfer bytes (RX/TX)
+- Server latency and uptime
 
 ## Kubernetes Deployment
 
@@ -341,160 +223,6 @@ spec:
           periodSeconds: 10
 ```
 
-## Verification & Testing
-
-### Check VPN Status
-
-```bash
-# View container logs
-docker logs pia-tun
-
-# Check WireGuard interface
-docker exec pia-tun wg show pia
-
-# Verify external IP (should be PIA's IP)
-docker exec pia-tun curl https://ifconfig.me
-
-# Check DNS
-docker exec pia-tun nslookup google.com
-
-# View forwarded port
-docker exec pia-tun cat /etc/wireguard/port
-```
-
-### Test Proxies
-
-```bash
-# SOCKS5
-curl -x socks5://localhost:1080 https://ifconfig.me
-
-# HTTP
-curl -x http://localhost:8888 https://ifconfig.me
-```
-
-### View Metrics
-
-```bash
-# Prometheus format
-curl http://localhost:9090/metrics
-
-# JSON format
-curl http://localhost:9090/metrics?format=json
-```
-
-## Troubleshooting
-
-### Container Exits Immediately
-
-**Error:** `The container requires the NET_ADMIN capability to run`
-
-**Solution:** Add `--cap-add=NET_ADMIN` or ensure `cap_add: [NET_ADMIN]` in compose file
-
----
-
-**Error:** `Could not authenticate - Credential change or account expired?`
-
-**Solution:** Verify PIA credentials are correct and account is active
-
-### Cannot Access Local Network
-
-**Problem:** LAN devices cannot reach services running in the container
-
-**Solution:** Configure local network access:
-```yaml
-environment:
-  - LOCAL_NETWORK=192.168.1.0/24
-  - LOCAL_PORTS=8080
-ports:
-  - 8080:8080
-```
-
-### Port Forwarding Not Working
-
-**Check port forwarding status:**
-```bash
-docker exec pia-tun cat /etc/wireguard/port
-```
-
-**Common issues:**
-- Selected region doesn't support port forwarding (use different location)
-- API credentials incorrect for torrent client
-
-**Verify API updates:**
-```bash
-# Check logs for port update messages
-docker logs pia-tun | grep -i "port"
-```
-
-### VPN Connection Drops
-
-**Symptoms:** Frequent reconnections, unstable connection
-
-**Diagnostics:**
-```bash
-# Check metrics for failure patterns
-curl http://localhost:9090/metrics?format=json
-
-# View reconnection count
-docker logs pia-tun | grep -i "reconnect"
-```
-
-**Solutions:**
-- Adjust `MAX_FAILURES` and `CHECK_INTERVAL` for your network conditions
-- Try different `PIA_LOCATION` with lower latency
-- Check if WAN is unstable (monitor distinguishes this automatically)
-
-### DNS Resolution Fails
-
-**Problem:** Cannot resolve domain names inside container
-
-**Solution:** Try different DNS providers:
-```yaml
-environment:
-  - DNS=custom  # Uses 1.1.1.1, 8.8.8.8
-```
-
-Or specify custom DNS:
-```yaml
-environment:
-  - DNS=208.67.222.222,208.67.220.220
-```
-
-### Dependent Services Start Before VPN
-
-**Problem:** Torrent client starts before kill-switch is active
-
-**Solution:** Use healthcheck with depends_on:
-```yaml
-pia-tun:
-  healthcheck:
-    test: ["CMD", "test", "-f", "/tmp/killswitch_up"]
-    interval: 5s
-    timeout: 2s
-    retries: 3
-    start_period: 3s
-
-qbittorrent:
-  depends_on:
-    pia-tun:
-      condition: service_healthy
-```
-
-### IPv6 Leaks
-
-**Problem:** IPv6 traffic bypassing VPN
-
-**Solution:** IPv6 is blocked by default. If issues persist, verify:
-```bash
-docker exec pia-tun ip6tables -L -v
-```
-
-To allow IPv6 through VPN:
-```yaml
-environment:
-  - DISABLE_IPV6=false
-```
-
 ## Security
 
 ### Kill-Switch Protection
@@ -503,18 +231,7 @@ The firewall operates in default-deny mode:
 - All traffic blocked except loopback and VPN interface
 - Kill-switch remains active during reconnections and after OOM kills
 - Local network access requires explicit configuration
-- WAN health checks use routing table bypass (no firewall holes) and only allow connections to NIST servers on port 13
-
-### Recommended Docker Configuration
-
-```yaml
-cap_add:
-  - NET_ADMIN
-cap_drop:
-  - all
-```
-
-This minimizes attack surface by granting only the required capability.
+- WAN health checks use bypass routing (no firewall holes)
 
 ### Secrets Management
 
@@ -542,18 +259,6 @@ secrets:
 
 Secrets are read from `/run/secrets/` and never logged.
 
-## Performance
-
-### Throughput
-
-Tested performance:
-- **Download:** over 800 mbps on a 940 mbps line
-
-### Optimizations
-
-- Efficient firewall rules tuned for throughput
-- Lightweight Alpine base with go binary
-
 ## Advanced Features
 
 ### Custom Port Update Commands
@@ -567,14 +272,15 @@ environment:
 ```
 
 The `{PORT}` placeholder is replaced with the forwarded port number.
+Upon new port it will try indefinitely until success is achieved.
 
 ### WAN Outage Handling
 
-The health monitor automatically detects internet outages:
-- Uses bypass routing to test WAN connectivity
-- Waits for internet recovery with exponential backoff (5s � 160s)
-- Avoids unnecessary VPN reconnections and log spam during ISP downtime
-- Logs WAN status changes
+The health monitor distinguishes internet outages from VPN failures:
+- Tests WAN connectivity via bypass routing
+- Bypass routes are only to NIST servers on port 13
+- Waits for internet recovery with exponential backoff (5s → 160s)
+- Prevents unnecessary reconnections during ISP downtime
 
 ## Architecture
 
@@ -586,7 +292,7 @@ For detailed technical documentation, see [PROJECT_STRUCTURE.md](PROJECT_STRUCTU
 - **killswitch.sh** - Firewall (nftables/iptables hybrid)
 - **monitor** (Go) - Health checks and Prometheus metrics
 - **proxy** (Go) - SOCKS5/HTTP proxy server
-- **portforward** (Go) - Port forwarding management and API updates
+- **portforward** (Go) - Port forwarding management
 
 ## Building from Source
 
