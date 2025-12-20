@@ -889,7 +889,7 @@ setup_baseline_killswitch() {
     show_debug "Setting up baseline killswitch"
 
     # Remove any stale flag file
-    rm -f /tmp/killswitch_ready
+    rm -f /tmp/killswitch_up
 
     # DEFENSIVE: Clean up any orphaned rules from previous container runs
     # This handles cases where cleanup didn't run due to crash, OOM kill, etc.
@@ -921,8 +921,8 @@ setup_baseline_killswitch() {
     }
 
     # Create flag file for health checks ONLY after verification passes
-    touch /tmp/killswitch_ready
-    show_debug "Created /tmp/killswitch_ready flag file"
+    touch /tmp/killswitch_up
+    show_debug "Created /tmp/killswitch_up flag file"
 
     show_success "Killswitch ready"
 }
@@ -1029,8 +1029,8 @@ cleanup_killswitch() {
     fi
 
     # Remove killswitch flag file
-    rm -f /tmp/killswitch_ready
-    show_debug "Removed /tmp/killswitch_ready flag file"
+    rm -f /tmp/killswitch_up
+    show_debug "Removed /tmp/killswitch_up flag file"
 }
 
 # Show firewall statistics

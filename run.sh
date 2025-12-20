@@ -98,7 +98,6 @@ initial_connect() {
             exit 1
         }
         show_info
-        touch /tmp/killswitch_up
 
         # Debug: Show killswitch rules
         if [ $_LOG_LEVEL -ge 2 ]; then
