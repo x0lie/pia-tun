@@ -173,8 +173,8 @@ perform_reconnection() {
 
     if $PF_ENABLED; then
         show_debug "Stopping port forwarding processes"
-        pkill -f "portforward" 2>/dev/null || true
-        pkill -f "port_monitor.sh" 2>/dev/null || true
+        pkill -9 -f "portforward" 2>/dev/null || true
+        pkill -9 -f "port_monitor.sh" 2>/dev/null || true
     fi
     
     if $PROXY_ENABLED_FLAG; then
@@ -201,7 +201,7 @@ perform_reconnection() {
 
             if $PF_ENABLED; then
                 show_debug "Starting port forwarding service"
-                /usr/local/bin/portforward &
+                /usr/local/bin/portforward & disown
 
                 # Wait for port forwarding to complete (max 30s)
                 local waited=0
@@ -228,7 +228,7 @@ perform_reconnection() {
                 show_info
                 show_step "Restarting port monitor..."
                 show_debug "Launching port_monitor.sh"
-                /app/scripts/port_monitor.sh &
+                /app/scripts/port_monitor.sh & disown
             fi
             
             sleep 2
@@ -266,7 +266,7 @@ main_loop() {
 
     if $PF_ENABLED; then
         show_debug "Starting port forwarding service"
-        /usr/local/bin/portforward &
+        /usr/local/bin/portforward & disown
 
         # Wait for port forwarding to complete (max 30s)
         local waited=0
@@ -299,7 +299,7 @@ main_loop() {
     # Start port monitor if PF and API updater are enabled
     if $PF_ENABLED && [ "$PORT_API_ENABLED" = "true" ]; then
         show_debug "Starting port monitor (PF + API enabled)"
-        /app/scripts/port_monitor.sh &
+        /app/scripts/port_monitor.sh & disown
     fi
 
     sleep 1
