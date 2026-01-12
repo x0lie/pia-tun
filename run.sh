@@ -79,14 +79,6 @@ initial_connect() {
 
     [ ! -f /tmp/reconnecting ] && print_banner
 
-    # Only capture real IP if not already captured
-    if [ ! -f /tmp/real_ip ]; then
-        capture_real_ip
-        show_info
-    else
-        show_debug "Real IP already captured: $(cat /tmp/real_ip 2>/dev/null || echo 'unknown')"
-    fi
-
     show_debug "Clearing /etc/resolv.conf"
     echo > /etc/resolv.conf
 
@@ -116,6 +108,14 @@ initial_connect() {
         fi
     else
         show_debug "Skipping baseline killswitch setup (restart=true)"
+    fi
+
+    # Only capture real IP if not already captured
+    if [ ! -f /tmp/real_ip ]; then
+        capture_real_ip
+        show_info
+    else
+        show_debug "Real IP already captured: $(cat /tmp/real_ip 2>/dev/null || echo 'unknown')"
     fi
 
     # VPN setup (uses surgical exemptions internally)

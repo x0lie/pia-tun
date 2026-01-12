@@ -1,12 +1,28 @@
 #!/bin/bash
 
 source /app/scripts/ui.sh
+source /app/scripts/killswitch.sh
 
 capture_real_ip() {
     show_step "Capturing pre-VPN IP address..."
     show_debug "Attempting to fetch real IP from api.ipify.org (timeout: 5s)"
     
-    local real_ip=$(timeout 5 curl -s https://api.ipify.org 2>/dev/null)
+    # Resolve ipify.org
+    show_debug "Resolving ipify.org"
+    local ipify_ip=$(resolve_hostname "api.ipify.org")
+    if [ -z "$ipify_ip" ]; then
+        show_error "Cannot resolve ipify.org"
+        return 1
+    fi
+
+    add_temporary_exemption "$ipify_ip" "443" "tcp" "ipify"
+
+    show_debug "retrieving real IP"
+    local real_ip=$(curl -s --connect-to "api.ipify.org::$ipify_ip:" \
+        'https://api.ipify.org' | head -1)
+    show_debug "real IP retrieved: $real_ip"
+
+    remove_temporary_exemption "ipify"
     
     if [ -n "$real_ip" ]; then
         echo "$real_ip" > /tmp/real_ip
