@@ -211,16 +211,6 @@ spec:
           value: "ca_ontario"
         - name: PORT_FORWARDING
           value: "true"
-        livenessProbe:
-          exec:
-            command: ["/app/scripts/healthcheck.sh"]
-          initialDelaySeconds: 30
-          periodSeconds: 60
-        readinessProbe:
-          exec:
-            command: ["/app/scripts/healthcheck.sh"]
-          initialDelaySeconds: 10
-          periodSeconds: 10
 ```
 
 ## Security
@@ -235,7 +225,7 @@ The firewall operates in default-deny mode:
 
 ### Secrets Management
 
-**Prefer Docker secrets over environment variables:**
+**Docker secrets:**
 
 ```yaml
 services:
@@ -279,7 +269,7 @@ Upon new port it will try indefinitely until success is achieved.
 The health monitor distinguishes internet outages from VPN failures:
 - Tests WAN connectivity via bypass routing
 - Bypass routes are only to NIST servers on port 13
-- Waits for internet recovery with exponential backoff (5s → 160s)
+- Waits indefinitely for internet recovery with exponential backoff (5s → 160s)
 - Prevents unnecessary reconnections during ISP downtime
 
 ## Architecture
@@ -294,30 +284,9 @@ For detailed technical documentation, see [PROJECT_STRUCTURE.md](PROJECT_STRUCTU
 - **proxy** (Go) - SOCKS5/HTTP proxy server
 - **portforward** (Go) - Port forwarding management
 
-## Building from Source
-
-```bash
-git clone https://github.com/x0lie/pia-tun.git
-cd pia-tun
-docker build -t pia-tun:local .
-```
-
-### Multi-Architecture Build
-
-```bash
-docker buildx build \
-  --platform linux/amd64,linux/arm64,linux/arm/v7 \
-  -t x0lie/pia-tun:latest \
-  --push .
-```
-
 ## License
 
 MIT License - See [LICENSE](LICENSE) for details
-
-## Contributing
-
-Contributions welcome! Please open an issue or pull request.
 
 ## Support
 
