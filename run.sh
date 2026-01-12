@@ -185,64 +185,76 @@ perform_reconnection() {
     # Teardown VPN (removes from killswitch first, then tears down interface)
     teardown_wireguard
 
-    if initial_connect "true"; then
-        show_debug "Reconnection: VPN established successfully"
-        
-        # Start proxies after VPN is up
-        if $PROXY_ENABLED_FLAG; then
-            show_debug "Restarting proxies"
-            start_proxies >/dev/null 2>&1
-        fi
+    local attempt=0
+    local delay=5
+    local max_delay=160
 
-        if $PF_ENABLED; then
-            show_debug "Starting port forwarding service"
-            /usr/local/bin/portforward &
+    while true; do
+        if initial_connect "true"; then
+            show_debug "Reconnection: VPN established successfully"
+            
+            # Start proxies after VPN is up
+            if $PROXY_ENABLED_FLAG; then
+                show_debug "Restarting proxies"
+                start_proxies >/dev/null 2>&1
+            fi
 
-            # Wait for port forwarding to complete (max 30s)
-            local waited=0
-            show_debug "Waiting for port forwarding completion (max 30s)"
-            while [ $waited -lt 30 ]; do
-                if [ -f /tmp/port_forwarding_complete ]; then
-                    show_debug "Port forwarding completed after ${waited}s"
-                    rm -f /tmp/port_forwarding_complete
-                    break
-                fi
-                sleep 1
-                waited=$((waited + 1))
-            done
-            [ $waited -ge 30 ] && show_debug "Port forwarding wait timed out after 30s"
+            if $PF_ENABLED; then
+                show_debug "Starting port forwarding service"
+                /usr/local/bin/portforward &
+
+                # Wait for port forwarding to complete (max 30s)
+                local waited=0
+                show_debug "Waiting for port forwarding completion (max 30s)"
+                while [ $waited -lt 30 ]; do
+                    if [ -f /tmp/port_forwarding_complete ]; then
+                        show_debug "Port forwarding completed after ${waited}s"
+                        rm -f /tmp/port_forwarding_complete
+                        break
+                    fi
+                    sleep 1
+                    waited=$((waited + 1))
+                done
+                [ $waited -ge 30 ] && show_debug "Port forwarding wait timed out after 30s"
+            else
+                show_vpn_connected
+            fi
+
+            show_step "Health monitor still running..."
+            show_success "Check interval: ${CHECK_INTERVAL}s, Failure threshold: ${MAX_FAILURES}"
+
+            # Restart port monitor if both PF and API are enabled (now after health status)
+            if $PF_ENABLED && [ "$PORT_API_ENABLED" = "true" ]; then
+                show_info
+                show_step "Restarting port monitor..."
+                show_debug "Launching port_monitor.sh"
+                /app/scripts/port_monitor.sh &
+            fi
+            
+            sleep 2
+            
+            if [ -n "$RESTART_SERVICES" ]; then
+                show_info
+                show_debug "Restarting dependent services: $RESTART_SERVICES"
+                restart_services "$RESTART_SERVICES"
+                show_info
+            fi
+            
+            show_debug "Removing reconnecting flag"
+            rm -f /tmp/reconnecting
+            return 0
         else
-            show_vpn_connected
+            show_error "Reconnection failed"
+            show_warning "Will retry in $delay seconds"
+            show_debug "initial_connect returned error during reconnection"
         fi
 
-        show_step "Health monitor still running..."
-        show_success "Check interval: ${CHECK_INTERVAL}s, Failure threshold: ${MAX_FAILURES}"
+        attempt=$((attempt+1))
+        sleep "$delay"
 
-        # Restart port monitor if both PF and API are enabled (now after health status)
-        if $PF_ENABLED && [ "$PORT_API_ENABLED" = "true" ]; then
-            show_info
-            show_step "Restarting port monitor..."
-            show_debug "Launching port_monitor.sh"
-            /app/scripts/port_monitor.sh &
-        fi
-        
-        sleep 2
-        
-        if [ -n "$RESTART_SERVICES" ]; then
-            show_info
-            show_debug "Restarting dependent services: $RESTART_SERVICES"
-            restart_services "$RESTART_SERVICES"
-            show_info
-        fi
-        
-        show_debug "Removing reconnecting flag"
-        rm -f /tmp/reconnecting
-        return 0
-    else
-        show_error "Reconnection failed"
-        show_debug "initial_connect returned error during reconnection"
-        return 1
-    fi
+        delay=$((delay * 2))
+        [ "$delay" -gt "$max_delay" ] && delay="$max_delay"
+    done
 }
 
 main_loop() {
