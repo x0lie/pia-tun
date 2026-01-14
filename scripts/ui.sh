@@ -68,20 +68,64 @@ trim() {
 # Print startup banner (info level and above)
 print_banner() {
     [ $_LOG_LEVEL -lt 1 ] && return 0
-    
+
     # Only clear screen if running in interactive terminal
     # This prevents 'docker logs' from clearing the user's terminal
     [ -t 1 ] && clear
 
-    cat << EOF
-${cyn}╔════════════════════════════════════════════════╗${nc}
-${cyn}║                                                ║${nc}
-${cyn}║${nc}                 ${bold}pia-tun v0.9.3${nc}                 ${cyn}║${nc}
-${cyn}║${nc}                     ${grn}x0lie${nc}                      ${cyn}║${nc}
-${cyn}║                                                ║${nc}
-${cyn}╚════════════════════════════════════════════════╝${nc}
+    # Get version (default to "dev" if not set)
+    local version="${VERSION:-dev}"
+    local version_text="pia-tun v${version}"
+    local author_text="x0lie"
 
-EOF
+    # Calculate box width (minimum 48, expand if version is long)
+    local version_len=${#version_text}
+    local author_len=${#author_text}
+    local content_width=$((version_len > author_len ? version_len : author_len))
+    local box_width=$((content_width + 16))  # 16 = padding + borders
+
+    # Ensure minimum width of 48
+    [ $box_width -lt 48 ] && box_width=48
+
+    # Calculate padding for centering
+    local version_padding=$(( (box_width - version_len - 2) / 2 ))
+    local author_padding=$(( (box_width - author_len - 2) / 2 ))
+
+    # Generate top border
+    printf "${cyn}╔"
+    printf '═%.0s' $(seq 1 $((box_width - 2)))
+    printf "╗${nc}\n"
+
+    # Empty line
+    printf "${cyn}║"
+    printf ' %.0s' $(seq 1 $((box_width - 2)))
+    printf "║${nc}\n"
+
+    # Version line (centered)
+    printf "${cyn}║${nc}"
+    printf ' %.0s' $(seq 1 $version_padding)
+    printf "${bold}%s${nc}" "$version_text"
+    printf ' %.0s' $(seq 1 $((box_width - version_len - version_padding - 2)))
+    printf "${cyn}║${nc}\n"
+
+    # Author line (centered)
+    printf "${cyn}║${nc}"
+    printf ' %.0s' $(seq 1 $author_padding)
+    printf "${grn}%s${nc}" "$author_text"
+    printf ' %.0s' $(seq 1 $((box_width - author_len - author_padding - 2)))
+    printf "${cyn}║${nc}\n"
+
+    # Empty line
+    printf "${cyn}║"
+    printf ' %.0s' $(seq 1 $((box_width - 2)))
+    printf "║${nc}\n"
+
+    # Bottom border
+    printf "${cyn}╚"
+    printf '═%.0s' $(seq 1 $((box_width - 2)))
+    printf "╝${nc}\n"
+
+    echo ""
 }
 
 # Status indicators - info level
