@@ -1,4 +1,4 @@
-module github.com/olsonalexw/wireguard-pia-private
+module github.com/x0lie/pia-tun-private
 
 go 1.23.0
 
