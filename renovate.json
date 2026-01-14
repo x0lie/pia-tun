@@ -1,0 +1,62 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "baseBranches": ["develop"],
+  "labels": ["dependencies"],
+  "automerge": false,
+  "platformAutomerge": false,
+  "automergeType": "pr",
+  "automergeStrategy": "squash",
+  "schedule": ["before 6am on monday"],
+  "timezone": "America/New_York",
+  "packageRules": [
+    {
+      "description": "Alpine base image - automerge patch updates",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["alpine", "golang"],
+      "matchUpdateTypes": ["patch", "digest"],
+      "enabled": true,
+      "automerge": true,
+      "labels": ["docker", "automerge"]
+    },
+    {
+      "description": "Alpine base image - manual review for minor/major",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["alpine", "golang"],
+      "matchUpdateTypes": ["minor", "major"],
+      "enabled": true,
+      "automerge": false,
+      "labels": ["docker", "review-required"]
+    },
+    {
+      "description": "Go dependencies - automerge patch, manual review for minor/major",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["patch"],
+      "enabled": true,
+      "automerge": true,
+      "labels": ["go", "automerge"]
+    },
+    {
+      "description": "Go dependencies - manual review for minor/major",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "major"],
+      "enabled": true,
+      "automerge": false,
+      "labels": ["go", "review-required"]
+    },
+    {
+      "description": "GitHub Actions - automerge all updates",
+      "matchManagers": ["github-actions"],
+      "enabled": true,
+      "automerge": true,
+      "labels": ["github-actions", "automerge"]
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "labels": ["security", "vulnerability"],
+    "enabled": true,
+    "automerge": false
+  }
+}
