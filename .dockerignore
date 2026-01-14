@@ -3,11 +3,12 @@
 .gitignore
 README.md
 PROJECT_STRUCTURE.md
-CLAUDE.md
-GEMINI.md
 Dockerfile
-notes/
 docker-compose/
+docker-compose.yml
 testing/
 bin/
 img/
+docs/
+notes/
+LICENSE
