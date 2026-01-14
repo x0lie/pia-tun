@@ -1,15 +1,33 @@
 name: Test
 
-# Run tests on every push and pull request
+# Run tests on every push and pull request (but skip docs-only changes)
 on:
   push:
     branches: [ main, develop ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.gitattributes'
+      - 'renovate.json'
+      - '.editorconfig'
+      - '.vscode/**'
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.gitattributes'
+      - 'renovate.json'
+      - '.editorconfig'
+      - '.vscode/**'
 
 env:
-  DOCKERHUB_USERNAME: olsonalexw # x0lie
-  IMAGE_NAME: k8s-wireguard-pia # pia-tun
+  DOCKERHUB_USERNAME: x0lie
+  IMAGE_NAME: pia-tun
 
 jobs:
   test:
@@ -57,6 +75,7 @@ jobs:
     permissions:
       security-events: write  # Required to upload SARIF results to GitHub Security
       contents: read          # Required to checkout code
+      actions: read           # Required to access workflow run information
 
     steps:
       - name: Checkout repository

@@ -1,14 +1,23 @@
 name: Develop Branch CI/CD
 
-# Trigger on pushes to develop branch
+# Trigger on pushes to develop branch (but skip docs-only changes)
 on:
   push:
     branches:
       - develop
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.gitattributes'
+      - 'renovate.json'
+      - '.editorconfig'
+      - '.vscode/**'
 
 env:
-  DOCKERHUB_USERNAME: olsonalexw # x0lie
-  IMAGE_NAME: k8s-wireguard-pia # pia-tun
+  DOCKERHUB_USERNAME: x0lie
+  IMAGE_NAME: pia-tun
 
 jobs:
   # Run tests
@@ -59,6 +68,9 @@ jobs:
     name: Build and Push to Docker Hub
     runs-on: ubuntu-latest
     needs: [test]  # Only run if tests pass (skip security-scan dependency for faster feedback)
+    permissions:
+      contents: read      # Required to checkout code
+      packages: write     # Required to push to ghcr.io
 
     steps:
       - name: Checkout repository
@@ -79,14 +91,26 @@ jobs:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Build and push amd64 image with :develop tag
+      # Login to GitHub Container Registry
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build and push amd64 image with :develop tag to both registries
       - name: Build and push develop image
         uses: docker/build-push-action@v5
         with:
           context: .
           platforms: linux/amd64
           push: true
-          tags: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:develop
+          build-args: |
+            VERSION=develop
+          tags: |
+            ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:develop
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:develop
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -95,9 +119,14 @@ jobs:
         run: |
           echo "## ✅ Develop Image Published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Pull the latest develop build:" >> $GITHUB_STEP_SUMMARY
+          echo "**Docker Hub:**" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
           echo "docker pull ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:develop" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**GitHub Container Registry:**" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:develop" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Commit**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
