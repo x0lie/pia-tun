@@ -1,0 +1,150 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/bjw-s/helm-charts/main/charts/other/app-template/schemas/helmrelease-helm-v2.schema.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: qbittorrent
+spec:
+  interval: 30m
+  timeout: 10m
+  chart:
+    spec:
+      chart: app-template
+      version: 3.7.3
+      sourceRef:
+        kind: HelmRepository
+        name: bjw-s
+        namespace: flux-system
+  maxHistory: 2
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      strategy: rollback
+      retries: 3
+  uninstall:
+    keepHistory: false
+  dependsOn:
+    - name: csi-driver-nfs
+      namespace: storage
+  values:
+    controllers:
+      qbittorrent:
+        annotations:
+          secret.reloader.stakater.com/reload: pia-secret
+
+        pod:
+          securityContext:
+            fsGroup: 1001
+            fsGroupChangePolicy: "OnRootMismatch"
+
+        containers:
+          pia-tun:
+            image:
+              repository: ghcr.io/x0lie/pia-tun:latest
+              tag: latest
+              pullPolicy: Always
+            env:
+              TZ: ${TIMEZONE}
+              LOCAL_NETWORK: "10.69.0.0/16,10.96.0.0/16"
+              LOCAL_PORTS: 8080
+              PORT_API_TYPE: "qbittorrent"
+              PORT_API_URL: "http://localhost:8080"
+              METRICS: "true"
+            envFrom:
+              - secretRef:
+                  name: pia-secret
+            resources:
+              requests:
+                cpu: 10m
+                memory: 53M
+              limits:
+                cpu: 15m
+                memory: 91M
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                add:
+                  - NET_ADMIN
+                drop:
+                  - ALL
+
+          qbittorrent:
+            dependsOn: [pia-tun]
+            image:
+              repository: ghcr.io/home-operations/qbittorrent
+              tag: 5.1.4
+            env:
+              TZ: ${TIMEZONE}
+              UMASK: "022"
+            resources:
+              requests:
+                cpu: 22m
+                memory: 2280M
+              limits:
+                cpu: 231m
+                memory: 6413M
+            securityContext:
+              runAsUser: 1001
+              runAsGroup: 1001
+              runAsNonRoot: true
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                  - ALL
+
+    service:
+      app:
+        controller: qbittorrent
+        ports:
+          http:
+            port: 8080
+          metrics:
+            port: 9090
+
+    serviceMonitor:
+      app:
+        serviceName: qbittorrent
+        endpoints:
+          - port: metrics
+
+    ingress:
+      qbittorrent:
+        className: traefik-internal
+        annotations:
+          traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
+          traefik.ingress.kubernetes.io/router.middlewares: "network-chain-no-auth@kubernetescrd"
+        hosts:
+          - host: &host qbittorrent.${SECRET_DOMAIN}
+            paths:
+              - path: /
+                service:
+                  identifier: app
+                  port: http
+        tls:
+          - hosts:
+              - *host
+            secretName: "${SECRET_DOMAIN/./-}-production-tls"
+
+    persistence:
+      config:
+        enabled: true
+        storageClass: nfs-csi
+        accessMode: ReadWriteMany
+        size: 2Gi
+        advancedMounts:
+          qbittorrent:
+            qbittorrent:
+              - path: /config
+      media:
+        enabled: true
+        existingClaim: nfs-media-pvc
+        globalMounts:
+          - path: /media
+      downloads:
+        enabled: true
+        existingClaim: nfs-downloads-pvc
+        globalMounts:
+          - path: /downloads

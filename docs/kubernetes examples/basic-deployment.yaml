@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pia-tun
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pia-tun
+  template:
+    metadata:
+      labels:
+        app: pia-tun
+    spec:
+      containers:
+      - name: pia-tun
+        image: x0lie/pia-tun:latest
+        securityContext:
+          capabilities:
+            add: ["NET_ADMIN"]
+            drop: ["ALL"]
+        env:
+        - name: PIA_USER
+          valueFrom:
+            secretKeyRef:
+              name: pia-credentials
+              key: username
+        - name: PIA_PASS
+          valueFrom:
+            secretKeyRef:
+              name: pia-credentials
+              key: password
+        - name: PIA_LOCATION
+          value: "ca_ontario"
+        - name: PORT_FORWARDING
+          value: "true"

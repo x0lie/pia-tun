@@ -1,0 +1,41 @@
+services:
+  pia-tun:
+    image: x0lie/pia-tun:latest
+    container_name: pia-tun
+    cap_add:
+      - NET_ADMIN
+    cap_drop:
+      - all
+    environment:
+      - TZ=America/New_York
+      - PIA_LOCATION=ca_ontario,ca_ontario-so,ca_toronto
+      - PORT_API_TYPE=qbittorrent
+      - PORT_API_URL=http://localhost:8080
+      - LOCAL_NETWORK=192.168.1.0/24,172.18.0.0/16
+      - LOCAL_PORTS=8080
+    secrets:
+      - pia_user
+      - pia_pass
+    ports:
+      - 8080:8080
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    environment:
+      - TZ=America/New_York
+      - PUID=1000
+      - PGID=1000
+      - WEBUI_PORT=8080
+    volumes:
+      - ./qbittorrent/config:/config
+      - ./qbittorrent/downloads:/downloads
+    network_mode: "service:pia-tun"
+    depends_on:
+      - pia-tun
+
+secrets:
+  pia_user:
+    file: ./secrets/pia_user
+  pia_pass:
+    file: ./secrets/pia_pass
