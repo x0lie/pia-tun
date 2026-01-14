@@ -1,5 +1,8 @@
 FROM golang:1.23-alpine AS go-builder
 
+# Accept version as build argument (passed by GitHub Actions)
+ARG VERSION=dev
+
 WORKDIR /build
 
 COPY go.mod go.sum ./
@@ -25,6 +28,9 @@ RUN cd cmd/proxy && \
     chmod +x /build/proxy /build/monitor /build/portforward
 
 FROM alpine:3.19
+
+# Accept version from build stage
+ARG VERSION=dev
 
 # Install MINIMAL runtime dependencies
 RUN apk update && \
@@ -75,6 +81,9 @@ RUN chmod +x /app/run.sh /app/scripts/*.sh && \
 
 VOLUME ["/etc/wireguard"]
 
+# Set VERSION as environment variable for runtime
+ENV VERSION=${VERSION}
+
 ENV TZ=UTC \
     LOG_LEVEL=info \
     DISABLE_IPV6=true \
@@ -94,7 +103,6 @@ ENV TZ=UTC \
     PORT_API_PASS="" \
     CHECK_INTERVAL=15 \
     MAX_FAILURES=3 \
-    RESTART_SERVICES="" \
     MONITOR_PARALLEL_CHECKS=true \
     METRICS=false \
     METRICS_PORT=9090
