@@ -54,9 +54,9 @@ jobs:
           severity: 'CRITICAL,HIGH'
           exit-code: '1'  # Fail on critical/high vulnerabilities in releases
 
-  # Build and push multi-arch images to Docker Hub
+  # Build and push multi-arch images to Docker Hub and GHCR
   release:
-    name: Build and Push to Docker Hub
+    name: Build and Push to Registries
     runs-on: ubuntu-latest
     needs: [test, security-scan]  # Only run if tests pass
     permissions:

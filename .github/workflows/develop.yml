@@ -63,9 +63,9 @@ jobs:
           severity: 'CRITICAL,HIGH'
           exit-code: '0'  # Don't fail develop builds on vulnerabilities (warn only)
 
-  # Build and push multi-arch image to Docker Hub with :develop tag
+  # Build and push multi-arch image to Docker Hub and GHCR with :develop tag
   build-and-push:
-    name: Build and Push to Docker Hub
+    name: Build and Push to Registries
     runs-on: ubuntu-latest
     needs: [test]  # Only run if tests pass (skip security-scan dependency for faster feedback)
     permissions:

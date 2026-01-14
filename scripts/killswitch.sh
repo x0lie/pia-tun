@@ -88,7 +88,9 @@ cleanup_bypass_routes() {
 
 nft_setup_base_table() {
     show_debug "Setting up nftables base table: inet vpn_filter"
-    nft add table inet vpn_filter 2>/dev/null || nft flush table inet vpn_filter
+    # Delete existing table completely to ensure clean state
+    nft delete table inet vpn_filter 2>/dev/null || true
+    nft add table inet vpn_filter
     show_debug "Creating output chain (priority 0, policy drop)"
     nft add chain inet vpn_filter output { type filter hook output priority 0 \; policy drop \; }
     show_debug "Creating input chain (priority 0, policy drop)"

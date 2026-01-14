@@ -1,9 +1,9 @@
 name: Test
 
-# Run tests on every push and pull request (but skip docs-only changes)
+# Run tests on pull requests only (develop.yml and release.yml handle push testing)
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
     paths-ignore:
       - '**.md'
       - 'docs/**'
