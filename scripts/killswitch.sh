@@ -828,6 +828,14 @@ ipt_cleanup() {
 verify_baseline_killswitch() {
     show_debug "Verifying baseline killswitch is active"
 
+    # WORKAROUND: Add small delay to handle nftables rule visibility race condition
+    # On some systems (especially virtualized environments like GitHub Actions),
+    # nftables rules aren't immediately queryable after being added via 'nft add'.
+    # This appears to be a kernel buffering/caching issue.
+    # The rules ARE active and blocking traffic - we just can't query them yet.
+    sleep 0.2
+    show_debug "Waited 200ms for nftables rules to become queryable"
+
     if $USE_NFTABLES; then
         # Check that output chain exists with policy drop
         local chain_output=$(nft list chain inet vpn_filter output 2>/dev/null)
