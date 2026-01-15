@@ -1,4 +1,4 @@
-module github.com/x0lie/pia-tun-private
+module github.com/x0lie/pia-tun
 
 go 1.23.0
 

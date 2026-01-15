@@ -84,6 +84,16 @@ VOLUME ["/etc/wireguard"]
 # Set VERSION as environment variable for runtime
 ENV VERSION=${VERSION}
 
+# OCI labels for container metadata (connects GHCR package to GitHub repo)
+LABEL org.opencontainers.image.title="pia-tun" \
+      org.opencontainers.image.description="Lightweight WireGuard VPN client for Private Internet Access with advanced killswitch, port forwarding, and SOCKS5/HTTP proxy support" \
+      org.opencontainers.image.url="https://github.com/x0lie/pia-tun" \
+      org.opencontainers.image.source="https://github.com/x0lie/pia-tun" \
+      org.opencontainers.image.documentation="https://github.com/x0lie/pia-tun/blob/main/README.md" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.vendor="x0lie"
+
 ENV TZ=UTC \
     LOG_LEVEL=info \
     DISABLE_IPV6=true \
