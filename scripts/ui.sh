@@ -75,19 +75,22 @@ print_banner() {
 
     # Get version (default to "dev" if not set)
     local version="${VERSION:-dev}"
-    local version_text="pia-tun v${version}"
+
+    # Add "v" prefix only for semantic versions (starting with a digit)
+    if [[ $version =~ ^[0-9] ]]; then
+        local version_text="pia-tun v${version}"
+    else
+        local version_text="pia-tun ${version}"
+    fi
+
     local author_text="x0lie"
 
-    # Calculate box width (minimum 48, expand if version is long)
-    local version_len=${#version_text}
-    local author_len=${#author_text}
-    local content_width=$((version_len > author_len ? version_len : author_len))
-    local box_width=$((content_width + 16))  # 16 = padding + borders
-
-    # Ensure minimum width of 48
-    [ $box_width -lt 48 ] && box_width=48
+    # Fixed box width to match other banners (50 characters total)
+    local box_width=50
 
     # Calculate padding for centering
+    local version_len=${#version_text}
+    local author_len=${#author_text}
     local version_padding=$(( (box_width - version_len - 2) / 2 ))
     local author_padding=$(( (box_width - author_len - 2) / 2 ))
 
