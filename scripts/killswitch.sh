@@ -88,9 +88,7 @@ cleanup_bypass_routes() {
 
 nft_setup_base_table() {
     show_debug "Setting up nftables base table: inet vpn_filter"
-    # Delete existing table completely to ensure clean state
-    nft delete table inet vpn_filter 2>/dev/null || true
-    nft add table inet vpn_filter
+    nft add table inet vpn_filter 2>/dev/null || nft flush table inet vpn_filter
     show_debug "Creating output chain (priority 0, policy drop)"
     nft add chain inet vpn_filter output { type filter hook output priority 0 \; policy drop \; }
     show_debug "Creating input chain (priority 0, policy drop)"
@@ -832,8 +830,11 @@ verify_baseline_killswitch() {
 
     if $USE_NFTABLES; then
         # Check that output chain exists with policy drop
-        if ! nft list chain inet vpn_filter output 2>/dev/null | grep -q "policy drop"; then
+        local chain_output=$(nft list chain inet vpn_filter output 2>/dev/null)
+        if ! echo "$chain_output" | grep -q "policy drop"; then
             show_error "Killswitch verification failed: OUTPUT chain policy is not drop"
+            show_error "Actual chain output:"
+            echo "$chain_output" | while IFS= read -r line; do show_error "  $line"; done
             return 1
         fi
 

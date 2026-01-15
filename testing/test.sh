@@ -207,8 +207,8 @@ wait_for_connection() {
         # Check if container is still running
         if ! docker ps | grep -q "$CONTAINER_NAME"; then
             fail "Container exited unexpectedly"
-            echo "Last 20 lines of logs:"
-            docker logs --tail 20 "$CONTAINER_NAME"
+            echo "Last 60 lines of logs:"
+            docker logs --tail 60 "$CONTAINER_NAME"
             return 1
         fi
 
