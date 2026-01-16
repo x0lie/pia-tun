@@ -54,7 +54,7 @@ func NewPIAClient(config *Config) *PIAClient {
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			// Get the interface
-			iface, err := net.InterfaceByName("pia")
+			iface, err := net.InterfaceByName("pia0")
 			if err != nil {
 				return nil, fmt.Errorf("failed to get pia interface: %w", err)
 			}

@@ -28,9 +28,9 @@ services:
     environment:
       - TZ=America/New_York
       - PIA_LOCATION=ca_ontario,ca_toronto
-      - PORT_API_TYPE=qbittorrent
-      - PORT_API_URL=http://localhost:8080
-      - LOCAL_NETWORK=192.168.1.0/24,172.18.0.0/16
+      - PORT_SYNC_TYPE=qbittorrent
+      - PORT_SYNC_URL=http://localhost:8080
+      - LOCAL_NETWORKS=192.168.1.0/24,172.18.0.0/16
       - LOCAL_PORTS=8080
     secrets:
       - pia_user

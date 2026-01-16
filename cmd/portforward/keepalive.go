@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"sync"
 	"syscall"
@@ -119,9 +117,6 @@ func (m *KeepaliveManager) initialSetup() error {
 	// Notify port monitor via named pipe
 	m.notifyPortChange(port)
 
-	// Send webhook notification (async)
-	go m.sendWebhook(port)
-
 	// Display success
 	grn := colorGreen
 	bold := colorBold
@@ -129,9 +124,9 @@ func (m *KeepaliveManager) initialSetup() error {
 	showSuccess(fmt.Sprintf("Port: %s%s%d%s", grn, bold, port, nc))
 
 	// Show update tactics
-	portAPIEnabled := os.Getenv("PORT_API_ENABLED") == "true"
+	portAPIEnabled := os.Getenv("PORT_SYNC_ENABLED") == "true"
 	if portAPIEnabled {
-		portAPIType := os.Getenv("PORT_API_TYPE")
+		portAPIType := os.Getenv("PORT_SYNC_TYPE")
 		showSuccess(fmt.Sprintf("Updated via: File + API (%s)", portAPIType))
 	} else {
 		showSuccess("Updated via: File")
@@ -360,9 +355,6 @@ func (m *KeepaliveManager) refreshSignature(ctx context.Context) error {
 		debugLog(m.config, "Writing new port to %s", m.config.PortFile)
 		os.WriteFile(m.config.PortFile, []byte(fmt.Sprintf("%d", newPort)), 0644)
 		m.notifyPortChange(newPort)
-
-		// Notify webhook (async)
-		go m.sendWebhook(newPort)
 	} else {
 		debugLog(m.config, "Port unchanged: %d", newPort)
 	}
@@ -435,46 +427,4 @@ func (m *KeepaliveManager) notifyPortChange(port int) {
 			debugLog(m.config, "Port change pipe not found, monitor may not be running yet")
 		}
 	}()
-}
-
-func (m *KeepaliveManager) sendWebhook(port int) {
-	if m.config.WebhookURL == "" {
-		debugLog(m.config, "No WEBHOOK_URL configured, skipping notification")
-		return
-	}
-
-	debugLog(m.config, "Sending webhook notification for port %d...", port)
-
-	// Get VPN IP (with timeout)
-	vpnIP := ""
-	client := &http.Client{Timeout: 5 * time.Second}
-	if resp, err := client.Get("https://api.ipify.org"); err == nil {
-		defer resp.Body.Close()
-		if body, err := os.ReadFile(""); err == nil {
-			vpnIP = string(body)
-		}
-	}
-	debugLog(m.config, "Public VPN IP: %s", vpnIP)
-
-	// Prepare JSON payload
-	payload := map[string]interface{}{
-		"port":      port,
-		"timestamp": time.Now().Format(time.RFC3339),
-	}
-	if vpnIP != "" {
-		payload["ip"] = vpnIP
-	}
-
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		debugLog(m.config, "Failed to marshal webhook payload: %v", err)
-		return
-	}
-
-	debugLog(m.config, "Webhook payload: %s", string(jsonData))
-	debugLog(m.config, "Executing webhook POST to %s", m.config.WebhookURL)
-
-	// Send webhook (don't block on failure)
-	// TODO: Implement actual webhook POST if needed
-	debugLog(m.config, "Webhook notification sent successfully")
 }

@@ -47,11 +47,10 @@ spec:
               pullPolicy: Always
             env:
               TZ: ${TIMEZONE}
-              LOCAL_NETWORK: "10.69.0.0/16,10.96.0.0/16"
+              LOCAL_NETWORKS: "10.69.0.0/16,10.96.0.0/16"
               LOCAL_PORTS: 8080
-              PORT_API_TYPE: "qbittorrent"
-              PORT_API_URL: "http://localhost:8080"
-              METRICS: "true"
+              PORT_SYNC_TYPE: "qbittorrent"
+              PORT_SYNC_URL: "http://localhost:8080"
             envFrom:
               - secretRef:
                   name: pia-secret

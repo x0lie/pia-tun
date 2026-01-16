@@ -10,31 +10,28 @@ source /app/scripts/proxy_go.sh
 
 # OPTIMIZED: Set defaults inline, export only what's needed by child processes
 PORT_FORWARDING=${PORT_FORWARDING:-false}
-DISABLE_IPV6=${DISABLE_IPV6:-true}
+IPV6_ENABLED=${IPV6_ENABLED:-false}
 DNS=${DNS:-pia}
-LOCAL_NETWORK=${LOCAL_NETWORK:-""}
+LOCAL_NETWORKS=${LOCAL_NETWORKS:-""}
 LOCAL_PORTS=${LOCAL_PORTS:-""}
 HANDSHAKE_TIMEOUT=${HANDSHAKE_TIMEOUT:-180}
-CHECK_INTERVAL=${CHECK_INTERVAL:-15}
-MAX_FAILURES=${MAX_FAILURES:-2}
-RESTART_SERVICES=${RESTART_SERVICES:-""}
+HC_INTERVAL=${HC_INTERVAL:-15}
+HC_MAX_FAILURES=${HC_MAX_FAILURES:-3}
 PROXY_ENABLED=${PROXY_ENABLED:-false}
 SOCKS5_PORT=${SOCKS5_PORT:-1080}
 HTTP_PROXY_PORT=${HTTP_PROXY_PORT:-8888}
-PORT_API_ENABLED=${PORT_API_ENABLED:-false}
+PORT_SYNC_ENABLED=${PORT_SYNC_ENABLED:-false}
 
-# Auto-enable PORT_API and PORT_FORWARDING if PORT_API_TYPE is set
-[ -n "${PORT_API_TYPE:-}" ] && PORT_API_ENABLED=true && PORT_FORWARDING=true
+# Auto-enable PORT_API and PORT_FORWARDING if PORT_SYNC_TYPE is set
+[ -n "${PORT_SYNC_TYPE:-}" ] && PORT_SYNC_ENABLED=true && PORT_FORWARDING=true
 
 # Export only what child processes actually need
 export PORT_FORWARDING
-export DISABLE_IPV6 DNS LOCAL_NETWORK LOCAL_PORTS
-export CHECK_INTERVAL MAX_FAILURES HANDSHAKE_TIMEOUT
+export IPV6_ENABLED DNS LOCAL_NETWORKS LOCAL_PORTS
+export HC_INTERVAL HC_MAX_FAILURES HANDSHAKE_TIMEOUT
 export PROXY_ENABLED SOCKS5_PORT HTTP_PROXY_PORT
-export PORT_API_ENABLED PORT_API_TYPE PORT_API_URL PORT_API_USER PORT_API_PASS PORT_API_CMD
-export RESTART_SERVICES METRICS METRICS_PORT
-export MONITOR_PARALLEL_CHECKS
-export WEBHOOK_URL
+export PORT_SYNC_ENABLED PORT_SYNC_TYPE PORT_SYNC_URL PORT_SYNC_USER PORT_SYNC_PASS PORT_SYNC_CMD
+export METRICS METRICS_PORT
 
 # Boolean flags (set once, check many times)
 PF_ENABLED=false
@@ -131,7 +128,7 @@ initial_connect() {
     fi
 
     show_step "Establishing VPN connection..."
-    if bring_up_wireguard /etc/wireguard/pia.conf; then
+    if bring_up_wireguard /etc/wireguard/pia0.conf; then
         show_success "VPN tunnel established"
         show_debug "WireGuard interface brought up successfully"
     else
@@ -221,10 +218,10 @@ perform_reconnection() {
             fi
 
             show_step "Health monitor still running..."
-            show_success "Check interval: ${CHECK_INTERVAL}s, Failure threshold: ${MAX_FAILURES}"
+            show_success "Check interval: ${HC_INTERVAL}s, Failure threshold: ${HC_MAX_FAILURES}"
 
             # Restart port monitor if both PF and API are enabled (now after health status)
-            if $PF_ENABLED && [ "$PORT_API_ENABLED" = "true" ]; then
+            if $PF_ENABLED && [ "$PORT_SYNC_ENABLED" = "true" ]; then
                 show_info
                 show_step "Restarting port monitor..."
                 show_debug "Launching port_monitor.sh"
@@ -232,13 +229,6 @@ perform_reconnection() {
             fi
             
             sleep 2
-            
-            if [ -n "$RESTART_SERVICES" ]; then
-                show_info
-                show_debug "Restarting dependent services: $RESTART_SERVICES"
-                restart_services "$RESTART_SERVICES"
-                show_info
-            fi
             
             show_debug "Removing reconnecting flag"
             rm -f /tmp/reconnecting
@@ -288,7 +278,7 @@ main_loop() {
     show_step "Starting health monitor..."
     /usr/local/bin/monitor &
     show_success "Health monitor active"
-    show_success "Check interval: ${CHECK_INTERVAL}s, Failure threshold: ${MAX_FAILURES}"
+    show_success "Check interval: ${HC_INTERVAL}s, Failure threshold: ${HC_MAX_FAILURES}"
 
     if [ "$METRICS" = "true" ]; then
         show_success "Metrics available on port ${METRICS_PORT:-9090}"
@@ -297,19 +287,12 @@ main_loop() {
     fi
 
     # Start port monitor if PF and API updater are enabled
-    if $PF_ENABLED && [ "$PORT_API_ENABLED" = "true" ]; then
+    if $PF_ENABLED && [ "$PORT_SYNC_ENABLED" = "true" ]; then
         show_debug "Starting port monitor (PF + API enabled)"
         /app/scripts/port_monitor.sh & disown
     fi
 
     sleep 1
-    
-    if [ -n "$RESTART_SERVICES" ]; then
-        show_info
-        show_debug "Restarting dependent services: $RESTART_SERVICES"
-        restart_services "$RESTART_SERVICES"
-        show_info
-    fi
 
   # Create named pipe for monitor communication
   RECONNECT_PIPE="/tmp/vpn_reconnect_pipe"
@@ -334,16 +317,15 @@ main_loop() {
 # Debug: Show environment configuration
 show_debug "Environment configuration:"
 show_debug "  PORT_FORWARDING=$PORT_FORWARDING"
-show_debug "  DISABLE_IPV6=$DISABLE_IPV6"
+show_debug "  IPV6_ENABLED=$IPV6_ENABLED"
 show_debug "  DNS=$DNS"
-show_debug "  LOCAL_NETWORK=$LOCAL_NETWORK"
+show_debug "  LOCAL_NETWORKS=$LOCAL_NETWORKS"
 show_debug "  LOCAL_PORTS=$LOCAL_PORTS"
-show_debug "  CHECK_INTERVAL=$CHECK_INTERVAL"
-show_debug "  MAX_FAILURES=$MAX_FAILURES"
+show_debug "  HC_INTERVAL=$HC_INTERVAL"
+show_debug "  HC_MAX_FAILURES=$HC_MAX_FAILURES"
 show_debug "  HANDSHAKE_TIMEOUT=$HANDSHAKE_TIMEOUT"
 show_debug "  PROXY_ENABLED=$PROXY_ENABLED"
-show_debug "  PORT_API_ENABLED=$PORT_API_ENABLED"
-show_debug "  RESTART_SERVICES=$RESTART_SERVICES"
+show_debug "  PORT_SYNC_ENABLED=$PORT_SYNC_ENABLED"
 show_debug "  METRICS=$METRICS"
 show_debug "  LOG_LEVEL=${LOG_LEVEL} (numeric: $_LOG_LEVEL)"
 

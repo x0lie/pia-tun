@@ -100,19 +100,19 @@ validate_dns() {
 
 # OPTIMIZED: Check IPv6 with early exit
 check_ipv6_leak() {
-    show_debug "Checking for IPv6 leaks (DISABLE_IPV6=${DISABLE_IPV6})"
+    show_debug "Checking for IPv6 leaks (IPV6_ENABLED=${IPV6_ENABLED})"
     
-    if [ "${DISABLE_IPV6}" != "true" ]; then
+    if [ "${IPV6_ENABLED}" != "false" ]; then
         show_debug "IPv6 is allowed, skipping leak check"
         return 0  # Early exit if IPv6 is allowed
     fi
     
     show_debug "Attempting IPv6 connection test via api6.ipify.org (timeout: 5s)"
-    local ipv6=$(timeout 5 curl -6 -s --interface pia https://api6.ipify.org 2>/dev/null)
+    local ipv6=$(timeout 5 curl -6 -s --interface pia0 https://api6.ipify.org 2>/dev/null)
     
     if [ -n "$ipv6" ]; then
         show_error "IPv6 leak detected: $ipv6"
-        show_debug "IPv6 leak found despite DISABLE_IPV6=true"
+        show_debug "IPv6 leak found despite IPV6_ENABLED=false"
         return 1
     fi
     
@@ -126,7 +126,7 @@ verify_connection() {
     local vpn_ip=""
     
     show_debug "Starting connection verification"
-    show_debug "Configuration: DNS=${DNS:-pia}, DISABLE_IPV6=${DISABLE_IPV6}"
+    show_debug "Configuration: DNS=${DNS:-pia}, IPV6_ENABLED=${IPV6_ENABLED}"
     
     # Check 1: Get external IP (most important check)
     checks_total=$((checks_total + 1))
@@ -191,7 +191,7 @@ verify_connection() {
     
     if check_ipv6_leak; then
         checks_passed=$((checks_passed + 1))
-        [ "${DISABLE_IPV6}" = "true" ] && show_success "No IPv6 leaks detected"
+        [ "${IPV6_ENABLED}" = "false" ] && show_success "No IPv6 leaks detected"
     else
         show_debug "IPv6 leak check failed"
     fi

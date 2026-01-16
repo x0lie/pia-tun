@@ -213,7 +213,7 @@ wait_for_connection() {
         fi
 
         # Check for WireGuard handshake
-        if docker exec "$CONTAINER_NAME" wg show pia 2>/dev/null | grep -q "latest handshake"; then
+        if docker exec "$CONTAINER_NAME" wg show pia0 2>/dev/null | grep -q "latest handshake"; then
             pass "VPN connected (took ${i}s)"
             return 0
         fi
@@ -241,7 +241,7 @@ wait_for_port() {
     }
 
     echo ""
-    echo -e "${BLUE}=== Waiting for /etc/wireguard/port to appear ===${NC}"
+    echo -e "${BLUE}=== Waiting for /run/pia-tun/port to appear ===${NC}"
 
     local elapsed=0
     while [ $elapsed -lt ${PORT_FORWARD_TIMEOUT} ]; do
@@ -253,9 +253,9 @@ wait_for_port() {
         fi
 
         # This is the most reliable way: use `test -f` inside the container
-        if docker exec "$CONTAINER_NAME" test -f /etc/wireguard/port 2>/dev/null; then
+        if docker exec "$CONTAINER_NAME" test -f /run/pia-tun/port 2>/dev/null; then
             local port_content
-            port_content=$(docker exec "$CONTAINER_NAME" cat /etc/wireguard/port 2>/dev/null || echo "unknown")
+            port_content=$(docker exec "$CONTAINER_NAME" cat /run/pia-tun/port 2>/dev/null || echo "unknown")
             pass "Port file appeared after ${elapsed}s → forwarded port: $port_content"
             return 0
         fi
@@ -268,7 +268,7 @@ wait_for_port() {
         elapsed=$((elapsed + 1))
     done
 
-    fail "Timed out after ${PORT_FORWARD_TIMEOUT}s waiting for /etc/wireguard/port"
+    fail "Timed out after ${PORT_FORWARD_TIMEOUT}s waiting for /run/pia-tun/port"
     echo "=== Last 30 lines of container logs ==="
     docker logs --tail 30 "$CONTAINER_NAME" 2>/dev/null || true
     return 1
@@ -394,7 +394,7 @@ test_killswitch() {
     fi
 
     info "Bringing down VPN interface..."
-    docker exec "$CONTAINER_NAME" ip link set pia down 2>/dev/null || true
+    docker exec "$CONTAINER_NAME" ip link set pia0 down 2>/dev/null || true
 
     sleep 2
 
@@ -411,7 +411,7 @@ test_killswitch() {
         --output /tmp/killswitch_results.json \
         --quiet; then
         fail "Leak tester failed to run (check logs above)"
-        docker exec "$CONTAINER_NAME" ip link set pia up 2>/dev/null || true
+        docker exec "$CONTAINER_NAME" ip link set pia0 up 2>/dev/null || true
         docker exec "$CONTAINER_NAME" rm -f /usr/local/bin/leaktest 2>/dev/null || true
         return 1
     fi
@@ -419,7 +419,7 @@ test_killswitch() {
     # Check if results file was created
     if ! docker exec "$CONTAINER_NAME" test -f /tmp/killswitch_results.json 2>/dev/null; then
         fail "Leak tester did not create results file"
-        docker exec "$CONTAINER_NAME" ip link set pia up 2>/dev/null || true
+        docker exec "$CONTAINER_NAME" ip link set pia0 up 2>/dev/null || true
         docker exec "$CONTAINER_NAME" rm -f /usr/local/bin/leaktest 2>/dev/null || true
         return 1
     fi
@@ -430,7 +430,7 @@ test_killswitch() {
 
     # Bring interface back up
     info "Bringing VPN interface back up..."
-    docker exec "$CONTAINER_NAME" ip link set pia up 2>/dev/null || true
+    docker exec "$CONTAINER_NAME" ip link set pia0 up 2>/dev/null || true
 
     # Cleanup
     docker exec "$CONTAINER_NAME" rm -f /usr/local/bin/leaktest /tmp/killswitch_results.json 2>/dev/null || true
@@ -523,7 +523,7 @@ test_reconnection() {
     #     for i in $(seq 1 60); do
     #         # Check for completion flag
     #         if docker exec "$CONTAINER_NAME" test -f /tmp/port_forwarding_complete 2>/dev/null; then
-    #             INITIAL_PORT=$(docker exec "$CONTAINER_NAME" cat /etc/wireguard/port 2>/dev/null || echo "unknown")
+    #             INITIAL_PORT=$(docker exec "$CONTAINER_NAME" cat /run/pia-tun/port 2>/dev/null || echo "unknown")
     #             info "Port forwarding ready (port: $INITIAL_PORT, took ${i}s)"
     #             break
     #         fi
@@ -692,7 +692,7 @@ test_reconnection() {
     # Wait for reconnection to fully complete (WireGuard handshake)
     info "Waiting for VPN handshake to complete..."
     for i in $(seq 1 30); do
-        if docker exec "$CONTAINER_NAME" wg show pia 2>/dev/null | grep -q "latest handshake"; then
+        if docker exec "$CONTAINER_NAME" wg show pia0 2>/dev/null | grep -q "latest handshake"; then
             info "VPN reconnected successfully (handshake after ${i}s)"
             return 0
         fi
@@ -844,12 +844,12 @@ test_port_forwarding() {
     done
 
     # Check if port file exists
-    if ! docker exec "$CONTAINER_NAME" test -f /etc/wireguard/port 2>/dev/null; then
+    if ! docker exec "$CONTAINER_NAME" test -f /run/pia-tun/port 2>/dev/null; then
         fail "Port forwarding file not created"
         return 1
     fi
 
-    PORT=$(docker exec "$CONTAINER_NAME" cat /etc/wireguard/port 2>/dev/null || echo "")
+    PORT=$(docker exec "$CONTAINER_NAME" cat /run/pia-tun/port 2>/dev/null || echo "")
 
     if [ -z "$PORT" ]; then
         fail "Port forwarding file is empty"

@@ -6,10 +6,6 @@ A feature-rich Docker container for Wireguard + Private Internet Access (PIA) VP
 
 ## Installation
 
-### Docker Registries
-
-Available on both Docker Hub and GitHub Container Registry:
-
 **Docker Hub:**
 ```bash
 docker pull x0lie/pia-tun:latest
@@ -30,12 +26,6 @@ docker pull ghcr.io/x0lie/pia-tun:latest
 | `1` | Latest minor in 1.x series | amd64, arm64, armv7 | With 1.x.x releases | Auto feature updates |
 | `develop` | Per-commit from `develop` | amd64 only | Every commit | Development/Testing |
 
-**Recommendations:**
-- **Production (stable):** Pin to specific version (`1.2.3`)
-- **Production (auto-updates):** Use minor version (`1.2`) for automatic security patches
-- **Always latest stable:** Use `latest`
-- **Testing unreleased features:** Use `develop`
-
 **Security Note:** Patch versions are released promptly when security updates are available. Automated dependency monitoring ensures timely updates for Alpine packages and Go dependencies.
 
 ## Features
@@ -43,6 +33,7 @@ docker pull ghcr.io/x0lie/pia-tun:latest
 - **WireGuard VPN** with automatic latency-based server selection
 - **Firewall** - Zero-leak with nftables and iptables fallback. Deny-by-default design
 - **Port Forwarding** - Automatic signature management and keep-alive with torrent client API integration
+- **Port Syncing** - Syncs forwarded port to an API endpoint
 - **SOCKS5/HTTP Proxies** - Built-in dual-protocol proxy server with optional authentication
 - **Prometheus Metrics** - Export health, connection, and performance metrics
 - **Smart Health Monitoring** - Distinguishes between WAN outages and VPN failures
@@ -97,53 +88,56 @@ See [`docs/docker-compose examples/`](docs/docker-compose%20examples/) for compl
 | `PIA_PASS` | PIA password (or use `/run/secrets/pia_pass`) | Required |
 | `PIA_LOCATION` | Comma-separated locations (e.g., `ca_ontario,ca_toronto`). Tests latency and selects the best server. Invalid values will log all available regions. | Required |
 | `TZ` | Timezone for logging | `UTC` |
-| `DNS` | DNS provider: `pia` (PIA DNS), `custom` (Docker default), or specific IP (e.g., `8.8.8.8`) | `pia` |
-| `DISABLE_IPV6` | Block IPv6 traffic | `true` |
+| `DNS` | DNS provider: `pia` (10.0.0.243), or specific IP (e.g., `8.8.8.8`) | `pia` |
+| `IPV6_ENABLED` | Allow IPv6 traffic through VPN | `false` |
 | `LOG_LEVEL` | Logging verbosity: `error`, `info`, `debug` | `info` |
 
 ### Network & Firewall
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LOCAL_NETWORK` | CIDR ranges for LAN access (comma-separated) | None |
+| `LOCAL_NETWORKS` | CIDR ranges for LAN access (comma-separated) | None |
 | `LOCAL_PORTS` | Ports accessible from LAN (comma-separated) | None |
 
 ### Port Forwarding
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `PORT_FORWARDING` | Enable PIA port forwarding. Automatically enabled when `PORT_API_TYPE` is set. | `false` |
-| `PORT_API_TYPE` | Torrent client type: `qbittorrent`, `transmission`, `deluge`, `rtorrent`, `custom` | None |
-| `PORT_API_URL` | Client API endpoint (e.g., `http://localhost:8080`) | None |
-| `PORT_API_USER` | Client API username | None |
-| `PORT_API_PASS` | Client API password | None |
-| `PORT_API_CMD` | Custom command for port updates (use `{PORT}` placeholder) | None |
-| `PORT_FILE` | File to write forwarded port | `/etc/wireguard/port` |
+| `PORT_FORWARDING` | Enable PIA port forwarding. Automatically enabled when `PORT_SYNC_TYPE` is set. | `false` |
+| `PORT_SYNC_TYPE` | Torrent client type: `qbittorrent`, `transmission`, `deluge`, `rtorrent`, `custom` | None |
+| `PORT_SYNC_URL` | Client API endpoint (e.g., `http://localhost:8080`) | None |
+| `PORT_SYNC_USER` | Client API username | None |
+| `PORT_SYNC_PASS` | Client API password | None |
+| `PORT_SYNC_CMD` | Custom command for port updates (use `{PORT}` placeholder) | None |
+| `PORT_FILE` | File to write forwarded port | `/run/pia-tun/port` |
 
 ### Proxy Settings
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `PROXY_ENABLED` | Enable SOCKS5/HTTP proxies. Proxy ports are automatically accessible from LAN when enabled. | `false` |
-| `SOCKS5_PORT` | SOCKS5 listen port. | `1080` |
+| `PROXY_ENABLED` | Enable SOCKS5/HTTP proxies (listen on localhost only by default) | `false` |
+| `SOCKS5_PORT` | SOCKS5 listen port | `1080` |
 | `HTTP_PROXY_PORT` | HTTP proxy listen port | `8888` |
 | `PROXY_USER` | Proxy authentication username (or use `/run/secrets/proxy_user`) | None |
 | `PROXY_PASS` | Proxy authentication password (or use `/run/secrets/proxy_pass`) | None |
+
+**Note:** To expose proxy ports to your LAN, add them to `LOCAL_PORTS` (e.g., `LOCAL_PORTS=1080,8888`).
 
 ### Health Monitoring
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `CHECK_INTERVAL` | Health check frequency (seconds) | `15` |
-| `MAX_FAILURES` | Consecutive failures before reconnection | `3` |
-| `MONITOR_PARALLEL_CHECKS` | Run connectivity tests in parallel | `true` |
+| `HC_INTERVAL` | Health check frequency (seconds) | `15` |
+| `HC_MAX_FAILURES` | Consecutive failures before reconnection | `3` |
 
 ### Metrics & Observability
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `METRICS` | Enable Prometheus metrics endpoint. Metrics port is automatically accessible from LAN when enabled. | `false` |
+| `METRICS` | Enable Prometheus metrics endpoint (listen on localhost only by default) | `true` |
 | `METRICS_PORT` | Metrics server port | `9090` |
+
+**Note:** To expose metrics to your LAN, add the port to `LOCAL_PORTS` (e.g., `LOCAL_PORTS=9090`).
 
 **Endpoints:**
 - `/metrics` - Prometheus format
@@ -177,34 +171,10 @@ The firewall operates in default-deny mode:
 - On crash/OOM: Firewall remains active until network namespace is destroyed
 
 **Dependent Services:**
-For containers sharing the network namespace, you can coordinate
-startup to ensure the kill-switch is active before dependent services begin:
 
-```yaml
-services:
-  pia-tun:
-    image: x0lie/pia-tun:latest
-    # ... config ...
-    healthcheck:
-      test: ["CMD", "test", "-f", "/tmp/killswitch_up"]
-      interval: 5s
-      timeout: 3s
-      retries: 3
-      start_period: 30s
+For containers sharing the network namespace (`network_mode: "service:pia-tun"`), use Docker Compose healthchecks to ensure the kill-switch is active before dependent services start. See the [Coordinating with Dependent Services](#coordinating-with-dependent-services) section for detailed examples and best practices.
 
-  qbittorrent:
-    image: lscr.io/linuxserver/qbittorrent:latest
-    network_mode: "service:pia-tun"
-    depends_on:
-      pia-tun:
-        condition: service_healthy
-```
-
-**Important:** This healthcheck is ONLY for coordinating dependent service startup.
-Do not use it, or others, as a liveness probe that restarts the container, as pia-tun manages
-its own health monitoring internally. For manual restarts, restart pia-tun and
-dependent services simultaneously, or use the proxy connection method which
-doesn't require coordinated restarts. As long as you utilize dependsOn, you're unlikely to ever have a leak occur
+**Important:** As long as you use `depends_on` with the killswitch healthcheck, you're unlikely to ever have a leak occur during startup.
 
 ### Secrets Management
 
@@ -232,6 +202,74 @@ secrets:
 
 Secrets are read from `/run/secrets/` and never logged.
 
+## Data Persistence
+
+**This container is ephemeral by design.** No persistent storage is required for normal operation.
+
+- WireGuard keys and configuration are regenerated on each container start
+- Port forwarding automatically requests a new port from PIA
+- All runtime state lives in memory or temporary filesystems
+
+**Recommendation:** Most users should NOT use persistent volumes. Ephemeral operation provides:
+- Fresh connections on every restart (more secure)
+- No stale configuration issues
+- Simpler troubleshooting
+- Clean slate for debugging
+
+## Coordinating with Dependent Services
+
+### Monitoring Port Changes
+
+When port forwarding is enabled, some dependent services may need to know when the port changes. Most modern clients handle port and interface changes during runtime well, but if your dependent is more brittle, several methods are available for restarting on port changes:
+
+**1. Port File Monitoring (Simple)**
+
+Watch the port file for changes:
+```bash
+# Using inotifywait
+inotifywait -m /run/pia-tun/port | while read; do
+    NEW_PORT=$(cat /run/pia-tun/port)
+    echo "Port changed to: $NEW_PORT"
+    # Restart your service or update configuration
+done
+```
+
+**2. Webhook Integration (Recommended)**
+
+Use `PORT_SYNC_TYPE=custom` to POST to your own webhook service:
+```yaml
+environment:
+  - PORT_SYNC_TYPE=custom
+  - PORT_SYNC_URL=http://your-service:8080/webhook/port-changed
+```
+
+Your webhook receives a POST request when the port changes, allowing you to:
+- Restart dependent containers (via Docker API)
+- Update load balancer configuration
+- Trigger custom automation
+
+**3. Docker Compose Healthcheck (Startup Coordination)**
+
+For coordinating initial startup only (not for liveness monitoring):
+```yaml
+services:
+  pia-tun:
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/killswitch_up"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+
+  dependent:
+    network_mode: "service:pia-tun"
+    depends_on:
+      pia-tun:
+        condition: service_healthy
+```
+
+**Important:** Do NOT use healthchecks as liveness probes that restart pia-tun. The container manages its own health monitoring and reconnection logic internally.
+
 ## Advanced Features
 
 ### Custom Port Update Commands
@@ -240,8 +278,8 @@ For non-standard clients:
 
 ```yaml
 environment:
-  - PORT_API_TYPE=custom
-  - PORT_API_CMD=/path/to/script.sh {PORT}
+  - PORT_SYNC_TYPE=custom
+  - PORT_SYNC_CMD=/path/to/script.sh {PORT}
 ```
 
 The `{PORT}` placeholder is replaced with the forwarded port number. When a new port is obtained, the command retries indefinitely until successful.
@@ -285,13 +323,13 @@ docker logs pia-tun
 - Check logs for authentication errors
 
 **API port updater not reaching client:**
-- Verify `PORT_API_URL` is accessible from pia-tun container
-- Check `PORT_API_USER` and `PORT_API_PASS` are correct
+- Verify `PORT_SYNC_URL` is accessible from pia-tun container
+- Check `PORT_SYNC_USER` and `PORT_SYNC_PASS` are correct
 - Review logs for API communication errors
 
-**Cannot access metrics endpoint:**
-- Ensure `METRICS=true` is set
-- Metrics port is automatically accessible when enabled
+**Cannot access metrics/proxy from LAN:**
+- Ensure the port is explicitly added to `LOCAL_PORTS` (e.g., `LOCAL_PORTS=9090` for metrics, `LOCAL_PORTS=1080,8888` for proxies)
+- Services are localhost-only by default for security
 
 ## Architecture
 

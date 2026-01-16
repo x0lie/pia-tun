@@ -198,34 +198,6 @@ EOF
 }
 
 # ============================================================================
-# SERVICE MANAGEMENT
-# ============================================================================
-
-# Restart Docker containers after VPN reconnection
-restart_services() {
-    local services="$1"
-    [ -z "$services" ] && return 0
-
-    show_step "Restarting dependent services..."
-    IFS=',' read -ra SERVICES <<< "$services"
-    for service in "${SERVICES[@]}"; do
-        service=$(trim "$service")
-        [ -n "$service" ] && {
-            log_info "  ${blu}↻${nc} Restarting container: $service"
-            
-            show_debug "Executing: docker restart $service"
-            if docker restart "$service" >/dev/null 2>&1; then
-                show_debug "Successfully restarted: $service"
-            else
-                log_info "  ${ylw}⚠${nc} Could not restart $service"
-                show_debug "Docker restart failed for: $service"
-            fi
-        }
-    done
-    show_success "Dependent services restarted"
-}
-
-# ============================================================================
 # NETWORK UTILITIES
 # ============================================================================
 

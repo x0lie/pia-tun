@@ -6,19 +6,19 @@
 source /app/scripts/ui.sh
 
 # Configuration
-readonly PORT_API_ENABLED=${PORT_API_ENABLED:-false}
-readonly PORT_API_TYPE=${PORT_API_TYPE:-""}
-readonly PORT_API_URL=${PORT_API_URL:-""}
-readonly PORT_API_USER=${PORT_API_USER:-""}
-readonly PORT_API_PASS=${PORT_API_PASS:-""}
+readonly PORT_SYNC_ENABLED=${PORT_SYNC_ENABLED:-false}
+readonly PORT_SYNC_TYPE=${PORT_SYNC_TYPE:-""}
+readonly PORT_SYNC_URL=${PORT_SYNC_URL:-""}
+readonly PORT_SYNC_USER=${PORT_SYNC_USER:-""}
+readonly PORT_SYNC_PASS=${PORT_SYNC_PASS:-""}
 readonly CURL_TIMEOUT="--connect-timeout 5 --max-time 10"
 
 show_debug "Port API updater configuration:"
-show_debug "  PORT_API_ENABLED=$PORT_API_ENABLED"
-show_debug "  PORT_API_TYPE=$PORT_API_TYPE"
-show_debug "  PORT_API_URL=$PORT_API_URL"
-show_debug "  PORT_API_USER=${PORT_API_USER:+set}"
-show_debug "  PORT_API_PASS=${PORT_API_PASS:+set}"
+show_debug "  PORT_SYNC_ENABLED=$PORT_SYNC_ENABLED"
+show_debug "  PORT_SYNC_TYPE=$PORT_SYNC_TYPE"
+show_debug "  PORT_SYNC_URL=$PORT_SYNC_URL"
+show_debug "  PORT_SYNC_USER=${PORT_SYNC_USER:+set}"
+show_debug "  PORT_SYNC_PASS=${PORT_SYNC_PASS:+set}"
 
 # Update qBittorrent port via API
 update_qbittorrent() {
@@ -239,43 +239,43 @@ _update_port_api_attempt() {
     local port=$1
     local result=1
 
-    case "$PORT_API_TYPE" in
+    case "$PORT_SYNC_TYPE" in
         qbittorrent|qbit|qb)
             show_debug "Using qBittorrent updater"
-            update_qbittorrent "$port" "$PORT_API_URL" "$PORT_API_USER" "$PORT_API_PASS"
+            update_qbittorrent "$port" "$PORT_SYNC_URL" "$PORT_SYNC_USER" "$PORT_SYNC_PASS"
             result=$?
             ;;
         transmission|trans)
             show_debug "Using Transmission updater"
-            update_transmission "$port" "$PORT_API_URL" "$PORT_API_USER" "$PORT_API_PASS"
+            update_transmission "$port" "$PORT_SYNC_URL" "$PORT_SYNC_USER" "$PORT_SYNC_PASS"
             result=$?
             ;;
         deluge)
             show_debug "Using Deluge updater"
-            update_deluge "$port" "$PORT_API_URL" "$PORT_API_PASS"
+            update_deluge "$port" "$PORT_SYNC_URL" "$PORT_SYNC_PASS"
             result=$?
             ;;
         rtorrent|rutorrent)
             show_debug "Using rTorrent updater"
-            update_rtorrent "$port" "$PORT_API_URL" "$PORT_API_USER" "$PORT_API_PASS"
+            update_rtorrent "$port" "$PORT_SYNC_URL" "$PORT_SYNC_USER" "$PORT_SYNC_PASS"
             result=$?
             ;;
         custom)
             show_debug "Using custom command"
-            if [ -z "$PORT_API_CMD" ]; then
-                show_debug "PORT_API_CMD not set for custom type"
+            if [ -z "$PORT_SYNC_CMD" ]; then
+                show_debug "PORT_SYNC_CMD not set for custom type"
                 return 1
             fi
 
             # Replace {PORT} placeholder in custom command
-            local cmd="${PORT_API_CMD//\{PORT\}/$port}"
+            local cmd="${PORT_SYNC_CMD//\{PORT\}/$port}"
             show_debug "Executing custom command: $cmd"
             eval "$cmd" >/dev/null 2>&1
             result=$?
             show_debug "Custom command exit code: $result"
             ;;
         *)
-            show_debug "Unknown PORT_API_TYPE: $PORT_API_TYPE"
+            show_debug "Unknown PORT_SYNC_TYPE: $PORT_SYNC_TYPE"
             return 1
             ;;
     esac
@@ -291,13 +291,13 @@ update_port_api() {
     show_debug "update_port_api called with port=$port"
 
     # Quick validation
-    if [ "$PORT_API_ENABLED" != "true" ]; then
-        show_debug "PORT_API_ENABLED is not true, skipping update"
+    if [ "$PORT_SYNC_ENABLED" != "true" ]; then
+        show_debug "PORT_SYNC_ENABLED is not true, skipping update"
         return 0
     fi
 
-    if [ -z "$PORT_API_TYPE" ] || [ -z "$PORT_API_URL" ]; then
-        show_debug "PORT_API_TYPE or PORT_API_URL not set, cannot update"
+    if [ -z "$PORT_SYNC_TYPE" ] || [ -z "$PORT_SYNC_URL" ]; then
+        show_debug "PORT_SYNC_TYPE or PORT_SYNC_URL not set, cannot update"
         return 1
     fi
 

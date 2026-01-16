@@ -15,12 +15,11 @@ import (
 )
 
 type Config struct {
-	CheckInterval      time.Duration
-	MaxFailures        int
-	RestartServices    string
-	DebugMode          bool
-	ParallelChecks     bool
-	MetricsEnabled     bool
+	CheckInterval   time.Duration
+	MaxFailures     int
+	RestartServices string
+	DebugMode       bool
+	MetricsEnabled  bool
 }
 
 type Monitor struct {
@@ -59,12 +58,10 @@ func loadConfig() Config {
 	}
 
 	return Config{
-		CheckInterval:   getEnvDuration("CHECK_INTERVAL", 15),
-		MaxFailures:     getEnvInt("MAX_FAILURES", 3),
-		RestartServices: os.Getenv("RESTART_SERVICES"),
-		DebugMode:       getEnvInt("_LOG_LEVEL", 0) == 2,
-		ParallelChecks:  getEnvBool("MONITOR_PARALLEL_CHECKS"),
-		MetricsEnabled:  getEnvBool("METRICS"),
+		CheckInterval:  getEnvDuration("HC_INTERVAL", 15),
+		MaxFailures:    getEnvInt("HC_MAX_FAILURES", 3),
+		DebugMode:      getEnvInt("_LOG_LEVEL", 0) == 2,
+		MetricsEnabled: getEnvBool("METRICS"),
 	}
 }
 
@@ -190,7 +187,7 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 
 					if m.config.DebugMode && m.failureCount == 1 {
 						fmt.Printf("  %sℹ%s Debug info:\n", colorYellow, colorReset)
-						cmd := exec.Command("wg", "show", "pia")
+						cmd := exec.Command("wg", "show", "pia0")
 						output, err := cmd.Output()
 						if err == nil {
 							lines := strings.Split(string(output), "\n")

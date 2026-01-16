@@ -152,7 +152,7 @@ nft_apply_baseline_killswitch() {
     
     nft_setup_base_table
     nft_create_sets
-    nft_populate_local_networks "${LOCAL_NETWORK:-}"
+    nft_populate_local_networks "${LOCAL_NETWORKS:-}"
     
     # Build rules in optimal order (performance-optimized for active VPN)
     show_debug "Building nftables ruleset (optimal order for performance)"
@@ -177,10 +177,10 @@ nft_apply_baseline_killswitch() {
     nft add rule inet vpn_filter output ct state established,related accept
 
     # 5. Local networks (if configured)
-    if [ "${LOCAL_NETWORK:-}" = "all" ] || [ -n "${LOCAL_NETWORK:-}" ]; then
+    if [ "${LOCAL_NETWORKS:-}" = "all" ] || [ -n "${LOCAL_NETWORKS:-}" ]; then
         show_debug "Rule 5: Allow local networks (from sets)"
         nft add rule inet vpn_filter output ip daddr @local_nets_v4 accept
-        if [ "${DISABLE_IPV6}" != "true" ]; then
+        if [ "${IPV6_ENABLED}" != "false" ]; then
             show_debug "Rule 5b: Allow local IPv6 networks"
             nft add rule inet vpn_filter output ip6 daddr @local_nets_v6 accept
         fi
@@ -189,7 +189,7 @@ nft_apply_baseline_killswitch() {
     fi
 
     # 6. ICMPv6 (essential for IPv6 functionality when IPv6 is enabled)
-    if [ "${DISABLE_IPV6}" != "true" ]; then
+    if [ "${IPV6_ENABLED}" != "false" ]; then
         show_debug "Rule 6: Allow ICMPv6 (Neighbor Discovery, Router Discovery, MTU, etc.)"
         nft add rule inet vpn_filter output meta l4proto ipv6-icmp accept
     fi
@@ -197,7 +197,7 @@ nft_apply_baseline_killswitch() {
     # 7. Drop everything else (handled by policy drop, no explicit rule needed)
     
     # IPv6 protection
-    if [ "${DISABLE_IPV6}" = "true" ]; then
+    if [ "${IPV6_ENABLED}" = "false" ]; then
         show_success "IPv6 completely blocked"
     else
         show_success "IPv6 routed through VPN only"
@@ -215,18 +215,11 @@ nft_apply_baseline_killswitch() {
     nft add rule inet vpn_filter input ct state established,related accept
 
     # 3. Local networks (if configured - allows LAN access to proxy/metrics on specific ports only)
-    if [ "${LOCAL_NETWORK:-}" = "all" ] || [ -n "${LOCAL_NETWORK:-}" ]; then
+    if [ "${LOCAL_NETWORKS:-}" = "all" ] || [ -n "${LOCAL_NETWORKS:-}" ]; then
         show_debug "INPUT Rule 3: Allow from local networks to specific ports"
 
         # Build list of allowed ports
         local allowed_ports=""
-        if [ "${PROXY_ENABLED}" = "true" ]; then
-            allowed_ports="${SOCKS5_PORT:-1080}, ${HTTP_PROXY_PORT:-8888}"
-        fi
-        if [ "${METRICS}" = "true" ]; then
-            [ -n "$allowed_ports" ] && allowed_ports+=", "
-            allowed_ports+="${METRICS_PORT:-9090}"
-        fi
 
         # Add user-specified LOCAL_PORTS (for dependent services like qBittorrent)
         if [ -n "${LOCAL_PORTS:-}" ]; then
@@ -241,7 +234,7 @@ nft_apply_baseline_killswitch() {
             # Add both TCP and UDP rules (many services need both: DNS, Plex discovery, HTTP/3, etc.)
             nft add rule inet vpn_filter input ip saddr @local_nets_v4 tcp dport { $allowed_ports } accept
             nft add rule inet vpn_filter input ip saddr @local_nets_v4 udp dport { $allowed_ports } accept
-            if [ "${DISABLE_IPV6}" != "true" ]; then
+            if [ "${IPV6_ENABLED}" != "false" ]; then
                 show_debug "INPUT Rule 3b: Allow from local IPv6 networks to specific ports (TCP+UDP)"
                 nft add rule inet vpn_filter input ip6 saddr @local_nets_v6 tcp dport { $allowed_ports } accept
                 nft add rule inet vpn_filter input ip6 saddr @local_nets_v6 udp dport { $allowed_ports } accept
@@ -254,7 +247,7 @@ nft_apply_baseline_killswitch() {
     fi
 
     # 4. ICMPv6 (essential for IPv6 functionality when IPv6 is enabled)
-    if [ "${DISABLE_IPV6}" != "true" ]; then
+    if [ "${IPV6_ENABLED}" != "false" ]; then
         show_debug "INPUT Rule 4: Allow ICMPv6 (Neighbor Discovery, Router Discovery, MTU, etc.)"
         nft add rule inet vpn_filter input meta l4proto ipv6-icmp accept
     fi
@@ -270,7 +263,7 @@ nft_apply_baseline_killswitch() {
 # Add VPN interface to killswitch (called after VPN is up)
 nft_add_vpn_interface() {
     show_debug "Adding VPN interface to killswitch"
-    local fwmark=$(wg show pia fwmark 2>/dev/null)
+    local fwmark=$(wg show pia0 fwmark 2>/dev/null)
     show_debug "VPN fwmark: ${fwmark:-off}"
 
     # Get handle of the established/related rule to insert VPN rules before it
@@ -287,7 +280,7 @@ nft_add_vpn_interface() {
 
     # Insert VPN interface rule first (most common - user traffic through tunnel)
     show_debug "Inserting VPN interface rule before conntrack (handle $conntrack_handle)"
-    nft insert rule inet vpn_filter output handle "$conntrack_handle" oifname "pia" accept comment "vpn_interface"
+    nft insert rule inet vpn_filter output handle "$conntrack_handle" oifname "pia0" accept comment "vpn_interface"
 
     # Insert fwmark rule for WireGuard protocol packets (to VPN endpoint via eth0)
     if [ -n "$fwmark" ] && [ "$fwmark" != "off" ]; then
@@ -375,8 +368,8 @@ nft_add_forwarded_port() {
     nft_remove_forwarded_port
 
     # Add rules for both TCP and UDP (required for torrenting: TCP for peers, UDP for DHT/uTP)
-    if nft add rule inet vpn_filter input iifname "pia" tcp dport "$port" accept comment "port_forward_tcp" 2>/dev/null && \
-       nft add rule inet vpn_filter input iifname "pia" udp dport "$port" accept comment "port_forward_udp" 2>/dev/null; then
+    if nft add rule inet vpn_filter input iifname "pia0" tcp dport "$port" accept comment "port_forward_tcp" 2>/dev/null && \
+       nft add rule inet vpn_filter input iifname "pia0" udp dport "$port" accept comment "port_forward_udp" 2>/dev/null; then
         show_debug "Port forwarding enabled: $port (TCP+UDP)"
     else
         show_error "Failed to add port forwarding rules for port $port"
@@ -426,7 +419,7 @@ ipt_apply_local_network_rules() {
     
     show_debug "Applying local network rules (chain: $chain, ipv6: $is_ipv6)"
     
-    if [ "${LOCAL_NETWORK:-}" = "all" ]; then
+    if [ "${LOCAL_NETWORKS:-}" = "all" ]; then
         if [ "$is_ipv6" = "true" ]; then
             ipt_add_fw_rule "$chain" -d fe80::/10 -j ACCEPT
             ipt_add_fw_rule "$chain" -d fc00::/7 -j ACCEPT
@@ -439,8 +432,8 @@ ipt_apply_local_network_rules() {
             ipt_add_fw_rule "$chain" -d 224.0.0.0/4 -j ACCEPT
             [ "$chain" = "VPN_OUT" ] && show_success "Local network access: All RFC1918 networks"
         fi
-    elif [ -n "${LOCAL_NETWORK:-}" ]; then
-        IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORK"
+    elif [ -n "${LOCAL_NETWORKS:-}" ]; then
+        IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORKS"
         for network in "${NETWORKS[@]}"; do
             network=$(echo "$network" | xargs)
             
@@ -450,7 +443,7 @@ ipt_apply_local_network_rules() {
                 ipt_add_fw_rule "$chain" -d "$network" -j ACCEPT
             fi
         done
-        [ "$chain" = "VPN_OUT" ] && show_success "Local network access: $LOCAL_NETWORK"
+        [ "$chain" = "VPN_OUT" ] && show_success "Local network access: $LOCAL_NETWORKS"
     else
         [ "$chain" = "VPN_OUT" ] && show_success "Local network access: Disabled (all traffic through VPN)"
     fi
@@ -475,7 +468,7 @@ ipt_setup_input_chain() {
     iptables -A VPN_IN -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
     # 3. Local networks (if configured - allows LAN access to proxy/metrics on specific ports only)
-    if [ "${LOCAL_NETWORK:-}" = "all" ] || [ -n "${LOCAL_NETWORK:-}" ]; then
+    if [ "${LOCAL_NETWORKS:-}" = "all" ] || [ -n "${LOCAL_NETWORKS:-}" ]; then
         show_debug "INPUT Rule 3: Allow from local networks to specific ports"
 
         # Build list of allowed ports
@@ -498,7 +491,7 @@ ipt_setup_input_chain() {
         # Only add rules if there are ports to allow
         if [ -n "$allowed_ports" ]; then
             show_debug "Allowing LAN access to ports: $allowed_ports (TCP+UDP)"
-            if [ "${LOCAL_NETWORK:-}" = "all" ]; then
+            if [ "${LOCAL_NETWORKS:-}" = "all" ]; then
                 # TCP rules
                 iptables -A VPN_IN -s 10.0.0.0/8 -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
                 iptables -A VPN_IN -s 172.16.0.0/12 -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
@@ -510,7 +503,7 @@ ipt_setup_input_chain() {
                 iptables -A VPN_IN -s 192.168.0.0/16 -p udp -m multiport --dports "$allowed_ports" -j ACCEPT
                 iptables -A VPN_IN -s 169.254.0.0/16 -p udp -m multiport --dports "$allowed_ports" -j ACCEPT
             else
-                IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORK"
+                IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORKS"
                 for network in "${NETWORKS[@]}"; do
                     network=$(echo "$network" | xargs)
                     if [[ "$network" != *":"* ]]; then
@@ -553,13 +546,13 @@ ipt_setup_ipv6_protection() {
     ip6tables -A VPN_IN6 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
     # Allow ICMPv6 (essential for IPv6 functionality)
-    if [ "${DISABLE_IPV6}" != "true" ]; then
+    if [ "${IPV6_ENABLED}" != "false" ]; then
         show_debug "Adding ICMPv6 rule to VPN_IN6"
         ip6tables -A VPN_IN6 -p ipv6-icmp -j ACCEPT
     fi
 
     # Build list of allowed ports for IPv6 (same as IPv4)
-    if [ "${LOCAL_NETWORK:-}" = "all" ] || [ -n "${LOCAL_NETWORK:-}" ]; then
+    if [ "${LOCAL_NETWORKS:-}" = "all" ] || [ -n "${LOCAL_NETWORKS:-}" ]; then
         local allowed_ports=""
         if [ "${PROXY_ENABLED}" = "true" ]; then
             allowed_ports="${SOCKS5_PORT:-1080},${HTTP_PROXY_PORT:-8888}"
@@ -576,7 +569,7 @@ ipt_setup_ipv6_protection() {
         fi
 
         if [ -n "$allowed_ports" ]; then
-            if [ "${LOCAL_NETWORK:-}" = "all" ]; then
+            if [ "${LOCAL_NETWORKS:-}" = "all" ]; then
                 # TCP rules
                 ip6tables -A VPN_IN6 -s fe80::/10 -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
                 ip6tables -A VPN_IN6 -s fc00::/7 -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
@@ -584,7 +577,7 @@ ipt_setup_ipv6_protection() {
                 ip6tables -A VPN_IN6 -s fe80::/10 -p udp -m multiport --dports "$allowed_ports" -j ACCEPT
                 ip6tables -A VPN_IN6 -s fc00::/7 -p udp -m multiport --dports "$allowed_ports" -j ACCEPT
             else
-                IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORK"
+                IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORKS"
                 for network in "${NETWORKS[@]}"; do
                     network=$(echo "$network" | xargs)
                     if [[ "$network" == *":"* ]]; then
@@ -608,16 +601,16 @@ ipt_setup_ipv6_protection() {
     ipt_apply_local_network_rules "VPN_OUT6" "true"
 
     # Allow ICMPv6 (essential for IPv6 functionality)
-    if [ "${DISABLE_IPV6}" != "true" ]; then
+    if [ "${IPV6_ENABLED}" != "false" ]; then
         show_debug "Adding ICMPv6 rule to VPN_OUT6"
         ipt_add_fw_rule "VPN_OUT6" -p ipv6-icmp -j ACCEPT
-        ipt_add_fw_rule "VPN_OUT6" -o pia -j ACCEPT
+        ipt_add_fw_rule "VPN_OUT6" -o pia0 -j ACCEPT
     fi
 
     ipt_add_fw_rule "VPN_OUT6" -j DROP
     ip6tables -I OUTPUT 1 -j VPN_OUT6
 
-    [ "${DISABLE_IPV6}" = "true" ] && show_success "IPv6 completely blocked" || \
+    [ "${IPV6_ENABLED}" = "false" ] && show_success "IPv6 completely blocked" || \
         show_success "IPv6 routed through VPN only"
 }
 
@@ -652,7 +645,7 @@ ipt_add_standard_rules() {
     ipt_apply_local_network_rules "VPN_OUT" "false"
     
     if [ "$include_vpn" = "true" ]; then
-        local fwmark=$(wg show pia fwmark 2>/dev/null)
+        local fwmark=$(wg show pia0 fwmark 2>/dev/null)
         show_debug "VPN fwmark: ${fwmark:-off}"
         
         if [ -n "$fwmark" ] && [ "$fwmark" != "off" ]; then
@@ -661,7 +654,7 @@ ipt_add_standard_rules() {
         else
             show_success "VPN added to killswitch (interface-based)"
         fi
-        ipt_add_fw_rule "VPN_OUT" -o pia -j ACCEPT -m comment --comment "vpn_interface"
+        ipt_add_fw_rule "VPN_OUT" -o pia0 -j ACCEPT -m comment --comment "vpn_interface"
     fi
 }
 
@@ -691,7 +684,7 @@ ipt_add_vpn_interface() {
     iptables -D VPN_OUT -j DROP 2>/dev/null || true
     
     # Add VPN rules
-    local fwmark=$(wg show pia fwmark 2>/dev/null)
+    local fwmark=$(wg show pia0 fwmark 2>/dev/null)
     show_debug "VPN fwmark: ${fwmark:-off}"
     
     if [ -n "$fwmark" ] && [ "$fwmark" != "off" ]; then
@@ -700,14 +693,14 @@ ipt_add_vpn_interface() {
     else
         show_success "VPN added to killswitch (interface-based)"
     fi
-    ipt_add_fw_rule "VPN_OUT" -o pia -j ACCEPT -m comment --comment "vpn_interface"
+    ipt_add_fw_rule "VPN_OUT" -o pia0 -j ACCEPT -m comment --comment "vpn_interface"
     
     # Re-add DROP rule at end
     show_debug "Re-adding DROP rule"
     ipt_add_fw_rule "VPN_OUT" -j DROP
     
     # Also update IPv6
-    if [ "${DISABLE_IPV6}" != "true" ]; then
+    if [ "${IPV6_ENABLED}" != "false" ]; then
         show_debug "Updating IPv6 rules for VPN"
         ip6tables -D VPN_OUT6 -j DROP 2>/dev/null || true
         ipt_add_fw_rule "VPN_OUT6" -p ipv6-icmp -j ACCEPT
@@ -723,7 +716,7 @@ ipt_remove_vpn_interface() {
     iptables -D VPN_OUT -m comment --comment "vpn_fwmark" -j ACCEPT 2>/dev/null || true
     iptables -D VPN_OUT -m comment --comment "vpn_interface" -j ACCEPT 2>/dev/null || true
 
-    ip6tables -D VPN_OUT6 -o pia -j ACCEPT 2>/dev/null || true
+    ip6tables -D VPN_OUT6 -o pia0 -j ACCEPT 2>/dev/null || true
 }
 
 # Add forwarded port to INPUT chain (called when port is allocated)
@@ -748,8 +741,8 @@ ipt_add_forwarded_port() {
 
     # Insert rules before the final DROP (position 4)
     # Add rules for both TCP and UDP (required for torrenting: TCP for peers, UDP for DHT/uTP)
-    if iptables -I VPN_IN 4 -i pia -p tcp --dport "$port" -j ACCEPT -m comment --comment "port_forward_tcp" 2>/dev/null && \
-       iptables -I VPN_IN 4 -i pia -p udp --dport "$port" -j ACCEPT -m comment --comment "port_forward_udp" 2>/dev/null; then
+    if iptables -I VPN_IN 4 -i pia0 -p tcp --dport "$port" -j ACCEPT -m comment --comment "port_forward_tcp" 2>/dev/null && \
+       iptables -I VPN_IN 4 -i pia0 -p udp --dport "$port" -j ACCEPT -m comment --comment "port_forward_udp" 2>/dev/null; then
         show_debug "Port forwarding enabled: $port (TCP+UDP)"
     else
         show_error "Failed to add port forwarding rules for port $port"

@@ -1,7 +1,7 @@
 FROM golang:1.23-alpine AS go-builder
 
 # Accept version as build argument (passed by GitHub Actions)
-ARG VERSION=dev
+ARG VERSION=local
 
 WORKDIR /build
 
@@ -30,7 +30,7 @@ RUN cd cmd/proxy && \
 FROM alpine:3.19
 
 # Accept version from build stage
-ARG VERSION=dev
+ARG VERSION=local
 
 # Install MINIMAL runtime dependencies
 RUN apk update && \
@@ -77,9 +77,8 @@ COPY scripts/ /app/scripts/
 # CRITICAL FIX: Only chmod scripts, NOT the Go binaries (prevents 10MB duplication)
 RUN chmod +x /app/run.sh /app/scripts/*.sh && \
     mkdir -p /etc/wireguard && \
+    mkdir -p /run/pia-tun && \
     ls -la /usr/local/bin/proxy /usr/local/bin/monitor /usr/local/bin/portforward
-
-VOLUME ["/etc/wireguard"]
 
 # Set VERSION as environment variable for runtime
 ENV VERSION=${VERSION}
@@ -96,26 +95,25 @@ LABEL org.opencontainers.image.title="pia-tun" \
 
 ENV TZ=UTC \
     LOG_LEVEL=info \
-    DISABLE_IPV6=true \
-    LOCAL_NETWORK="" \
+    IPV6_ENABLED=false \
+    LOCAL_NETWORKS="" \
     LOCAL_PORTS="" \
     DNS="pia" \
-    PORT_FILE=/etc/wireguard/port \
+    PORT_FILE=/run/pia-tun/port \
+    PORT_SYNC_TYPE="" \
+    PORT_SYNC_URL="" \
+    PORT_SYNC_USER="" \
+    PORT_SYNC_PASS="" \
+    PORT_SYNC_CMD="" \
     PROXY_ENABLED=false \
-    SOCKS5_PORT=1080 \
-    HTTP_PROXY_PORT=8888 \
     PROXY_USER="" \
     PROXY_PASS="" \
-    PORT_API_ENABLED=false \
-    PORT_API_TYPE="" \
-    PORT_API_URL="" \
-    PORT_API_USER="" \
-    PORT_API_PASS="" \
-    CHECK_INTERVAL=15 \
-    MAX_FAILURES=3 \
-    MONITOR_PARALLEL_CHECKS=true \
-    METRICS=false \
-    METRICS_PORT=9090
+    SOCKS5_PORT=1080 \
+    HTTP_PROXY_PORT=8888 \
+    METRICS=true \
+    METRICS_PORT=9090 \
+    HC_INTERVAL=15 \
+    HC_MAX_FAILURES=3
 
 EXPOSE 1080 8888 9090
 

@@ -13,10 +13,10 @@ import (
 )
 
 type HealthCheckResult struct {
-	InterfaceUp    bool
-	Connectivity   bool
-	CheckDuration  time.Duration
-	Error          error
+	InterfaceUp   bool
+	Connectivity  bool
+	CheckDuration time.Duration
+	Error         error
 }
 
 func (m *Monitor) getCurrentServer() string {
@@ -64,7 +64,7 @@ func (m *Monitor) getCurrentIP() string {
 	}
 
 	// Fallback: return tunnel IP
-	cmd := exec.Command("ip", "addr", "show", "pia")
+	cmd := exec.Command("ip", "addr", "show", "pia0")
 	output, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -88,27 +88,27 @@ func (m *Monitor) getCurrentIP() string {
 func (m *Monitor) isInterfaceUp() bool {
 	m.debugLog("Checking interface status")
 
-	cmd := exec.Command("ip", "link", "show", "pia")
+	cmd := exec.Command("ip", "link", "show", "pia0")
 	if err := cmd.Run(); err != nil {
 		m.debugLog("Interface not found")
 		return false
 	}
 
-	cmd = exec.Command("ip", "addr", "show", "pia")
+	cmd = exec.Command("ip", "addr", "show", "pia0")
 	output, err := cmd.Output()
 	if err == nil && strings.Contains(string(output), "inet ") {
 		m.debugLog("Interface has IP address")
 		return true
 	}
 
-	cmd = exec.Command("wg", "show", "pia", "peers")
+	cmd = exec.Command("wg", "show", "pia0", "peers")
 	output, err = cmd.Output()
 	if err == nil && len(strings.TrimSpace(string(output))) > 0 {
 		m.debugLog("Interface has WireGuard peers")
 		return true
 	}
 
-	cmd = exec.Command("ip", "link", "show", "pia")
+	cmd = exec.Command("ip", "link", "show", "pia0")
 	output, err = cmd.Output()
 	if err == nil && !strings.Contains(string(output), "state DOWN") {
 		m.debugLog("Interface is not DOWN")
@@ -141,7 +141,7 @@ func (m *Monitor) checkConnectivityHTTP(ctx context.Context, url string) bool {
 	return false
 }
 
-func (m *Monitor) checkExternalConnectivityParallel() bool {
+func (m *Monitor) checkExternalConnectivity() bool {
 	m.debugLog("Checking external connectivity (parallel mode)")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -179,42 +179,6 @@ func (m *Monitor) checkExternalConnectivityParallel() bool {
 
 	m.debugLog("All parallel connectivity checks failed")
 	return false
-}
-
-func (m *Monitor) checkExternalConnectivitySerial() bool {
-	m.debugLog("Checking external connectivity (serial mode)")
-
-	cmd := exec.Command("ping", "-c", "1", "-W", "5", "1.1.1.1")
-	if err := cmd.Run(); err == nil {
-		m.debugLog("Ping to 1.1.1.1 successful")
-		return true
-	}
-
-	cmd = exec.Command("ping", "-c", "1", "-W", "5", "8.8.8.8")
-	if err := cmd.Run(); err == nil {
-		m.debugLog("Ping to 8.8.8.8 successful")
-		return true
-	}
-
-	client := &http.Client{
-		Timeout: 8 * time.Second,
-	}
-	resp, err := client.Get("http://1.1.1.1")
-	if err == nil {
-		resp.Body.Close()
-		m.debugLog("HTTP request to 1.1.1.1 successful")
-		return true
-	}
-
-	m.debugLog("All connectivity checks failed")
-	return false
-}
-
-func (m *Monitor) checkExternalConnectivity() bool {
-	if m.config.ParallelChecks {
-		return m.checkExternalConnectivityParallel()
-	}
-	return m.checkExternalConnectivitySerial()
 }
 
 // Check WAN connectivity using bypass routes (no firewall manipulation needed!)
@@ -317,7 +281,7 @@ func (m *Monitor) waitForWAN() bool {
 }
 
 func (m *Monitor) getTransferBytes() (rx, tx int64, err error) {
-	cmd := exec.Command("wg", "show", "pia", "transfer")
+	cmd := exec.Command("wg", "show", "pia0", "transfer")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0, 0, err
@@ -404,7 +368,7 @@ func (m *Monitor) triggerReconnect() {
 }
 
 func (m *Monitor) getLastHandshake() int64 {
-	cmd := exec.Command("wg", "show", "pia", "latest-handshakes")
+	cmd := exec.Command("wg", "show", "pia0", "latest-handshakes")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0
@@ -443,7 +407,7 @@ func (m *Monitor) isKillswitchActive() bool {
 func (m *Monitor) getPortForwardingPort() int {
 	portFile := os.Getenv("PORT_FILE")
 	if portFile == "" {
-		portFile = "/etc/wireguard/port"
+		portFile = "/run/pia-tun/port"
 	}
 
 	data, err := os.ReadFile(portFile)

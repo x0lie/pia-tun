@@ -21,7 +21,6 @@ type Config struct {
 	SignatureRefreshDays int
 	SignatureSafetyHours int
 	PortFile             string
-	WebhookURL           string
 	DebugMode            bool
 }
 
@@ -83,8 +82,7 @@ func loadConfig() (*Config, error) {
 		BindInterval:         time.Duration(getEnvInt("PF_BIND_INTERVAL", 900)) * time.Second,
 		SignatureRefreshDays: getEnvInt("PF_SIGNATURE_REFRESH_DAYS", 31),
 		SignatureSafetyHours: getEnvInt("PF_SIGNATURE_SAFETY_HOURS", 24),
-		PortFile:             getEnvOrDefault("PORT_FILE", "/etc/wireguard/port"),
-		WebhookURL:           os.Getenv("WEBHOOK_URL"),
+		PortFile:             getEnvOrDefault("PORT_FILE", "/run/pia-tun/port"),
 		DebugMode:            getEnvBool("_LOG_LEVEL"),
 	}
 

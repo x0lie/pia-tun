@@ -3,7 +3,7 @@
 # Watches port file and updates torrent client API when port changes or becomes available
 #
 # This daemon runs continuously and:
-# - Monitors /etc/wireguard/port for changes
+# - Monitors /run/pia-tun/port for changes
 # - Updates the configured torrent client API
 # - Retries failed updates until successful
 # - Handles client unavailability gracefully
@@ -12,17 +12,17 @@ set -euo pipefail
 
 source /app/scripts/ui.sh
 source /app/scripts/killswitch.sh
-source /app/scripts/port_api_updater.sh
+source /app/scripts/port_sync.sh
 
 trap 'show_debug "port_monitor: Received termination signal, exiting"; exit 0' SIGTERM SIGINT
 
 # Configuration (PORT_FILE may be set by environment)
-PORT_FILE="${PORT_FILE:-/etc/wireguard/port}"
+PORT_FILE="${PORT_FILE:-/run/pia-tun/port}"
 
 show_debug "Port monitor configuration:"
 show_debug "  PORT_FILE=$PORT_FILE"
-show_debug "  PORT_API_TYPE=${PORT_API_TYPE:-none}"
-show_debug "  PORT_API_URL=${PORT_API_URL:-none}"
+show_debug "  PORT_SYNC_TYPE=${PORT_SYNC_TYPE:-none}"
+show_debug "  PORT_SYNC_URL=${PORT_SYNC_URL:-none}"
 
 # Internal constants
 readonly RETRY_INTERVAL=60  # Retry failed updates every 60 seconds
@@ -69,10 +69,10 @@ monitor_port_changes() {
             fi
 
             if update_port_api "$INITIAL_PORT"; then
-                show_success "[$(date '+%Y-%m-%d %H:%M:%S')] $PORT_API_TYPE port updated"
+                show_success "[$(date '+%Y-%m-%d %H:%M:%S')] $PORT_SYNC_TYPE port updated"
                 LAST_UPDATE_SUCCESS=true
             else
-                show_warning "[$(date '+%Y-%m-%d %H:%M:%S')] $PORT_API_TYPE not reachable, will retry"
+                show_warning "[$(date '+%Y-%m-%d %H:%M:%S')] $PORT_SYNC_TYPE not reachable, will retry"
                 show_debug "Initial port update failed, will retry"
                 LAST_UPDATE_SUCCESS=false
             fi
@@ -140,10 +140,10 @@ monitor_port_changes() {
             if update_port_api "$CURRENT_PORT"; then
                 # Success!
                 if [ "$CURRENT_PORT" != "$LAST_PORT" ]; then
-                    show_success "[$(date '+%Y-%m-%d %H:%M:%S')] $PORT_API_TYPE port updated"
+                    show_success "[$(date '+%Y-%m-%d %H:%M:%S')] $PORT_SYNC_TYPE port updated"
                     show_debug "Port update successful (new port: $CURRENT_PORT)"
                 else
-                    show_success "[$(date '+%Y-%m-%d %H:%M:%S')] $PORT_API_TYPE now reachable, port updated"
+                    show_success "[$(date '+%Y-%m-%d %H:%M:%S')] $PORT_SYNC_TYPE now reachable, port updated"
                     show_debug "Retry successful (port: $CURRENT_PORT)"
                 fi
                 LAST_UPDATE_SUCCESS=true
@@ -151,7 +151,7 @@ monitor_port_changes() {
                 # Failed - will retry next cycle
                 if [ "$LAST_UPDATE_SUCCESS" = true ]; then
                     # Only log on first failure (not on every retry)
-                    show_warning "[$(date '+%Y-%m-%d %H:%M:%S')] $PORT_API_TYPE not reachable, will retry"
+                    show_warning "[$(date '+%Y-%m-%d %H:%M:%S')] $PORT_SYNC_TYPE not reachable, will retry"
                     show_debug "API update failed (first failure)"
                 else
                     show_debug "API update failed (continuing retry cycle)"
@@ -176,7 +176,7 @@ main() {
     # Check if this is a restart (reconnecting marker exists)
     if [ ! -f /tmp/reconnecting ]; then
         show_info
-        show_step "Port monitor starting (API: $PORT_API_TYPE)"
+        show_step "Port monitor starting (API: $PORT_SYNC_TYPE)"
     else
         show_debug "Reconnecting mode detected, suppressing startup message"
     fi

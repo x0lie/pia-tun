@@ -11,11 +11,10 @@ services:
       - PIA_LOCATION=ca_ontario,ca_ontario-so,ca_toronto,ca                   # Supports multiple options, chooses lowest latency
       - PORT_FORWARDING=true
       - PROXY_ENABLED=true
-      - PORT_API_TYPE=qbittorrent                                             # Supports qbittorrent, deluge, transmission, and rtorrent
-      - PORT_API_URL=http://localhost:8080                                    # API endpoint of dependent
-      - LOCAL_NETWORK=192.168.1.0/24,172.17.0.0/16
-      - LOCAL_PORTS=8080
-      - METRICS=true
+      - PORT_SYNC_TYPE=qbittorrent                                             # Supports qbittorrent, deluge, transmission, and rtorrent
+      - PORT_SYNC_URL=http://localhost:8080                                    # API endpoint of dependent
+      - LOCAL_NETWORKS=192.168.1.0/24,172.17.0.0/16
+      - LOCAL_PORTS=8080,1080,8888
     secrets:
       - pia_user
       - pia_pass

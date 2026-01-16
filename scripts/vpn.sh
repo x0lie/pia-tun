@@ -422,7 +422,7 @@ generate_config() {
     fi
     
     local allowed_ips="0.0.0.0/0"
-    if [ "${DISABLE_IPV6}" != "true" ]; then
+    if [ "${IPV6_ENABLED}" != "false" ]; then
         show_debug "IPv6 enabled, adding ::/0 to allowed IPs"
         allowed_ips="0.0.0.0/0, ::/0"
     else
@@ -432,8 +432,8 @@ generate_config() {
     local mtu="${MTU:-1420}"
     show_debug "MTU: $mtu"
     
-    show_debug "Writing WireGuard config to /etc/wireguard/pia.conf"
-    cat > /etc/wireguard/pia.conf << EOF
+    show_debug "Writing WireGuard config to /etc/wireguard/pia0.conf"
+    cat > /etc/wireguard/pia0.conf << EOF
 [Interface]
 PrivateKey = $private_key
 Address = $peer_ip/32
@@ -540,18 +540,18 @@ bring_up_wireguard() {
     parse_wg_config "$config"
     
     # Create and configure interface
-    show_debug "Creating WireGuard interface: pia"
-    ip link add pia type wireguard || { show_debug "Failed to create interface"; return 1; }
+    show_debug "Creating WireGuard interface: pia0"
+    ip link add pia0 type wireguard || { show_debug "Failed to create interface"; return 1; }
     
     show_debug "Setting private key"
-    wg set pia private-key <(echo "${WG_CONFIG[PrivateKey]}") || { show_debug "Failed to set private key"; return 1; }
+    wg set pia0 private-key <(echo "${WG_CONFIG[PrivateKey]}") || { show_debug "Failed to set private key"; return 1; }
     
     show_debug "Adding address: ${WG_CONFIG[Address]}"
-    ip address add "${WG_CONFIG[Address]}" dev pia || { show_debug "Failed to add address"; return 1; }
+    ip address add "${WG_CONFIG[Address]}" dev pia0 || { show_debug "Failed to add address"; return 1; }
     
     local mtu="${WG_CONFIG[MTU]:-1392}"
     show_debug "Setting MTU: $mtu"
-    ip link set mtu "$mtu" dev pia
+    ip link set mtu "$mtu" dev pia0
     
     # Configure peer
     show_debug "Configuring peer:"
@@ -559,7 +559,7 @@ bring_up_wireguard() {
     show_debug "  Allowed IPs: ${WG_CONFIG[AllowedIPs]}"
     show_debug "  Keepalive: ${WG_CONFIG[PersistentKeepalive]}s"
     
-    wg set pia \
+    wg set pia0 \
         peer "${WG_CONFIG[PublicKey]}" \
         endpoint "${WG_CONFIG[Endpoint]}" \
         allowed-ips "${WG_CONFIG[AllowedIPs]}" \
@@ -567,26 +567,26 @@ bring_up_wireguard() {
     
     # Setup routing with fwmark
     show_debug "Setting fwmark: 51820"
-    wg set pia fwmark 51820 || { show_debug "Failed to set fwmark"; return 1; }
+    wg set pia0 fwmark 51820 || { show_debug "Failed to set fwmark"; return 1; }
     
     show_debug "Bringing interface up"
-    ip link set pia up || { show_debug "Failed to bring interface up"; return 1; }
+    ip link set pia0 up || { show_debug "Failed to bring interface up"; return 1; }
     
     # Add VPN routes to separate table
-    show_debug "Adding route: 0.0.0.0/0 via pia (table 51820)"
-    ip route add 0.0.0.0/0 dev pia table 51820 || { show_debug "Failed to add route"; return 1; }
+    show_debug "Adding route: 0.0.0.0/0 via pia0 (table 51820)"
+    ip route add 0.0.0.0/0 dev pia0 table 51820 || { show_debug "Failed to add route"; return 1; }
     
     # CRITICAL: Add local network exceptions BEFORE VPN routing rules
     # This ensures local traffic is evaluated first
-    if [ "$LOCAL_NETWORK" = "all" ]; then
+    if [ "$LOCAL_NETWORKS" = "all" ]; then
         show_debug "Adding local network exceptions for all RFC1918 ranges"
         ip rule add to 10.0.0.0/8 table main priority 100 2>/dev/null || true
         ip rule add to 172.16.0.0/12 table main priority 100 2>/dev/null || true
         ip rule add to 192.168.0.0/16 table main priority 100 2>/dev/null || true
         ip rule add to 169.254.0.0/16 table main priority 100 2>/dev/null || true
-    elif [ -n "$LOCAL_NETWORK" ]; then
-        show_debug "Adding local network exceptions: $LOCAL_NETWORK"
-        IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORK"
+    elif [ -n "$LOCAL_NETWORKS" ]; then
+        show_debug "Adding local network exceptions: $LOCAL_NETWORKS"
+        IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORKS"
         for network in "${NETWORKS[@]}"; do
             network=$(echo "$network" | xargs)
             # Only IPv4 networks
@@ -611,7 +611,7 @@ bring_up_wireguard() {
     # Debug: Show interface status
     if [ $_LOG_LEVEL -ge 2 ]; then
         show_debug "Interface status:"
-        wg show pia 2>/dev/null | while read -r line; do
+        wg show pia0 2>/dev/null | while read -r line; do
             show_debug "  $line"
         done
         
@@ -633,13 +633,13 @@ teardown_wireguard() {
     remove_vpn_from_killswitch
     
     # Now safe to tear down interface
-    if wg show pia >/dev/null 2>&1; then
-        show_debug "Bringing down interface: pia"
-        ip link set pia down 2>/dev/null || true
-        show_debug "Deleting interface: pia"
-        ip link del pia 2>/dev/null || true
+    if wg show pia0 >/dev/null 2>&1; then
+        show_debug "Bringing down interface: pia0"
+        ip link set pia0 down 2>/dev/null || true
+        show_debug "Deleting interface: pia0"
+        ip link del pia0 2>/dev/null || true
     else
-        show_debug "Interface pia not found (already down)"
+        show_debug "Interface pia0 not found (already down)"
     fi
     
     # Clean up local network exceptions
