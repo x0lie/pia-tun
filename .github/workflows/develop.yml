@@ -121,7 +121,6 @@ jobs:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
-          short-description: ${{ github.event.repository.description }}
           readme-filepath: ./README.md
 
       # Add a summary
