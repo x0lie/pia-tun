@@ -126,7 +126,7 @@ func (m *KeepaliveManager) initialSetup() error {
 	// Show update tactics
 	portAPIEnabled := os.Getenv("PORT_SYNC_ENABLED") == "true"
 	if portAPIEnabled {
-		portAPIType := os.Getenv("PORT_SYNC_TYPE")
+		portAPIType := os.Getenv("PORT_SYNC_CLIENT")
 		showSuccess(fmt.Sprintf("Updated via: File + API (%s)", portAPIType))
 	} else {
 		showSuccess("Updated via: File")

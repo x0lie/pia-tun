@@ -49,7 +49,7 @@ spec:
               TZ: ${TIMEZONE}
               LOCAL_NETWORKS: "10.69.0.0/16,10.96.0.0/16"
               LOCAL_PORTS: 8080
-              PORT_SYNC_TYPE: "qbittorrent"
+              PORT_SYNC_CLIENT: "qbittorrent"
               PORT_SYNC_URL: "http://localhost:8080"
             envFrom:
               - secretRef:

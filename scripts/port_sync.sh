@@ -7,7 +7,7 @@ source /app/scripts/ui.sh
 
 # Configuration
 readonly PORT_SYNC_ENABLED=${PORT_SYNC_ENABLED:-false}
-readonly PORT_SYNC_TYPE=${PORT_SYNC_TYPE:-""}
+readonly PORT_SYNC_CLIENT=${PORT_SYNC_CLIENT:-""}
 readonly PORT_SYNC_URL=${PORT_SYNC_URL:-""}
 readonly PORT_SYNC_USER=${PORT_SYNC_USER:-""}
 readonly PORT_SYNC_PASS=${PORT_SYNC_PASS:-""}
@@ -15,10 +15,11 @@ readonly CURL_TIMEOUT="--connect-timeout 5 --max-time 10"
 
 show_debug "Port API updater configuration:"
 show_debug "  PORT_SYNC_ENABLED=$PORT_SYNC_ENABLED"
-show_debug "  PORT_SYNC_TYPE=$PORT_SYNC_TYPE"
+show_debug "  PORT_SYNC_CLIENT=$PORT_SYNC_CLIENT"
 show_debug "  PORT_SYNC_URL=$PORT_SYNC_URL"
 show_debug "  PORT_SYNC_USER=${PORT_SYNC_USER:+set}"
 show_debug "  PORT_SYNC_PASS=${PORT_SYNC_PASS:+set}"
+show_debug "  PORT_SYNC_CMD=${PORT_SYNC_CMD:+set}"
 
 # Update qBittorrent port via API
 update_qbittorrent() {
@@ -110,6 +111,9 @@ update_transmission() {
 update_deluge() {
     local port=$1 base_url=$2 password=$3
     local cookie_jar=$(mktemp)
+
+    # Ensure cleanup on any exit (including errors with set -e)
+    trap "rm -f '$cookie_jar'" RETURN
 
     show_debug "update_deluge: port=$port, url=$base_url, password=${password:+set}"
     show_debug "Created temp cookie jar: $cookie_jar"
@@ -234,12 +238,40 @@ update_rtorrent() {
     fi
 }
 
-# Internal function to perform a single update attempt
-_update_port_api_attempt() {
+# Execute custom command with port placeholder
+_execute_custom_command() {
+    local port=$1
+
+    if [ -z "$PORT_SYNC_CMD" ]; then
+        show_debug "_execute_custom_command: PORT_SYNC_CMD not set"
+        return 1
+    fi
+
+    # Replace {PORT} placeholder in custom command
+    local cmd="${PORT_SYNC_CMD//\{PORT\}/$port}"
+    show_debug "Executing custom command (10s timeout): $cmd"
+
+    # Use timeout with bash -c for safer execution and prevent hanging
+    # 10 second timeout should be sufficient for most API calls and webhooks
+    timeout 10 bash -c "$cmd" >/dev/null 2>&1
+    local result=$?
+
+    # timeout returns 124 on timeout, preserve that for debugging
+    if [ $result -eq 124 ]; then
+        show_debug "Custom command timed out after 10s"
+    else
+        show_debug "Custom command exit code: $result"
+    fi
+
+    return $result
+}
+
+# Internal function to perform a single client update attempt
+_update_port_client_attempt() {
     local port=$1
     local result=1
 
-    case "$PORT_SYNC_TYPE" in
+    case "$PORT_SYNC_CLIENT" in
         qbittorrent|qbit|qb)
             show_debug "Using qBittorrent updater"
             update_qbittorrent "$port" "$PORT_SYNC_URL" "$PORT_SYNC_USER" "$PORT_SYNC_PASS"
@@ -260,22 +292,8 @@ _update_port_api_attempt() {
             update_rtorrent "$port" "$PORT_SYNC_URL" "$PORT_SYNC_USER" "$PORT_SYNC_PASS"
             result=$?
             ;;
-        custom)
-            show_debug "Using custom command"
-            if [ -z "$PORT_SYNC_CMD" ]; then
-                show_debug "PORT_SYNC_CMD not set for custom type"
-                return 1
-            fi
-
-            # Replace {PORT} placeholder in custom command
-            local cmd="${PORT_SYNC_CMD//\{PORT\}/$port}"
-            show_debug "Executing custom command: $cmd"
-            eval "$cmd" >/dev/null 2>&1
-            result=$?
-            show_debug "Custom command exit code: $result"
-            ;;
         *)
-            show_debug "Unknown PORT_SYNC_TYPE: $PORT_SYNC_TYPE"
+            show_debug "Unknown PORT_SYNC_CLIENT: $PORT_SYNC_CLIENT"
             return 1
             ;;
     esac
@@ -284,6 +302,10 @@ _update_port_api_attempt() {
 }
 
 # Main update function with short retry for transient failures
+# Supports three modes:
+#   1. PORT_SYNC_CLIENT only - updates torrent client via API
+#   2. PORT_SYNC_CMD only - executes custom command
+#   3. Both - runs both sequentially, succeeds if either succeeds
 # Returns 0 on success, 1 on failure (caller should handle long-term retry)
 update_port_api() {
     local port=$1
@@ -296,34 +318,112 @@ update_port_api() {
         return 0
     fi
 
-    if [ -z "$PORT_SYNC_TYPE" ] || [ -z "$PORT_SYNC_URL" ]; then
-        show_debug "PORT_SYNC_TYPE or PORT_SYNC_URL not set, cannot update"
+    # Determine what we need to update
+    local has_client=false
+    local has_cmd=false
+
+    if [ -n "$PORT_SYNC_CLIENT" ] && [ -n "$PORT_SYNC_URL" ]; then
+        has_client=true
+        show_debug "PORT_SYNC_CLIENT configured: $PORT_SYNC_CLIENT"
+    fi
+
+    if [ -n "$PORT_SYNC_CMD" ]; then
+        has_cmd=true
+        show_debug "PORT_SYNC_CMD configured"
+    fi
+
+    # Require at least one method
+    if [ "$has_client" = false ] && [ "$has_cmd" = false ]; then
+        show_debug "Neither PORT_SYNC_CLIENT+PORT_SYNC_URL nor PORT_SYNC_CMD is set, cannot update"
         return 1
     fi
 
-    # Try 3 times with short delays for transient network failures
-    local max_attempts=3
-    for attempt in $(seq 1 $max_attempts); do
-        show_debug "Update attempt #$attempt (port=$port)"
+    # Track results
+    local client_success=false
+    local cmd_success=false
 
-        # Attempt update
-        if _update_port_api_attempt "$port"; then
-            show_debug "Update successful on attempt #$attempt"
+    # Clean up any old success markers
+    rm -f /tmp/port_sync_client_success /tmp/port_sync_cmd_success
+
+    # Try to update client if configured
+    if [ "$has_client" = true ]; then
+        show_debug "Attempting client update ($PORT_SYNC_CLIENT)"
+        local max_attempts=3
+        for attempt in $(seq 1 $max_attempts); do
+            show_debug "Client update attempt #$attempt (port=$port)"
+
+            if _update_port_client_attempt "$port"; then
+                show_debug "Client update successful on attempt #$attempt"
+                client_success=true
+                touch /tmp/port_sync_client_success
+                break
+            fi
+
+            # Failed - wait before retry (unless last attempt)
+            if [ $attempt -lt $max_attempts ]; then
+                show_debug "Client update failed on attempt #$attempt, retrying in 2s"
+                sleep 2
+            else
+                show_debug "Client update failed on attempt #$attempt (final attempt)"
+            fi
+        done
+    fi
+
+    # Try to execute custom command if configured
+    if [ "$has_cmd" = true ]; then
+        show_debug "Attempting custom command execution"
+        local max_attempts=3
+        for attempt in $(seq 1 $max_attempts); do
+            show_debug "Custom command attempt #$attempt (port=$port)"
+
+            if _execute_custom_command "$port"; then
+                show_debug "Custom command successful on attempt #$attempt"
+                cmd_success=true
+                touch /tmp/port_sync_cmd_success
+                break
+            fi
+
+            # Failed - wait before retry (unless last attempt)
+            if [ $attempt -lt $max_attempts ]; then
+                show_debug "Custom command failed on attempt #$attempt, retrying in 2s"
+                sleep 2
+            else
+                show_debug "Custom command failed on attempt #$attempt (final attempt)"
+            fi
+        done
+    fi
+
+    # Determine overall success
+    # If only one method is configured, its result determines success
+    # If both are configured, either succeeding is considered success
+    if [ "$has_client" = true ] && [ "$has_cmd" = true ]; then
+        # Both configured - succeed if either succeeds
+        if [ "$client_success" = true ] || [ "$cmd_success" = true ]; then
+            show_debug "Overall result: SUCCESS (client=$client_success, cmd=$cmd_success)"
             return 0
-        fi
-
-        # Failed - wait before retry (unless last attempt)
-        if [ $attempt -lt $max_attempts ]; then
-            show_debug "Update failed on attempt #$attempt, retrying in 2s"
-            sleep 2
         else
-            show_debug "Update failed on attempt #$attempt (final attempt)"
+            show_debug "Overall result: FAILURE (both client and cmd failed)"
+            return 1
         fi
-    done
-
-    # All attempts failed - caller should handle long-term retry
-    show_debug "All $max_attempts attempts failed, returning error"
-    return 1
+    elif [ "$has_client" = true ]; then
+        # Only client configured
+        if [ "$client_success" = true ]; then
+            show_debug "Overall result: SUCCESS (client)"
+            return 0
+        else
+            show_debug "Overall result: FAILURE (client)"
+            return 1
+        fi
+    else
+        # Only cmd configured
+        if [ "$cmd_success" = true ]; then
+            show_debug "Overall result: SUCCESS (cmd)"
+            return 0
+        else
+            show_debug "Overall result: FAILURE (cmd)"
+            return 1
+        fi
+    fi
 }
 
 # Export for use in other scripts

@@ -74,7 +74,7 @@ secrets:
 
 ### More Examples
 
-See [`docs/docker-compose examples/`](docs/docker-compose%20examples/) for complete configurations:
+See [`docs/`](docs/docker-compose%20examples/) for complete configurations:
 - **[qbittorrent-compose.yml](docs/docker-compose%20examples/qbittorrent-compose.yml)** - qBittorrent with automatic port forwarding
 - **[traefik-compose.yml](docs/docker-compose%20examples/traefik-simple-compose.yml)** - Basic Traefik reverse proxy setup
 
@@ -103,8 +103,8 @@ See [`docs/docker-compose examples/`](docs/docker-compose%20examples/) for compl
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `PORT_FORWARDING` | Enable PIA port forwarding. Automatically enabled when `PORT_SYNC_TYPE` is set. | `false` |
-| `PORT_SYNC_TYPE` | Torrent client type: `qbittorrent`, `transmission`, `deluge`, `rtorrent`, `custom` | None |
+| `PORT_FORWARDING` | Enable PIA port forwarding. Automatically enabled when `PORT_SYNC_CLIENT` or `PORT_SYNC_CMD` is set. | `false` |
+| `PORT_SYNC_CLIENT` | Torrent client type: `qbittorrent`, `transmission`, `deluge`, `rtorrent` | None |
 | `PORT_SYNC_URL` | Client API endpoint (e.g., `http://localhost:8080`) | None |
 | `PORT_SYNC_USER` | Client API username | None |
 | `PORT_SYNC_PASS` | Client API password | None |
@@ -222,7 +222,7 @@ Secrets are read from `/run/secrets/` and never logged.
 
 When port forwarding is enabled, some dependent services may need to know when the port changes. Most modern clients handle port and interface changes during runtime well, but if your dependent is more brittle, several methods are available for restarting on port changes:
 
-**1. Port File Monitoring (Simple)**
+**1. Port File Monitoring**
 
 Watch the port file for changes:
 ```bash
@@ -234,21 +234,20 @@ inotifywait -m /run/pia-tun/port | while read; do
 done
 ```
 
-**2. Webhook Integration (Recommended)**
+**2. Webhook Integration**
 
-Use `PORT_SYNC_TYPE=custom` to POST to your own webhook service:
+Use `PORT_SYNC_CMD` to POST to your own webhook service with {PORT}:
 ```yaml
 environment:
-  - PORT_SYNC_TYPE=custom
-  - PORT_SYNC_URL=http://your-service:8080/webhook/port-changed
+  - PORT_SYNC_CMD=curl -s "http://localhost:8081/api/v2/app/setPreferences" --data "json={\"listen_port\":{PORT}}"
 ```
 
-Your webhook receives a POST request when the port changes, allowing you to:
+Your chosen API receives a POST request when the port changes, allowing you to:
 - Restart dependent containers (via Docker API)
 - Update load balancer configuration
 - Trigger custom automation
 
-**3. Docker Compose Healthcheck (Startup Coordination)**
+**3. Docker Compose Healthcheck**
 
 For coordinating initial startup only (not for liveness monitoring):
 ```yaml
@@ -274,12 +273,20 @@ services:
 
 ### Custom Port Update Commands
 
-For non-standard clients:
+Execute custom commands when the port changes using `PORT_SYNC_CMD`. This works independently or alongside `PORT_SYNC_CLIENT`:
 
+**Option 1: Custom command only**
 ```yaml
 environment:
-  - PORT_SYNC_TYPE=custom
   - PORT_SYNC_CMD=/path/to/script.sh {PORT}
+```
+
+**Option 2: Both client sync AND custom command**
+```yaml
+environment:
+  - PORT_SYNC_CLIENT=qbittorrent
+  - PORT_SYNC_URL=http://localhost:8080
+  - PORT_SYNC_CMD=/path/to/notify-webhook.sh {PORT}
 ```
 
 The `{PORT}` placeholder is replaced with the forwarded port number. When a new port is obtained, the command retries indefinitely until successful.
@@ -330,18 +337,6 @@ docker logs pia-tun
 **Cannot access metrics/proxy from LAN:**
 - Ensure the port is explicitly added to `LOCAL_PORTS` (e.g., `LOCAL_PORTS=9090` for metrics, `LOCAL_PORTS=1080,8888` for proxies)
 - Services are localhost-only by default for security
-
-## Architecture
-
-For detailed technical documentation, see [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md).
-
-**Key Components:**
-- **run.sh** - Main orchestration and lifecycle management
-- **vpn.sh** - PIA authentication and WireGuard configuration
-- **killswitch.sh** - Firewall (nftables/iptables hybrid)
-- **monitor** (Go) - Health checks and Prometheus metrics
-- **proxy** (Go) - SOCKS5/HTTP proxy server
-- **portforward** (Go) - Port forwarding management
 
 ## License
 
