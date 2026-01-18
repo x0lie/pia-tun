@@ -1,0 +1,26 @@
+# .github/release.yml
+changelog:  # Applys based on merged PR's labels
+  exclude:
+    labels:
+      - dependencies
+      - chore
+      - ci
+    authors:
+      - dependabot
+      - renovate[bot]
+  categories:
+    - title: "🚀 Features & Improvements"
+      labels:
+        - enhancement
+        - feature
+        - feat
+    - title: "🐛 Bug Fixes"
+      labels:
+        - bug
+        - fix
+    - title: "🔒 Security"
+      labels:
+        - security
+    - title: "🔧 Other Changes"
+      labels:
+        - "*"

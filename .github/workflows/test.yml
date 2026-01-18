@@ -90,7 +90,7 @@ jobs:
           image-ref: '${{ env.IMAGE_NAME }}:scan'
           format: 'sarif'
           output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
+          severity: 'CRITICAL,HIGH,MEDIUM'
           exit-code: '0'  # Don't fail on vulnerabilities (just report)
 
       # Upload results to GitHub Security tab
@@ -106,4 +106,4 @@ jobs:
         with:
           image-ref: '${{ env.IMAGE_NAME }}:scan'
           format: 'table'
-          severity: 'CRITICAL,HIGH'
+          severity: 'CRITICAL,HIGH,MEDIUM'

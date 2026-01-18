@@ -1,0 +1,70 @@
+# Auto-label PRs based on changed files
+# Aligns with .github/release.yml categories
+
+# Features & Enhancements
+feature:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'src/**'
+      - 'scripts/**'
+      - 'Dockerfile'
+
+enhancement:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'src/**'
+      - 'scripts/**'
+
+# Bug Fixes
+fix:
+  - head-branch: ['^fix/', '^hotfix/']
+
+bug:
+  - head-branch: ['^fix/', '^hotfix/', '^bug/']
+
+# Security
+security:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'scripts/firewall.sh'
+      - 'scripts/killswitch.sh'
+  - head-branch: ['^security/']
+
+# CI/CD & Automation
+ci:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '.github/**'
+      - 'renovate.json'
+      - '.editorconfig'
+
+# Dependencies
+dependencies:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'go.mod'
+      - 'go.sum'
+
+# Chore (non-functional changes)
+chore:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '.gitignore'
+      - '.gitattributes'
+      - '.editorconfig'
+      - '.dockerignore'
+      - 'LICENSE'
+
+# Documentation
+documentation:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/*.md'
+      - 'docs/**'
+
+# Testing
+testing:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'testing/**'
+      - '**/*_test.go'

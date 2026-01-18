@@ -60,7 +60,7 @@ jobs:
         with:
           image-ref: '${{ env.IMAGE_NAME }}:scan'
           format: 'table'
-          severity: 'CRITICAL,HIGH'
+          severity: 'CRITICAL,HIGH,MEDIUM'
           exit-code: '0'  # Don't fail develop builds on vulnerabilities (warn only)
 
   # Build and push multi-arch image to Docker Hub and GHCR with :develop tag
@@ -101,7 +101,7 @@ jobs:
 
       # Build and push amd64 image with :develop tag to both registries
       - name: Build and push develop image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64
@@ -113,15 +113,6 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:develop
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      # Sync README.md to Docker Hub repository description
-      - name: Update Docker Hub Description
-        uses: peter-evans/dockerhub-description@v5
-        with:
-          username: ${{ env.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
-          readme-filepath: ./README.md
 
       # Add a summary
       - name: Job Summary
