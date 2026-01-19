@@ -578,13 +578,7 @@ bring_up_wireguard() {
     
     # CRITICAL: Add local network exceptions BEFORE VPN routing rules
     # This ensures local traffic is evaluated first
-    if [ "$LOCAL_NETWORKS" = "all" ]; then
-        show_debug "Adding local network exceptions for all RFC1918 ranges"
-        ip rule add to 10.0.0.0/8 table main priority 100 2>/dev/null || true
-        ip rule add to 172.16.0.0/12 table main priority 100 2>/dev/null || true
-        ip rule add to 192.168.0.0/16 table main priority 100 2>/dev/null || true
-        ip rule add to 169.254.0.0/16 table main priority 100 2>/dev/null || true
-    elif [ -n "$LOCAL_NETWORKS" ]; then
+    if [ -n "$LOCAL_NETWORKS" ]; then
         show_debug "Adding local network exceptions: $LOCAL_NETWORKS"
         IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORKS"
         for network in "${NETWORKS[@]}"; do

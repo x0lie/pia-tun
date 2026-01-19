@@ -147,6 +147,11 @@ initial_connect() {
             teardown_wireguard
             exit 1
         }
+
+        # Clean up any leftover temporary exemptions from setup phase
+        show_debug "Cleaning up temporary exemptions from VPN setup"
+        remove_all_temporary_exemptions
+
         show_ruleset_stats
     else
         show_debug "Adding VPN to killswitch (reconnection, suppressing output)"
@@ -154,6 +159,10 @@ initial_connect() {
             show_error "CRITICAL: Failed to add VPN to killswitch during reconnection"
             return 1
         }
+
+        # Clean up any leftover temporary exemptions from reconnection
+        show_debug "Cleaning up temporary exemptions from reconnection"
+        remove_all_temporary_exemptions >/dev/null 2>&1
     fi
 
     show_info

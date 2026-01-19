@@ -31,13 +31,13 @@ docker pull ghcr.io/x0lie/pia-tun:latest
 ## Features
 
 - **WireGuard VPN** with automatic latency-based server selection
-- **Firewall** - Zero-leak with nftables and iptables fallback. Deny-by-default design
+- **Kill-Switch Firewall** - Zero-leak architecture with nft/iptables auto-detection. Optimized for maximum throughput.
 - **Port Forwarding** - Automatic signature management and keep-alive with torrent client API integration
 - **Port Syncing** - Syncs forwarded port to an API endpoint
 - **SOCKS5/HTTP Proxies** - Built-in dual-protocol proxy server with optional authentication
 - **Prometheus Metrics** - Export health, connection, and performance metrics
 - **Smart Health Monitoring** - Distinguishes between WAN outages and VPN failures
-- **Local Network Access** - Configurable LAN routing with firewall exemptions
+- **Local Network Access** - Configurable LAN routing with granular port control
 - **High Throughput** - Tested at greater than 80% of line-speed with configurable MTU
 - **Multi-Architecture** - Supports amd64, arm64, and armv7
 
@@ -88,16 +88,39 @@ See [`docs/`](docs/docker-compose%20examples/) for complete configurations:
 | `PIA_PASS` | PIA password (or use `/run/secrets/pia_pass`) | Required |
 | `PIA_LOCATION` | Comma-separated locations (e.g., `ca_ontario,ca_toronto`). Tests latency and selects the best server. Invalid values will log all available regions. | Required |
 | `TZ` | Timezone for logging | `UTC` |
-| `DNS` | DNS provider: `pia` (10.0.0.243), or specific IP (e.g., `8.8.8.8`) | `pia` |
-| `IPV6_ENABLED` | Allow IPv6 traffic through VPN | `false` |
 | `LOG_LEVEL` | Logging verbosity: `error`, `info`, `debug` | `info` |
 
 ### Network & Firewall
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LOCAL_NETWORKS` | CIDR ranges for LAN access (comma-separated) | None |
+| `LOCAL_NETWORKS` | CIDR ranges for LAN access, comma-separated. Supports both IPv4 and IPv6 (e.g., `172.18.0.0/16,fd00::/64`) | None |
 | `LOCAL_PORTS` | Ports accessible from LAN (comma-separated) | None |
+| `DNS` | DNS provider: `pia` (10.0.0.243), or specific IP (e.g., `8.8.8.8`). Routes through VPN tunnel unless the IP is in `LOCAL_NETWORKS` | `pia` |
+| `IPV6_ENABLED` | Enable IPv6 routing to VPN interface. **Note:** PIA does not support IPv6. See IPv6 section below. | `false` |
+
+**Local Network Behavior:**
+- `LOCAL_NETWORKS` + `LOCAL_PORTS`: Bidirectional access on specified ports (expose services to LAN)
+- `LOCAL_NETWORKS` only: Outbound access to LAN services, no listening ports exposed
+- Neither configured: All traffic routed through VPN (maximum security)
+
+**IPv6 Behavior:**
+
+PIA does not currently support IPv6 over WireGuard. IPv6 internet traffic will not work regardless of settings.
+
+| Setting | Local IPv6 | Internet IPv6 | ICMPv6 | Use Case |
+|---------|-----------|---------------|--------|----------|
+| `IPV6_ENABLED=false` (default) | ✓ Works via `LOCAL_NETWORKS` | ✗ Blocked | ✗ Blocked | Recommended - Local IPv6 only, internet blocked |
+| `IPV6_ENABLED=true` | ✓ Works via `LOCAL_NETWORKS` | ✗ Routed to pia0 but PIA drops it | ✓ Allowed | Future-proofing for when PIA adds IPv6 support |
+
+**Example - Local IPv6 access:**
+```yaml
+environment:
+  - IPV6_ENABLED=false                      # Keep internet IPv6 blocked
+  - LOCAL_NETWORKS=172.18.0.0/16,fd00::/64  # IPv4 + IPv6 local networks
+  - LOCAL_PORTS=8080,9090
+# Result: Container can access local IPv6 services, internet IPv6 is blocked
+```
 
 ### Port Forwarding
 
@@ -158,23 +181,26 @@ See [`docs/`](docs/docker-compose%20examples/) for complete configurations:
 
 ### Kill-Switch Protection
 
-The firewall operates in default-deny mode:
-- All traffic blocked except loopback and VPN interface
-- Firewall persists during reconnections to prevent leaks
-- Local network access requires explicit configuration
-- WAN health checks use bypass routing (no firewall holes)
+The firewall uses a DROP-first architecture optimized for security and throughput:
+- **Zero leak windows**: DROP rule is established immediately and never removed
+- **Optimized rule ordering**: Established/Related connections matched first for maximum performance
+- **Auto-detection**: Automatically selects best available iptables backend (iptables-nft → iptables → iptables-legacy)
+- **Default-deny**: All traffic blocked except loopback and VPN interface
+- **Firewall persistence**: Rules remain active during reconnections
+- **Local network control**: LAN access requires explicit `LOCAL_NETWORKS` configuration
+- **Bypass routing**: WAN health checks use policy routing (no firewall exemptions)
 
 **Container Lifecycle:**
-- On startup: Kill-switch activates before VPN connection
-- During reconnections: Firewall remains active (no leak window)
-- On normal shutdown: Firewall rules are cleanly removed after dependents are stopped
-- On crash/OOM: Firewall remains active until network namespace is destroyed
+- On startup: Kill-switch immediately applied
+- During reconnections: Firewall remains active (zero leak window)
+- On normal shutdown: Firewall rules cleanly removed after dependents stop
+- On crash/OOM: Firewall remains active until network namespace destroyed
 
 **Dependent Services:**
 
 For containers sharing the network namespace (`network_mode: "service:pia-tun"`), use Docker Compose healthchecks to ensure the kill-switch is active before dependent services start. See the [Coordinating with Dependent Services](#coordinating-with-dependent-services) section for detailed examples and best practices.
 
-**Important:** As long as you use `depends_on` with the killswitch healthcheck, you're unlikely to ever have a leak occur during startup.
+**Important:** As long as you use `depends_on` with the killswitch healthcheck, you will never have a leak occur during startup.
 
 ### Secrets Management
 
