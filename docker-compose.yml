@@ -12,8 +12,8 @@ services:
       - PORT_FORWARDING=true
       - PROXY_ENABLED=true
       - PORT_SYNC_CLIENT=qbittorrent                                             # Supports qbittorrent, deluge, transmission, and rtorrent
-      - PORT_SYNC_URL=http://localhost:8080                                    # API endpoint of dependent
-      # Optionally use PORT_SYNC_USER/PORT_SYNC_PASS env vars instead of secrets
+      # - PORT_SYNC_URL=http://localhost:8080                                  # Optional - auto-detected from PORT_SYNC_CLIENT
+      # Auth: Use secrets (below), env vars, or enable "Bypass localhost auth" in qBittorrent
       - LOCAL_NETWORKS=192.168.1.0/24,172.17.0.0/16
       - LOCAL_PORTS=8080,1080,8888
     secrets:

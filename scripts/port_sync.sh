@@ -8,6 +8,29 @@ source /app/scripts/ui.sh
 # Configuration
 readonly PORT_SYNC_ENABLED=${PORT_SYNC_ENABLED:-false}
 readonly PORT_SYNC_CLIENT=${PORT_SYNC_CLIENT:-""}
+
+# Set default PORT_SYNC_URL based on client type if not provided
+PORT_SYNC_URL_IS_DEFAULT=false
+if [ -z "${PORT_SYNC_URL:-}" ] && [ -n "$PORT_SYNC_CLIENT" ]; then
+    case "$PORT_SYNC_CLIENT" in
+        qbittorrent|qbit|qb)
+            PORT_SYNC_URL="http://localhost:8080"
+            PORT_SYNC_URL_IS_DEFAULT=true
+            ;;
+        transmission|trans)
+            PORT_SYNC_URL="http://localhost:9091"
+            PORT_SYNC_URL_IS_DEFAULT=true
+            ;;
+        deluge)
+            PORT_SYNC_URL="http://localhost:8112"
+            PORT_SYNC_URL_IS_DEFAULT=true
+            ;;
+        rtorrent|rutorrent)
+            PORT_SYNC_URL="http://localhost:8080"
+            PORT_SYNC_URL_IS_DEFAULT=true
+            ;;
+    esac
+fi
 readonly PORT_SYNC_URL=${PORT_SYNC_URL:-""}
 
 # Check for Docker secrets first, then fall back to environment variables
@@ -35,10 +58,27 @@ readonly CURL_TIMEOUT="--connect-timeout 5 --max-time 10"
 show_debug "Port API updater configuration:"
 show_debug "  PORT_SYNC_ENABLED=$PORT_SYNC_ENABLED"
 show_debug "  PORT_SYNC_CLIENT=$PORT_SYNC_CLIENT"
-show_debug "  PORT_SYNC_URL=$PORT_SYNC_URL"
+if [ "$PORT_SYNC_URL_IS_DEFAULT" = true ]; then
+    show_debug "  PORT_SYNC_URL=$PORT_SYNC_URL (default for $PORT_SYNC_CLIENT)"
+else
+    show_debug "  PORT_SYNC_URL=$PORT_SYNC_URL"
+fi
 show_debug "  PORT_SYNC_USER=${PORT_SYNC_USER:+set}"
 show_debug "  PORT_SYNC_PASS=${PORT_SYNC_PASS:+set}"
 show_debug "  PORT_SYNC_CMD=${PORT_SYNC_CMD:+set}"
+
+# Helper function to escape strings for JSON
+# Escapes: backslash, double quote, and control characters
+json_escape() {
+    local string="$1"
+    # Escape backslashes first, then double quotes, then newlines/tabs/etc
+    string="${string//\\/\\\\}"  # \ -> \\
+    string="${string//\"/\\\"}"  # " -> \"
+    string="${string//$'\n'/\\n}"  # newline -> \n
+    string="${string//$'\r'/\\r}"  # carriage return -> \r
+    string="${string//$'\t'/\\t}"  # tab -> \t
+    echo -n "$string"
+}
 
 # Update qBittorrent port via API
 update_qbittorrent() {
@@ -49,7 +89,8 @@ update_qbittorrent() {
     # Login and get cookie
     show_debug "Attempting qBittorrent login to $base_url/api/v2/auth/login"
     local cookie=$(curl -s -i $CURL_TIMEOUT \
-        --data "username=$username&password=$password" \
+        --data-urlencode "username=$username" \
+        --data-urlencode "password=$password" \
         "$base_url/api/v2/auth/login" 2>/dev/null | \
         grep -i "set-cookie" | cut -d' ' -f2 | cut -d';' -f1)
 
@@ -139,9 +180,10 @@ update_deluge() {
 
     # Login
     show_debug "Attempting Deluge login to $base_url/json"
+    local escaped_password=$(json_escape "$password")
     local login_response=$(curl -s $CURL_TIMEOUT -c "$cookie_jar" \
         -H "Content-Type: application/json" \
-        -d "{\"method\":\"auth.login\",\"params\":[\"$password\"],\"id\":1}" \
+        -d "{\"method\":\"auth.login\",\"params\":[\"$escaped_password\"],\"id\":1}" \
         "$base_url/json" 2>/dev/null)
 
     show_debug "Deluge login response: ${login_response:0:100}..."

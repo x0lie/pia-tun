@@ -128,11 +128,17 @@ environment:
 |----------|-------------|---------|
 | `PORT_FORWARDING` | Enable PIA port forwarding. Automatically enabled when `PORT_SYNC_CLIENT` or `PORT_SYNC_CMD` is set. | `false` |
 | `PORT_SYNC_CLIENT` | Torrent client type: `qbittorrent`, `transmission`, `deluge`, `rtorrent` | None |
-| `PORT_SYNC_URL` | Client API endpoint (e.g., `http://localhost:8080`) | None |
-| `PORT_SYNC_USER` | Client API username (or use `/run/secrets/port_sync_user`) | None |
-| `PORT_SYNC_PASS` | Client API password (or use `/run/secrets/port_sync_pass`) | None |
+| `PORT_SYNC_URL` | Client API endpoint. Auto-detected for standard ports: qBittorrent (`:8080`), Transmission (`:9091`), Deluge (`:8112`), rTorrent (`:8080`). Override for custom ports and addresses. | Auto |
+| `PORT_SYNC_USER` | Client API username (or use `/run/secrets/port_sync_user`, or add localhost to bypass in dependent's settings) | None |
+| `PORT_SYNC_PASS` | Client API password (or use `/run/secrets/port_sync_pass`, or add localhost to bypass in dependent's settings) | None |
 | `PORT_SYNC_CMD` | Custom command for port updates (use `{PORT}` placeholder) | None |
 | `PORT_FILE` | File to write forwarded port | `/run/pia-tun/port` |
+
+**Configuration Notes:**
+- **Auto-detection**: `PORT_SYNC_URL` defaults to standard address:ports when `PORT_SYNC_CLIENT` is set. Only specify for custom ports or addresses.
+- **Note**: "http://localhost:8080" is set automatically for `PORT_SYNC_URL` when using qbittorrent or rtorrent, and "http://localhost:9091" for Transmission, and "http://localhost:8112" for Deluge.
+- **Docker secrets**: Recommended for credentials to avoid exposure in environment variables.
+- **localhost bypass**: For clients like qBit using `network_mode: "service:pia-tun"`, enabling "Bypass authentication for clients on localhost" in client settings eliminates the need for credentials.
 
 ### Proxy Settings
 
