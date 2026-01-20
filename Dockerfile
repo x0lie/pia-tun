@@ -74,7 +74,7 @@ COPY scripts/ /app/scripts/
 # CRITICAL FIX: Only chmod scripts, NOT the Go binaries (prevents 10MB duplication)
 RUN chmod +x /app/run.sh /app/scripts/*.sh && \
     mkdir -p /etc/wireguard && \
-    mkdir -p /run/pia-tun && \
+    mkdir -p /run/pia-tun
 
 # Set VERSION and SHA as environment variables for runtime
 ENV VERSION=${VERSION}
@@ -109,8 +109,8 @@ ENV TZ=UTC \
     HTTP_PROXY_PORT=8888 \
     METRICS=true \
     METRICS_PORT=9090 \
-    HC_INTERVAL=15 \
-    HC_MAX_FAILURES=3
+    HC_INTERVAL=10 \
+    HC_FAILURE_WINDOW=30
 
 EXPOSE 1080 8888 9090
 
