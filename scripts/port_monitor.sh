@@ -48,7 +48,8 @@ LAST_CMD_SUCCESS=""     # Empty = not yet attempted, true = last succeeded, fals
 # Determine which methods are configured (set once at startup)
 HAS_CLIENT=false
 HAS_CMD=false
-[ -n "${PORT_SYNC_CLIENT:-}" ] && [ -n "${PORT_SYNC_URL:-}" ] && HAS_CLIENT=true
+# PORT_SYNC_URL is auto-detected from PORT_SYNC_CLIENT, so just check PORT_SYNC_CLIENT
+[ -n "${PORT_SYNC_CLIENT:-}" ] && HAS_CLIENT=true
 [ -n "${PORT_SYNC_CMD:-}" ] && HAS_CMD=true
 
 show_debug "Configured methods: HAS_CLIENT=$HAS_CLIENT, HAS_CMD=$HAS_CMD"
@@ -94,7 +95,7 @@ monitor_port_changes() {
             fi
 
             # Attempt update (will set success markers)
-            update_port_api "$INITIAL_PORT"
+            update_port_api "$INITIAL_PORT" || true  # Don't exit on failure (set -e)
 
             # Check which methods succeeded
             local client_succeeded=false
@@ -157,7 +158,7 @@ monitor_port_changes() {
                     fi
 
                     # Sync the new port
-                    update_port_api "$new_port"
+                    update_port_api "$new_port" || true  # Don't exit on failure (set -e)
 
                     # Check results and update state
                     process_sync_results "$new_port" true
@@ -188,7 +189,7 @@ monitor_port_changes() {
                         fi
 
                         # Sync the new port
-                        update_port_api "$new_port"
+                        update_port_api "$new_port" || true  # Don't exit on failure (set -e)
                         process_sync_results "$new_port" true
                         LAST_PORT="$new_port"
                     fi
@@ -198,7 +199,7 @@ monitor_port_changes() {
                     CURRENT_PORT=$(cat "$PORT_FILE" 2>/dev/null)
 
                     if [[ -n "$CURRENT_PORT" && "$CURRENT_PORT" =~ ^[0-9]+$ ]]; then
-                        update_port_api "$CURRENT_PORT"
+                        update_port_api "$CURRENT_PORT" || true  # Don't exit on failure (set -e)
                         process_sync_results "$CURRENT_PORT" false
                     fi
                 fi
