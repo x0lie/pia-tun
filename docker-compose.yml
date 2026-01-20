@@ -13,11 +13,14 @@ services:
       - PROXY_ENABLED=true
       - PORT_SYNC_CLIENT=qbittorrent                                             # Supports qbittorrent, deluge, transmission, and rtorrent
       - PORT_SYNC_URL=http://localhost:8080                                    # API endpoint of dependent
+      # Optionally use PORT_SYNC_USER/PORT_SYNC_PASS env vars instead of secrets
       - LOCAL_NETWORKS=192.168.1.0/24,172.17.0.0/16
       - LOCAL_PORTS=8080,1080,8888
     secrets:
       - pia_user
       - pia_pass
+      - port_sync_user
+      - port_sync_pass
     ports:
       - 8080:8080
     healthcheck:
@@ -43,8 +46,12 @@ services:
       pia-tun:
         condition: service_healthy
 
-secrets:                                                                      # Also supports proxy_user and proxy_pass
+secrets:                                                                      # Also supports proxy_user, proxy_pass, port_sync_user, port_sync_pass
   pia_user:
     file: ./secrets/pia_user
   pia_pass:
     file: ./secrets/pia_pass
+  port_sync_user:
+    file: ./secrets/port_sync_user
+  port_sync_pass:
+    file: ./secrets/port_sync_pass

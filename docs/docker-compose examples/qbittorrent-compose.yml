@@ -13,9 +13,13 @@ services:
       - PORT_SYNC_URL=http://localhost:8080
       - LOCAL_NETWORKS=192.168.1.0/24,172.18.0.0/16
       - LOCAL_PORTS=8080
+      # Optionally use PORT_SYNC_USER/PORT_SYNC_PASS env vars instead of secrets
+      # Or enable "Bypass authentication for clients on localhost" in qbit to avoid qbit user/pass
     secrets:
       - pia_user
       - pia_pass
+      - port_sync_user
+      - port_sync_pass
     ports:
       - 8080:8080
 
@@ -39,3 +43,7 @@ secrets:
     file: ./secrets/pia_user
   pia_pass:
     file: ./secrets/pia_pass
+  port_sync_user:
+    file: ./secrets/port_sync_user
+  port_sync_pass:
+    file: ./secrets/port_sync_pass

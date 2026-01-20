@@ -129,8 +129,8 @@ environment:
 | `PORT_FORWARDING` | Enable PIA port forwarding. Automatically enabled when `PORT_SYNC_CLIENT` or `PORT_SYNC_CMD` is set. | `false` |
 | `PORT_SYNC_CLIENT` | Torrent client type: `qbittorrent`, `transmission`, `deluge`, `rtorrent` | None |
 | `PORT_SYNC_URL` | Client API endpoint (e.g., `http://localhost:8080`) | None |
-| `PORT_SYNC_USER` | Client API username | None |
-| `PORT_SYNC_PASS` | Client API password | None |
+| `PORT_SYNC_USER` | Client API username (or use `/run/secrets/port_sync_user`) | None |
+| `PORT_SYNC_PASS` | Client API password (or use `/run/secrets/port_sync_pass`) | None |
 | `PORT_SYNC_CMD` | Custom command for port updates (use `{PORT}` placeholder) | None |
 | `PORT_FILE` | File to write forwarded port | `/run/pia-tun/port` |
 
@@ -214,6 +214,8 @@ services:
       - pia_pass
       - proxy_user
       - proxy_pass
+      - port_sync_user
+      - port_sync_pass
 
 secrets:
   pia_user:
@@ -224,6 +226,10 @@ secrets:
     file: ./secrets/proxy_user
   proxy_pass:
     file: ./secrets/proxy_pass
+  port_sync_user:
+    file: ./secrets/port_sync_user
+  port_sync_pass:
+    file: ./secrets/port_sync_pass
 ```
 
 Secrets are read from `/run/secrets/` and never logged.

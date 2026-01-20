@@ -9,8 +9,27 @@ source /app/scripts/ui.sh
 readonly PORT_SYNC_ENABLED=${PORT_SYNC_ENABLED:-false}
 readonly PORT_SYNC_CLIENT=${PORT_SYNC_CLIENT:-""}
 readonly PORT_SYNC_URL=${PORT_SYNC_URL:-""}
-readonly PORT_SYNC_USER=${PORT_SYNC_USER:-""}
-readonly PORT_SYNC_PASS=${PORT_SYNC_PASS:-""}
+
+# Check for Docker secrets first, then fall back to environment variables
+if [ -f "/run/secrets/port_sync_user" ]; then
+    show_debug "Found Docker secret: /run/secrets/port_sync_user"
+    readonly PORT_SYNC_USER=$(cat /run/secrets/port_sync_user)
+elif [ -n "${PORT_SYNC_USER:-}" ]; then
+    show_debug "Using PORT_SYNC_USER environment variable"
+    readonly PORT_SYNC_USER="${PORT_SYNC_USER}"
+else
+    readonly PORT_SYNC_USER=""
+fi
+
+if [ -f "/run/secrets/port_sync_pass" ]; then
+    show_debug "Found Docker secret: /run/secrets/port_sync_pass"
+    readonly PORT_SYNC_PASS=$(cat /run/secrets/port_sync_pass)
+elif [ -n "${PORT_SYNC_PASS:-}" ]; then
+    show_debug "Using PORT_SYNC_PASS environment variable"
+    readonly PORT_SYNC_PASS="${PORT_SYNC_PASS}"
+else
+    readonly PORT_SYNC_PASS=""
+fi
 readonly CURL_TIMEOUT="--connect-timeout 5 --max-time 10"
 
 show_debug "Port API updater configuration:"
