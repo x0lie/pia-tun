@@ -156,8 +156,8 @@ environment:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HC_INTERVAL` | Health check frequency (seconds) | `15` |
-| `HC_MAX_FAILURES` | Consecutive failures before reconnection | `3` |
+| `HC_INTERVAL` | Health check frequency (seconds) | `10` |
+| `HC_FAILURE_WINDOW` | Time in seconds for disconnected state before reconnection | `30` |
 
 ### Metrics & Observability
 

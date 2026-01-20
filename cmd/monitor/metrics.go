@@ -14,52 +14,52 @@ import (
 
 type Metrics struct {
 	// Internal state tracking (for JSON endpoint)
-	TotalChecks        int64
-	FailedChecks       int64
-	SuccessfulChecks   int64
-	TotalReconnects    int64
-	LastCheckTime      time.Time
-	LastCheckDuration  time.Duration
-	UptimeStart        time.Time
+	TotalChecks       int64
+	FailedChecks      int64
+	SuccessfulChecks  int64
+	TotalReconnects   int64
+	LastCheckTime     time.Time
+	LastCheckDuration time.Duration
+	UptimeStart       time.Time
 
 	// VPN-specific state
-	CurrentServer      string
-	CurrentIP          string
-	BytesReceived      int64
-	BytesTransmitted   int64
-	ConnectedAt        time.Time
+	CurrentServer    string
+	CurrentIP        string
+	BytesReceived    int64
+	BytesTransmitted int64
+	ConnectedAt      time.Time
 
 	// Server performance tracking
-	ServerLatency      int64
-	ServerUptime       time.Duration
+	ServerLatency int64
+	ServerUptime  time.Duration
 
 	// WAN check state
-	WANChecksTotal     int64
-	WANChecksFailed    int64
+	WANChecksTotal  int64
+	WANChecksFailed int64
 
 	mu sync.Mutex
 
 	// Prometheus metrics
-	healthChecksTotal       prometheus.Counter
-	healthChecksSuccess     prometheus.Counter
-	healthChecksFailed      prometheus.Counter
-	reconnectsTotal         prometheus.Counter
-	checkDurationHistogram  prometheus.Histogram
-	successRate             prometheus.Gauge
-	bytesReceivedTotal      prometheus.Counter
-	bytesTransmittedTotal   prometheus.Counter
-	serverLatencyGauge      prometheus.Gauge
-	serverUptimeGauge       prometheus.Gauge
-	wanChecksTotal          prometheus.Counter
-	wanChecksFailed         prometheus.Counter
-	vpnInfo                 *prometheus.GaugeVec
+	healthChecksTotal      prometheus.Counter
+	healthChecksSuccess    prometheus.Counter
+	healthChecksFailed     prometheus.Counter
+	reconnectsTotal        prometheus.Counter
+	checkDurationHistogram prometheus.Histogram
+	successRate            prometheus.Gauge
+	bytesReceivedTotal     prometheus.Counter
+	bytesTransmittedTotal  prometheus.Counter
+	serverLatencyGauge     prometheus.Gauge
+	serverUptimeGauge      prometheus.Gauge
+	wanChecksTotal         prometheus.Counter
+	wanChecksFailed        prometheus.Counter
+	vpnInfo                *prometheus.GaugeVec
 
 	// New metrics
-	connectionUp            prometheus.Gauge
-	killswitchActive        prometheus.Gauge
-	lastHandshake           prometheus.Gauge
-	portForwardingStatus    prometheus.Gauge
-	portForwardingPort      prometheus.Gauge
+	connectionUp         prometheus.Gauge
+	killswitchActive     prometheus.Gauge
+	lastHandshake        prometheus.Gauge
+	portForwardingStatus prometheus.Gauge
+	portForwardingPort   prometheus.Gauge
 }
 
 func NewMetrics() *Metrics {
@@ -356,27 +356,27 @@ func (m *Metrics) GetStats() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"total_checks":           m.TotalChecks,
-		"successful_checks":      m.SuccessfulChecks,
-		"failed_checks":          m.FailedChecks,
-		"success_rate":           fmt.Sprintf("%.2f%%", successRate),
-		"success_rate_decimal":   successRate / 100,
-		"total_reconnects":       m.TotalReconnects,
-		"uptime_seconds":         int(uptime.Seconds()),
-		"uptime_formatted":       formatDuration(uptime),
-		"last_check":             m.LastCheckTime.Format("2006-01-02 15:04:05"),
-		"last_check_duration_ms": m.LastCheckDuration.Milliseconds(),
-		"current_server":         m.CurrentServer,
-		"current_ip":             m.CurrentIP,
-		"bytes_received":         m.BytesReceived,
-		"bytes_transmitted":      m.BytesTransmitted,
-		"total_bytes":            m.BytesReceived + m.BytesTransmitted,
-		"server_latency_ms":      m.ServerLatency,
-		"server_uptime_seconds":  int(m.ServerUptime.Seconds()),
+		"total_checks":            m.TotalChecks,
+		"successful_checks":       m.SuccessfulChecks,
+		"failed_checks":           m.FailedChecks,
+		"success_rate":            fmt.Sprintf("%.2f%%", successRate),
+		"success_rate_decimal":    successRate / 100,
+		"total_reconnects":        m.TotalReconnects,
+		"uptime_seconds":          int(uptime.Seconds()),
+		"uptime_formatted":        formatDuration(uptime),
+		"last_check":              m.LastCheckTime.Format("2006-01-02 15:04:05"),
+		"last_check_duration_ms":  m.LastCheckDuration.Milliseconds(),
+		"current_server":          m.CurrentServer,
+		"current_ip":              m.CurrentIP,
+		"bytes_received":          m.BytesReceived,
+		"bytes_transmitted":       m.BytesTransmitted,
+		"total_bytes":             m.BytesReceived + m.BytesTransmitted,
+		"server_latency_ms":       m.ServerLatency,
+		"server_uptime_seconds":   int(m.ServerUptime.Seconds()),
 		"server_uptime_formatted": formatDuration(m.ServerUptime),
-		"wan_checks_total":       m.WANChecksTotal,
-		"wan_checks_failed":      m.WANChecksFailed,
-		"wan_success_rate":       fmt.Sprintf("%.2f%%", wanSuccessRate),
+		"wan_checks_total":        m.WANChecksTotal,
+		"wan_checks_failed":       m.WANChecksFailed,
+		"wan_success_rate":        fmt.Sprintf("%.2f%%", wanSuccessRate),
 	}
 }
 

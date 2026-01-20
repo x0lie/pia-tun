@@ -15,20 +15,17 @@ import (
 )
 
 type Config struct {
-	CheckInterval   time.Duration
-	MaxFailures     int
-	RestartServices string
-	DebugMode       bool
-	MetricsEnabled  bool
+	CheckInterval  time.Duration
+	FailureWindow  time.Duration
+	DebugMode      bool
+	MetricsEnabled bool
 }
 
 type Monitor struct {
-	config             Config
-	failureCount       int
-	reconnectAttempts  int
-	consecutiveSuccess int
-	metrics            *Metrics
-	mu                 sync.Mutex
+	config            Config
+	reconnectAttempts int
+	metrics           *Metrics
+	mu                sync.Mutex
 }
 
 const (
@@ -58,8 +55,8 @@ func loadConfig() Config {
 	}
 
 	return Config{
-		CheckInterval:  getEnvDuration("HC_INTERVAL", 15),
-		MaxFailures:    getEnvInt("HC_MAX_FAILURES", 3),
+		CheckInterval:  getEnvDuration("HC_INTERVAL", 10),
+		FailureWindow:  getEnvDuration("HC_FAILURE_WINDOW", 30),
 		DebugMode:      getEnvInt("_LOG_LEVEL", 0) == 2,
 		MetricsEnabled: getEnvBool("METRICS"),
 	}
@@ -90,10 +87,6 @@ func (m *Monitor) showSuccess(msg string) {
 	fmt.Printf("  %s✓%s %s\n", colorGreen, colorReset, msg)
 }
 
-func (m *Monitor) showWarning(msg string) {
-	fmt.Printf("  %s⚠%s %s\n", colorYellow, colorReset, msg)
-}
-
 func (m *Monitor) showError(msg string) {
 	fmt.Printf("  %s✗%s %s\n", colorRed, colorReset, msg)
 }
@@ -102,7 +95,8 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 	ticker := time.NewTicker(m.config.CheckInterval)
 	defer ticker.Stop()
 
-	failChan := make(chan struct{}, 1)
+	const normalTimeout = 5 * time.Second
+	const rapidTimeout = 2 * time.Second
 
 	if m.metrics != nil {
 		latency := m.getServerLatency()
@@ -117,16 +111,6 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 			m.debugLog("Monitor loop received shutdown signal")
 			return
 
-		case <-failChan:
-			m.mu.Lock()
-			m.failureCount = m.config.MaxFailures
-			m.consecutiveSuccess = 0
-			m.mu.Unlock()
-			m.triggerReconnect()
-			m.mu.Lock()
-			m.failureCount = 0
-			m.mu.Unlock()
-
 		case <-ticker.C:
 			// Check for port forwarding signature failure flag
 			if _, err := os.Stat("/tmp/pf_signature_failed"); err == nil {
@@ -140,80 +124,130 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 			// Skip checks during active reconnection to avoid races
 			if _, err := os.Stat("/tmp/reconnecting"); err == nil {
 				m.debugLog("Skipping health check during active reconnection")
-				m.mu.Lock()
-				if m.failureCount > 0 {
-					m.failureCount = 0 // Forgive failures during reconnect
-				}
-				m.mu.Unlock()
 				continue
 			}
 
-			result, err := m.checkVPNHealth()
+			// Normal health check
+			result, err := m.checkVPNHealth(normalTimeout)
 
-			if m.metrics != nil {
-				rx, tx, _ := m.getTransferBytes()
-				server := m.getCurrentServer()
-				ip := m.getCurrentIP()
-				m.metrics.UpdateVPNInfo(server, ip, rx, tx)
-
-				// Update new metrics
-				m.metrics.UpdateConnectionStatus(err == nil && result.InterfaceUp && result.Connectivity)
-				m.metrics.UpdateKillswitchStatus(m.isKillswitchActive())
-				m.metrics.UpdateLastHandshake(m.getLastHandshake())
-
-				// Update port forwarding metrics
-				pfActive := m.isPortForwardingActive()
-				pfPort := m.getPortForwardingPort()
-				m.metrics.UpdatePortForwarding(pfActive, pfPort)
-			}
+			m.updateMetrics(result, err == nil)
 
 			if m.metrics != nil {
 				m.metrics.RecordCheck(err == nil, result.CheckDuration)
 			}
 
-			m.mu.Lock()
-			if err == nil {
-				if m.failureCount > 0 {
-					fmt.Printf("\r%s\r", strings.Repeat(" ", 60))
-					m.failureCount = 0
-					m.reconnectAttempts = 0
+			// If check failed, enter rapid check mode
+			if err != nil {
+				m.debugLog("Entering rapid check mode (failure window: %s)", m.config.FailureWindow)
+
+				if m.config.DebugMode {
+					fmt.Printf("  %sℹ%s Debug info:\n", colorYellow, colorReset)
+					cmd := exec.Command("wg", "show", "pia0")
+					output, wgErr := cmd.Output()
+					if wgErr == nil {
+						lines := strings.Split(string(output), "\n")
+						for i, line := range lines {
+							if i >= 5 {
+								break
+							}
+							fmt.Printf("    %s\n", line)
+						}
+					}
 				}
-				m.consecutiveSuccess++
-			} else {
-				m.failureCount++
-				m.consecutiveSuccess = 0
 
-				if m.failureCount < m.config.MaxFailures {
+				failureStart := time.Now()
+				recovered := false
 
-					if m.config.DebugMode && m.failureCount == 1 {
-						fmt.Printf("  %sℹ%s Debug info:\n", colorYellow, colorReset)
-						cmd := exec.Command("wg", "show", "pia0")
-						output, err := cmd.Output()
-						if err == nil {
-							lines := strings.Split(string(output), "\n")
-							for i, line := range lines {
-								if i >= 5 {
-									break
-								}
-								fmt.Printf("    %s\n", line)
+				// Rapid check loop - timeout provides natural 2s interval when failing
+				for {
+					// Check for manual reconnect triggers
+					if _, pfErr := os.Stat("/tmp/pf_signature_failed"); pfErr == nil {
+						os.Remove("/tmp/pf_signature_failed")
+						m.debugLog("Port forwarding failure during rapid checks")
+						break
+					}
+
+					rapidResult, rapidErr := m.checkVPNHealth(rapidTimeout)
+
+					m.updateMetrics(rapidResult, rapidErr == nil)
+
+					if m.metrics != nil {
+						m.metrics.RecordCheck(rapidErr == nil, rapidResult.CheckDuration)
+					}
+
+					if rapidErr == nil {
+						m.debugLog("Connectivity recovered during rapid checks")
+						recovered = true
+						break
+					}
+
+					// Check if we've exceeded the failure window
+					elapsed := time.Since(failureStart)
+					if elapsed >= m.config.FailureWindow {
+						m.debugLog("Rapid check failed (elapsed: %s/%s)",
+							elapsed.Round(time.Second),
+							m.config.FailureWindow)
+						break
+					}
+
+					m.debugLog("Rapid check failed (elapsed: %s/%s)",
+						elapsed.Round(time.Second),
+						m.config.FailureWindow)
+				}
+
+				// If still failing after failure window, reconnect
+				if !recovered {
+					fmt.Printf("\n  %s✗%s VPN connection lost (down for more than %s)\n",
+						colorRed, colorReset, m.config.FailureWindow)
+					exec.Command("pkill", "-f", "portforward").Run()
+					m.triggerReconnect()
+
+					// Wait for reconnection script to complete (poll for flag removal)
+					m.debugLog("Waiting for reconnection to complete")
+					reconnectTimeout := time.After(60 * time.Second)
+					checkTicker := time.NewTicker(2 * time.Second)
+					defer checkTicker.Stop()
+
+					for {
+						select {
+						case <-reconnectTimeout:
+							m.debugLog("Reconnection wait timeout, resuming health checks")
+							goto resumeMonitoring
+						case <-checkTicker.C:
+							if _, err := os.Stat("/tmp/reconnecting"); os.IsNotExist(err) {
+								// File removed, reconnection complete
+								m.debugLog("Reconnection complete, resuming health checks")
+								time.Sleep(5 * time.Second) // Additional grace period for tunnel stability
+								goto resumeMonitoring
 							}
 						}
 					}
-				} else {
-					// Print the final error only when reaching MaxFailures
-					fmt.Printf("\n  %s✗%s VPN connection lost (%d/%d)%s\n",
-						colorRed, colorReset, m.failureCount, m.config.MaxFailures, strings.Repeat(" ", 20))
-					exec.Command("pkill", "-f", "portforward").Run()
-					m.mu.Unlock()
-					m.triggerReconnect()
-					m.mu.Lock()
-					m.failureCount = 0
-					m.mu.Unlock()
-					m.mu.Lock()
+				resumeMonitoring:
 				}
 			}
-			m.mu.Unlock()
 		}
+	}
+}
+
+func (m *Monitor) updateMetrics(result *HealthCheckResult, healthy bool) {
+	if m.metrics != nil {
+		rx, tx, _ := m.getTransferBytes()
+		server := m.getCurrentServer()
+
+		// Only fetch public IP if connection is healthy (avoids 15s timeout when failing)
+		var ip string
+		if healthy {
+			ip = m.getCurrentIP()
+		}
+
+		m.metrics.UpdateVPNInfo(server, ip, rx, tx)
+		m.metrics.UpdateConnectionStatus(healthy && result.InterfaceUp && result.Connectivity)
+		m.metrics.UpdateKillswitchStatus(m.isKillswitchActive())
+		m.metrics.UpdateLastHandshake(m.getLastHandshake())
+
+		pfActive := m.isPortForwardingActive()
+		pfPort := m.getPortForwardingPort()
+		m.metrics.UpdatePortForwarding(pfActive, pfPort)
 	}
 }
 

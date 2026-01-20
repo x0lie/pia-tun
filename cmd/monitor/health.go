@@ -85,66 +85,15 @@ func (m *Monitor) getCurrentIP() string {
 	return ""
 }
 
-func (m *Monitor) isInterfaceUp() bool {
-	m.debugLog("Checking interface status")
-
-	cmd := exec.Command("ip", "link", "show", "pia0")
-	if err := cmd.Run(); err != nil {
-		m.debugLog("Interface not found")
-		return false
-	}
-
-	cmd = exec.Command("ip", "addr", "show", "pia0")
-	output, err := cmd.Output()
-	if err == nil && strings.Contains(string(output), "inet ") {
-		m.debugLog("Interface has IP address")
-		return true
-	}
-
-	cmd = exec.Command("wg", "show", "pia0", "peers")
-	output, err = cmd.Output()
-	if err == nil && len(strings.TrimSpace(string(output))) > 0 {
-		m.debugLog("Interface has WireGuard peers")
-		return true
-	}
-
-	cmd = exec.Command("ip", "link", "show", "pia0")
-	output, err = cmd.Output()
-	if err == nil && !strings.Contains(string(output), "state DOWN") {
-		m.debugLog("Interface is not DOWN")
-		return true
-	}
-
-	m.debugLog("All interface checks failed")
-	return false
-}
-
 func (m *Monitor) checkConnectivityPing(ctx context.Context, host string) bool {
-	cmd := exec.CommandContext(ctx, "ping", "-c", "1", "-W", "5", host)
+	cmd := exec.CommandContext(ctx, "ping", "-c", "1", "-W", "2", host)
 	return cmd.Run() == nil
 }
 
-func (m *Monitor) checkConnectivityHTTP(ctx context.Context, url string) bool {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return false
-	}
+func (m *Monitor) checkExternalConnectivity(timeout time.Duration) bool {
+	m.debugLog("Checking external connectivity via ping")
 
-	client := &http.Client{
-		Timeout: 8 * time.Second,
-	}
-	resp, err := client.Do(req)
-	if err == nil {
-		resp.Body.Close()
-		return true
-	}
-	return false
-}
-
-func (m *Monitor) checkExternalConnectivity() bool {
-	m.debugLog("Checking external connectivity (parallel mode)")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	type checkResult struct {
@@ -154,30 +103,31 @@ func (m *Monitor) checkExternalConnectivity() bool {
 
 	results := make(chan checkResult, 3)
 
+	// Parallel ping checks - first success wins
 	go func() {
 		success := m.checkConnectivityPing(ctx, "1.1.1.1")
-		results <- checkResult{"ping-1.1.1.1", success}
+		results <- checkResult{"1.1.1.1", success}
 	}()
 
 	go func() {
 		success := m.checkConnectivityPing(ctx, "8.8.8.8")
-		results <- checkResult{"ping-8.8.8.8", success}
+		results <- checkResult{"8.8.8.8", success}
 	}()
 
 	go func() {
-		success := m.checkConnectivityHTTP(ctx, "http://1.1.1.1")
-		results <- checkResult{"http-1.1.1.1", success}
+		success := m.checkConnectivityPing(ctx, "9.9.9.9")
+		results <- checkResult{"9.9.9.9", success}
 	}()
 
 	for i := 0; i < 3; i++ {
 		result := <-results
 		if result.success {
-			m.debugLog("Connectivity check passed: %s", result.name)
+			m.debugLog("Connectivity check passed: %s responded", result.name)
 			return true
 		}
 	}
 
-	m.debugLog("All parallel connectivity checks failed")
+	m.debugLog("Ping check failed")
 	return false
 }
 
@@ -310,40 +260,19 @@ func (m *Monitor) getTransferBytes() (rx, tx int64, err error) {
 	return rx, tx, nil
 }
 
-func (m *Monitor) checkVPNHealth() (*HealthCheckResult, error) {
-	m.debugLog("Starting health check")
+func (m *Monitor) checkVPNHealth(timeout time.Duration) (*HealthCheckResult, error) {
 	start := time.Now()
 
-	result := &HealthCheckResult{}
-
-	if !m.isInterfaceUp() {
-		m.debugLog("Interface check failed")
-		result.CheckDuration = time.Since(start)
-		result.Error = fmt.Errorf("interface is down")
-		return result, result.Error
+	result := &HealthCheckResult{
+		InterfaceUp: true, // Assumed if connectivity passes
 	}
 
-	result.InterfaceUp = true
-	m.debugLog("Interface is up")
-
-	if m.checkExternalConnectivity() {
-		m.debugLog("Connectivity passed")
+	if m.checkExternalConnectivity(timeout) {
 		result.Connectivity = true
 		result.CheckDuration = time.Since(start)
 		return result, nil
 	}
 
-	m.debugLog("First check failed, retrying...")
-	time.Sleep(3 * time.Second)
-
-	if m.checkExternalConnectivity() {
-		m.debugLog("Retry passed")
-		result.Connectivity = true
-		result.CheckDuration = time.Since(start)
-		return result, nil
-	}
-
-	m.debugLog("All checks failed")
 	result.CheckDuration = time.Since(start)
 	result.Error = fmt.Errorf("connectivity check failed")
 	return result, result.Error

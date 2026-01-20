@@ -16,7 +16,7 @@ LOCAL_NETWORKS=${LOCAL_NETWORKS:-""}
 LOCAL_PORTS=${LOCAL_PORTS:-""}
 HANDSHAKE_TIMEOUT=${HANDSHAKE_TIMEOUT:-180}
 HC_INTERVAL=${HC_INTERVAL:-15}
-HC_MAX_FAILURES=${HC_MAX_FAILURES:-3}
+HC_FAILURE_WINDOW=${HC_FAILURE_WINDOW:-30}
 PROXY_ENABLED=${PROXY_ENABLED:-false}
 SOCKS5_PORT=${SOCKS5_PORT:-1080}
 HTTP_PROXY_PORT=${HTTP_PROXY_PORT:-8888}
@@ -31,7 +31,7 @@ fi
 # Export only what child processes actually need
 export PORT_FORWARDING
 export IPV6_ENABLED DNS LOCAL_NETWORKS LOCAL_PORTS
-export HC_INTERVAL HC_MAX_FAILURES HANDSHAKE_TIMEOUT
+export HC_INTERVAL HC_FAILURE_WINDOW HANDSHAKE_TIMEOUT
 export PROXY_ENABLED SOCKS5_PORT HTTP_PROXY_PORT
 export PORT_SYNC_ENABLED PORT_SYNC_CLIENT PORT_SYNC_URL PORT_SYNC_USER PORT_SYNC_PASS PORT_SYNC_CMD
 export METRICS METRICS_PORT
@@ -230,7 +230,7 @@ perform_reconnection() {
             fi
 
             show_step "Health monitor still running..."
-            show_success "Check interval: ${HC_INTERVAL}s, Failure threshold: ${HC_MAX_FAILURES}"
+            show_success "Check interval: ${HC_INTERVAL}s, Failure window: ${HC_FAILURE_WINDOW}s"
 
             # Restart port monitor if both PF and API are enabled (now after health status)
             if $PF_ENABLED && [ "$PORT_SYNC_ENABLED" = "true" ]; then
@@ -290,7 +290,7 @@ main_loop() {
     show_step "Starting health monitor..."
     /usr/local/bin/monitor &
     show_success "Health monitor active"
-    show_success "Check interval: ${HC_INTERVAL}s, Failure threshold: ${HC_MAX_FAILURES}"
+    show_success "Check interval: ${HC_INTERVAL}s, Failure window: ${HC_FAILURE_WINDOW}s"
 
     if [ "$METRICS" = "true" ]; then
         show_success "Metrics available on port ${METRICS_PORT:-9090}"
@@ -334,7 +334,7 @@ show_debug "  DNS=$DNS"
 show_debug "  LOCAL_NETWORKS=$LOCAL_NETWORKS"
 show_debug "  LOCAL_PORTS=$LOCAL_PORTS"
 show_debug "  HC_INTERVAL=$HC_INTERVAL"
-show_debug "  HC_MAX_FAILURES=$HC_MAX_FAILURES"
+show_debug "  HC_FAILURE_WINDOW=$HC_FAILURE_WINDOW"
 show_debug "  HANDSHAKE_TIMEOUT=$HANDSHAKE_TIMEOUT"
 show_debug "  PROXY_ENABLED=$PROXY_ENABLED"
 show_debug "  PORT_SYNC_ENABLED=$PORT_SYNC_ENABLED"
