@@ -40,7 +40,6 @@ RUN apk update && \
         jq \
         ca-certificates \
         wireguard-tools-wg \
-        nftables \
         iptables \
         iproute2-minimal \
     && \
