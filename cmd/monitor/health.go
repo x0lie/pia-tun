@@ -134,9 +134,7 @@ func (m *Monitor) checkExternalConnectivity(timeout time.Duration) bool {
 // Check WAN connectivity using bypass routes (no firewall manipulation needed!)
 // These IPs (1.1.1.1, 8.8.8.8) are in routing table 100 and bypass the VPN
 func (m *Monitor) checkWANConnectivity(timeout time.Duration) bool {
-	m.debugLog("Checking WAN connectivity (bypass routes)")
-
-	dialer := &net.Dialer{Timeout: timeout}
+	m.debugLog("Checking WAN connectivity (bypass routes, parallel)")
 
 	// NIST time servers on TCP port 13 (DAYTIME)
 	targets := []string{
@@ -147,21 +145,41 @@ func (m *Monitor) checkWANConnectivity(timeout time.Duration) bool {
 		"128.138.140.44:13", // utcnist.colorado.edu
 	}
 
+	type result struct {
+		target  string
+		success bool
+	}
+
+	results := make(chan result, len(targets))
+
+	// Check all targets in parallel - first success wins
 	for _, target := range targets {
-		conn, err := dialer.Dial("tcp", target)
-		if err == nil {
-			conn.Close()
-			m.debugLog("WAN check successful (%s)", target)
+		go func(t string) {
+			dialer := &net.Dialer{Timeout: timeout}
+			conn, err := dialer.Dial("tcp", t)
+			if err == nil {
+				conn.Close()
+				results <- result{t, true}
+			} else {
+				results <- result{t, false}
+			}
+		}(target)
+	}
+
+	// Wait for all results, return true on first success
+	for i := 0; i < len(targets); i++ {
+		res := <-results
+		if res.success {
+			m.debugLog("WAN check successful (%s)", res.target)
 			return true
 		}
-		m.debugLog("%s failed: %v", target, err)
 	}
 
 	m.debugLog("All WAN checks failed")
 	return false
 }
 
-// Wait for WAN with exponential backoff (infinite loop until success)
+// Wait for WAN with regular polling (infinite loop until success)
 func (m *Monitor) waitForWAN() bool {
 	fmt.Printf("\n%s▶%s Testing WAN before reconnect...\n", colorBlue, colorReset)
 
@@ -177,43 +195,17 @@ func (m *Monitor) waitForWAN() bool {
 		return true
 	}
 
-	// WAN is down, wait with exponential backoff
+	// WAN is down, poll every 10s until it comes back
 	m.showError("Internet down, waiting...")
 	if m.metrics != nil {
 		m.metrics.RecordWANCheck(false)
 	}
 
-	// Exponential backoff: 5s, 10s, 20s, 40s, 80s, then 160s forever
-	delays := []int{5, 10, 20, 40, 80}
-	maxDelay := 160
-	attempt := 1
-
-	// First 5 attempts with exponential backoff
-	for _, delay := range delays {
-		// Use \r to overwrite the previous line
-		time.Sleep(time.Duration(delay) * time.Second)
-
-		if m.checkWANConnectivity(5 * time.Second) {
-			downtime := time.Since(downSince)
-			fmt.Printf("\r")
-			m.showSuccess(fmt.Sprintf("Internet restored (down for %s)", formatDuration(downtime)))
-			if m.metrics != nil {
-				m.metrics.RecordWANCheck(true)
-			}
-			return true
-		}
-
-		if m.metrics != nil {
-			m.metrics.RecordWANCheck(false)
-		}
-		attempt++
-	}
-
-	// Continue checking every 160s indefinitely
+	// Check every 10 seconds indefinitely
+	// No aggressive backoff needed - we're disconnected so not stressing anything
 	for {
-		time.Sleep(time.Duration(maxDelay) * time.Second)
 
-		if m.checkWANConnectivity(5 * time.Second) {
+		if m.checkWANConnectivity(10 * time.Second) {
 			downtime := time.Since(downSince)
 			fmt.Printf("\r")
 			m.showSuccess(fmt.Sprintf("Internet restored (down for %s)", formatDuration(downtime)))
@@ -226,7 +218,6 @@ func (m *Monitor) waitForWAN() bool {
 		if m.metrics != nil {
 			m.metrics.RecordWANCheck(false)
 		}
-		attempt++
 	}
 }
 
