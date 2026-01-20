@@ -76,6 +76,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Get commit SHA (full version)
+      - name: Get commit SHA
+        id: sha
+        run: echo "FULL_SHA=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
       # Set up QEMU for multi-arch builds
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -108,6 +113,7 @@ jobs:
           push: true
           build-args: |
             VERSION=develop
+            SHA=${{ steps.sha.outputs.FULL_SHA }}
           tags: |
             ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:develop
             ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:develop

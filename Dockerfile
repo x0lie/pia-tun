@@ -1,8 +1,5 @@
 FROM golang:1.23-alpine AS go-builder
 
-# Accept version as build argument (passed by GitHub Actions)
-ARG VERSION=local
-
 WORKDIR /build
 
 COPY go.mod go.sum ./
@@ -31,6 +28,7 @@ FROM alpine:3.19
 
 # Accept version from build stage
 ARG VERSION=local
+ARG SHA=local
 
 # Install MINIMAL runtime dependencies
 RUN apk update && \
@@ -77,10 +75,10 @@ COPY scripts/ /app/scripts/
 RUN chmod +x /app/run.sh /app/scripts/*.sh && \
     mkdir -p /etc/wireguard && \
     mkdir -p /run/pia-tun && \
-    ls -la /usr/local/bin/proxy /usr/local/bin/monitor /usr/local/bin/portforward
 
-# Set VERSION as environment variable for runtime
+# Set VERSION and SHA as environment variables for runtime
 ENV VERSION=${VERSION}
+ENV SHA=${SHA}
 
 # OCI labels for container metadata (connects GHCR package to GitHub repo)
 LABEL org.opencontainers.image.title="pia-tun" \
@@ -116,5 +114,4 @@ ENV TZ=UTC \
 
 EXPOSE 1080 8888 9090
 
-# Use bash
 ENTRYPOINT ["/app/run.sh"]

@@ -128,6 +128,11 @@ print_banner() {
     printf '═%.0s' $(seq 1 $((box_width - 2)))
     printf "╝${nc}\n"
 
+    # Display commit SHA before banner for develop builds
+    if [[ "$version" == "develop" && -n "${SHA:-}" && "$SHA" != "local" ]]; then
+        echo "commit $SHA"
+    fi
+
     echo ""
 }
 
