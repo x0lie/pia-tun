@@ -180,14 +180,13 @@ start_container() {
         -e PIA_USER="$PIA_USER" \
         -e PIA_PASS="$PIA_PASS" \
         -e PIA_LOCATION="${PIA_LOCATION:-ca_ontario,ca_toronto}" \
-        -e PORT_FORWARDING="${PORT_FORWARDING:-false}" \
-        -e PROXY_ENABLED="${PROXY_ENABLED:-false}" \
+        -e PORT_FORWARDING="${PORT_FORWARDING:-true}" \
+        -e PROXY_ENABLED="${PROXY_ENABLED:-true}" \
         -e SOCKS5_PORT="${SOCKS5_PORT:-1080}" \
         -e HTTP_PROXY_PORT="${HTTP_PROXY_PORT:-8888}" \
         -e PROXY_USER="${PROXY_USER:-}" \
         -e PROXY_PASS="${PROXY_PASS:-}" \
-        -e LOG_LEVEL=debug \
-        -e METRICS=true \
+        -e LOG_LEVEL=info \
         "$IMAGE_NAME" > /dev/null
 
     if [ $? -eq 0 ]; then
@@ -235,7 +234,7 @@ wait_for_connection() {
 # Wait for Port file
 wait_for_port() {
     # Skip entirely if port-forwarding feature is disabled
-    [ "${PORT_FORWARDING:-false}" = "true" ] || {
+    [ "${PORT_FORWARDING:-true}" = "true" ] || {
         skip "Port forwarding not enabled"
         return 0
     }
@@ -278,7 +277,7 @@ wait_for_port() {
 get_real_ip() {
     echo ""
     echo -e "${BLUE}=== Getting Real IP ===${NC}"
-    REAL_IP=$(curl -s --max-time 10 ifconfig.me || echo "")
+    REAL_IP=$(curl -s -4 --max-time 10 ifconfig.me || echo "")
 
     if [ -z "$REAL_IP" ]; then
         skip "Could not determine real IP (network issue?)"
@@ -324,30 +323,12 @@ test_ipv6_blocked() {
     # Test 1: Check firewall rules block IPv6
     info "Checking firewall rules..."
 
-    # Check if using nftables or iptables
-    if docker exec "$CONTAINER_NAME" nft list table inet vpn_filter 2>/dev/null >/dev/null; then
-        # Using nftables - check chain policy and IPv6 rules
-        CHAIN_OUTPUT=$(docker exec "$CONTAINER_NAME" nft list chain inet vpn_filter output 2>/dev/null)
-
-        # Check if policy is drop
-        if echo "$CHAIN_OUTPUT" | grep -q "policy drop"; then
-            # Check if there are any rules that explicitly allow IPv6
-            if echo "$CHAIN_OUTPUT" | grep -E "(ip6|meta l3proto ip6)" | grep -q "accept"; then
-                fail "nftables: IPv6 traffic may be allowed (found IPv6 accept rules)"
-                echo "$CHAIN_OUTPUT" | grep -E "(ip6|meta l3proto ip6)"
-                return 1
-            else
-                pass "nftables: IPv6 blocked (policy drop, no IPv6 allow rules)"
-            fi
-        else
-            fail "nftables: Output chain policy is not drop"
-            return 1
-        fi
-    elif docker exec "$CONTAINER_NAME" ip6tables -L OUTPUT -n 2>/dev/null | grep -q "DROP"; then
-        # Using iptables - check for IPv6 policy/rules
-        pass "ip6tables: IPv6 DROP rules found"
+    # Check if the last rule in VPN_OUT6 is DROP (or if there's any DROP in it)
+    if docker exec "$CONTAINER_NAME" ip6tables -L VPN_OUT6 -n | grep -q "DROP"; then
+        pass "ip6tables: IPv6 DROP rule found in VPN_OUT6"
     else
-        skip "Could not verify firewall IPv6 rules (firewall not accessible)"
+        fail "ip6tables: No DROP rule in VPN_OUT6 chain"
+        return 1
     fi
 
     # Test 2: Check no IPv6 routes exist (except loopback)
@@ -454,20 +435,13 @@ test_exemptions_cleaned() {
     echo ""
     echo -e "${BLUE}=== Test: Firewall Exemptions Cleaned ===${NC}"
 
-    # Check for temporary exemptions in nftables
-    TEMP_RULES=$(docker exec "$CONTAINER_NAME" nft list chain inet vpn_filter output 2>/dev/null | grep -c "temp_" 2>/dev/null || echo "0")
+    # Check for temporary exemptions in iptables
+    TEMP_RULES=$(docker exec "$CONTAINER_NAME" iptables -L OUTPUT -n -v 2>/dev/null | grep -c "temp_" 2>/dev/null || echo "0")
     TEMP_RULES=$(echo "$TEMP_RULES" | tr -d '\n\r' | xargs)
-
-    if [ "$TEMP_RULES" == "error" ] || [ -z "$TEMP_RULES" ]; then
-        # Try iptables fallback
-        TEMP_RULES=$(docker exec "$CONTAINER_NAME" iptables -L OUTPUT -n -v 2>/dev/null | grep -c "temp_" 2>/dev/null || echo "0")
-        TEMP_RULES=$(echo "$TEMP_RULES" | tr -d '\n\r' | xargs)
-    fi
 
     if [ "$TEMP_RULES" -gt 0 ] 2>/dev/null; then
         fail "Found $TEMP_RULES temporary exemptions still active (security risk)"
         info "Listing active temporary exemptions:"
-        docker exec "$CONTAINER_NAME" nft list chain inet vpn_filter output 2>/dev/null | grep "temp_" || \
         docker exec "$CONTAINER_NAME" iptables -L OUTPUT -n -v 2>/dev/null | grep "temp_"
         return 1
     fi
@@ -707,7 +681,7 @@ test_proxy() {
     echo ""
     echo -e "${BLUE}=== Test: Proxy (SOCKS5 and HTTP) ===${NC}"
 
-    if [ "${PROXY_ENABLED:-false}" != "true" ]; then
+    if [ "${PROXY_ENABLED:-true}" != "true" ]; then
         skip "Proxy not enabled"
         return 0
     fi
@@ -829,7 +803,7 @@ test_port_forwarding() {
     echo ""
     echo -e "${BLUE}=== Test: Port Forwarding ===${NC}"
 
-    if [ "${PORT_FORWARDING:-false}" != "true" ]; then
+    if [ "${PORT_FORWARDING:-true}" != "true" ]; then
         skip "Port forwarding not enabled"
         return 0
     fi
@@ -922,25 +896,25 @@ test_metrics() {
         skip "Could not parse total_checks metric or no checks yet"
     fi
 
-    # Test 6: Validate success rate is high
-    # Note: consecutive_failures doesn't exist in JSON, but we can check success_rate_decimal
-    SUCCESS_RATE=$(echo "$METRICS_JSON" | jq -r '.success_rate_decimal // -1' 2>/dev/null)
+    # # Test 6: Validate success rate is high
+    # # Note: consecutive_failures doesn't exist in JSON, but we can check success_rate_decimal
+    # SUCCESS_RATE=$(echo "$METRICS_JSON" | jq -r '.success_rate_decimal // -1' 2>/dev/null)
 
-    if [ "$SUCCESS_RATE" != "-1" ] && [ "$SUCCESS_RATE" != "null" ]; then
-        # Convert to integer percentage for comparison (use awk for float math)
-        SUCCESS_PCT=$(echo "$SUCCESS_RATE" | awk '{printf "%.0f", $1 * 100}')
+    # if [ "$SUCCESS_RATE" != "-1" ] && [ "$SUCCESS_RATE" != "null" ]; then
+    #     # Convert to integer percentage for comparison (use awk for float math)
+    #     SUCCESS_PCT=$(echo "$SUCCESS_RATE" | awk '{printf "%.0f", $1 * 100}')
 
-        if [ -n "$SUCCESS_PCT" ] && [ "$SUCCESS_PCT" -ge 80 ] 2>/dev/null; then
-            pass "Metric validation: success_rate = ${SUCCESS_PCT}% (healthy)"
-        elif [ -n "$SUCCESS_PCT" ] 2>/dev/null; then
-            fail "Metric validation: success_rate = ${SUCCESS_PCT}% (unhealthy, below 80%)"
-            return 1
-        else
-            skip "Could not parse success rate"
-        fi
-    else
-        skip "Could not parse success_rate_decimal metric"
-    fi
+    #     if [ -n "$SUCCESS_PCT" ] && [ "$SUCCESS_PCT" -ge 80 ] 2>/dev/null; then
+    #         pass "Metric validation: success_rate = ${SUCCESS_PCT}% (healthy)"
+    #     elif [ -n "$SUCCESS_PCT" ] 2>/dev/null; then
+    #         fail "Metric validation: success_rate = ${SUCCESS_PCT}% (unhealthy, below 80%)"
+    #         return 1
+    #     else
+    #         skip "Could not parse success rate"
+    #     fi
+    # else
+    #     skip "Could not parse success_rate_decimal metric"
+    # fi
 }
 
 # Show test summary

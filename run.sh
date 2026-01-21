@@ -95,15 +95,9 @@ initial_connect() {
         if [ $_LOG_LEVEL -ge 2 ]; then
             show_info
             show_debug "Baseline killswitch rules:"
-            if command -v nft >/dev/null 2>&1; then
-                nft list chain inet vpn_filter output 2>/dev/null | head -20 | while read -r line; do
-                    show_debug "  $line"
-                done
-            else
-                iptables -L VPN_OUT -n -v 2>/dev/null | head -20 | while read -r line; do
-                    show_debug "  $line"
-                done
-            fi
+            iptables -L VPN_OUT -n -v 2>/dev/null | head -20 | while read -r line; do
+                show_debug "  $line"
+            done
             show_info
         fi
     else

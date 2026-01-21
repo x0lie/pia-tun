@@ -309,19 +309,10 @@ func (m *Monitor) getLastHandshake() int64 {
 }
 
 func (m *Monitor) isKillswitchActive() bool {
-	// Check if nftables vpn_filter table exists
-	cmd := exec.Command("nft", "list", "table", "inet", "vpn_filter")
-	if err := cmd.Run(); err == nil {
-		return true
-	}
-
-	// Fallback: check iptables rules
-	cmd = exec.Command("iptables", "-L", "VPN_FILTER", "-n")
-	if err := cmd.Run(); err == nil {
-		return true
-	}
-
-	return false
+	// Check if killswitch flag file exists
+	// Created by killswitch.sh when active, removed on cleanup
+	_, err := os.Stat("/tmp/killswitch_up")
+	return err == nil
 }
 
 func (m *Monitor) getPortForwardingPort() int {

@@ -171,10 +171,6 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 
 					m.updateMetrics(rapidResult, rapidErr == nil)
 
-					if m.metrics != nil {
-						m.metrics.RecordCheck(rapidErr == nil, rapidResult.CheckDuration)
-					}
-
 					if rapidErr == nil {
 						m.debugLog("Connectivity recovered during rapid checks")
 						recovered = true
