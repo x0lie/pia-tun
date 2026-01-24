@@ -1,5 +1,7 @@
 FROM golang:1.23-alpine AS go-builder
 
+RUN apk add --no-cache git
+
 WORKDIR /build
 
 COPY go.mod go.sum ./
@@ -21,8 +23,16 @@ RUN cd cmd/proxy && \
     -ldflags="-w -s" \
     -trimpath \
     -o /build/portforward . && \
-    # Make them executable HERE (not after COPY)
     chmod +x /build/proxy /build/monitor /build/portforward
+
+# Build wireguard-go for userspace fallback (pre-5.6 kernels without WireGuard module)
+RUN git clone --depth 1 https://git.zx2c4.com/wireguard-go /build/wireguard-go-src && \
+    cd /build/wireguard-go-src && \
+    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
+    -ldflags="-w -s" \
+    -trimpath \
+    -o /build/wireguard-go . && \
+    chmod +x /build/wireguard-go
 
 FROM alpine:3.19
 
@@ -39,6 +49,7 @@ RUN apk update && \
         ca-certificates \
         wireguard-tools-wg \
         iptables \
+        iptables-legacy \
         iproute2-minimal \
     && \
     bash --version && \
@@ -61,6 +72,7 @@ RUN apk update && \
 COPY --from=go-builder /build/proxy /usr/local/bin/proxy
 COPY --from=go-builder /build/monitor /usr/local/bin/monitor
 COPY --from=go-builder /build/portforward /usr/local/bin/portforward
+COPY --from=go-builder /build/wireguard-go /usr/local/bin/wireguard-go
 
 # Copy certificate
 COPY ca/rsa_4096.crt /app/ca.rsa.4096.crt
@@ -96,6 +108,7 @@ ENV TZ=UTC \
     LOCAL_NETWORKS="" \
     LOCAL_PORTS="" \
     DNS="pia" \
+    MTU="1420" \
     PORT_FILE=/run/pia-tun/port \
     PORT_SYNC_CLIENT="" \
     PORT_SYNC_URL="" \

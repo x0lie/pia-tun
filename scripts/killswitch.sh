@@ -23,22 +23,18 @@ source /app/scripts/ui.sh
 IPT_CMD=""
 IP6T_CMD=""
 
-# Try iptables-nft first (nftables backend with iptables syntax)
-# Use -n flag to avoid slow DNS lookups during detection
-if iptables-nft -L -n >/dev/null 2>&1; then
-    IPT_CMD="iptables-nft"
-    IP6T_CMD="ip6tables-nft"
-# Fall back to standard iptables
-elif iptables -L -n >/dev/null 2>&1; then
-    IPT_CMD="iptables"
-    IP6T_CMD="ip6tables"
-# Last resort: iptables-legacy
-elif iptables-legacy -L -n >/dev/null 2>&1; then
+legacy_lines=$(iptables-legacy-save 2>/dev/null | wc -l || echo 0)
+nft_lines=$(iptables-nft-save 2>/dev/null | wc -l || echo 0)
+
+if (( legacy_lines > nft_lines + 3 )); then
+    # legacy has meaningfully more content → docker/whatever wrote there
+    show_debug "Warning detected → choosing legacy"
     IPT_CMD="iptables-legacy"
     IP6T_CMD="ip6tables-legacy"
 else
-    show_error "No iptables implementation found"
-    exit 1
+    show_debug "No legacy warning → choosing nft"
+    IPT_CMD="iptables-nft"
+    IP6T_CMD="ip6tables-nft"
 fi
 
 # Get default gateway and interface
@@ -237,6 +233,66 @@ setup_ipv6_protection() {
 
     [ "${IPV6_ENABLED}" = "false" ] && show_success "IPv6 completely blocked" || \
         show_success "IPv6 routed through VPN only"
+}
+
+#═══════════════════════════════════════════════════════════════════════════════
+# TCP MSS CLAMPING (Prevents fragmentation issues in VPN tunnels)
+#═══════════════════════════════════════════════════════════════════════════════
+
+# MSS clamping automatically adjusts TCP Maximum Segment Size to account for
+# VPN tunnel overhead, preventing packet fragmentation and "black hole" connections
+# where large packets silently disappear due to blocked ICMP.
+setup_mss_clamping() {
+    show_debug "Setting up TCP MSS clamping for VPN tunnel"
+
+    local ipv4_ok=0
+    local ipv6_ok=0
+
+    # Clamp MSS on forwarded traffic (other containers routing through us)
+    if $IPT_CMD -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; then
+        show_debug "IPv4 FORWARD MSS clamping enabled"
+        ipv4_ok=1
+    else
+        show_debug "IPv4 FORWARD MSS clamping failed (TCPMSS target may not be available)"
+    fi
+
+    # Clamp MSS on outgoing traffic (from this container)
+    if $IPT_CMD -t mangle -A OUTPUT -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; then
+        show_debug "IPv4 OUTPUT MSS clamping enabled"
+        ipv4_ok=1
+    else
+        show_debug "IPv4 OUTPUT MSS clamping failed (TCPMSS target may not be available)"
+    fi
+
+    # IPv6 equivalent (if enabled)
+    if [ "${IPV6_ENABLED}" != "false" ]; then
+        if $IP6T_CMD -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; then
+            ipv6_ok=1
+        fi
+        if $IP6T_CMD -t mangle -A OUTPUT -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; then
+            ipv6_ok=1
+        fi
+        [ $ipv6_ok -eq 1 ] && show_debug "IPv6 MSS clamping enabled"
+    fi
+
+    # Report status accurately
+    if [ $ipv4_ok -eq 1 ] || [ $ipv6_ok -eq 1 ]; then
+        show_success "TCP MSS clamping enabled"
+    else
+        show_debug "TCP MSS clamping unavailable (kernel may lack xt_TCPMSS module)"
+    fi
+}
+
+cleanup_mss_clamping() {
+    show_debug "Cleaning up TCP MSS clamping rules"
+
+    # Remove IPv4 mangle rules (suppress errors if they don't exist)
+    $IPT_CMD -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+    $IPT_CMD -t mangle -D OUTPUT -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+
+    # Remove IPv6 mangle rules
+    $IP6T_CMD -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+    $IP6T_CMD -t mangle -D OUTPUT -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
 }
 
 setup_iptables_chain() {
@@ -553,6 +609,9 @@ setup_baseline_killswitch() {
         return 1
     }
 
+    # Enable MSS clamping to prevent fragmentation issues in VPN tunnel
+    setup_mss_clamping
+
     # Create flag file for health checks ONLY after verification passes
     touch /tmp/killswitch_up
     show_debug "Created /tmp/killswitch_up flag file"
@@ -706,6 +765,7 @@ add_forwarded_port_to_input() {
 # Full cleanup
 cleanup_killswitch() {
     show_debug "Full killswitch cleanup"
+    cleanup_mss_clamping
     cleanup_bypass_routes
     ks_cleanup
 

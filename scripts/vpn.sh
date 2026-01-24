@@ -540,34 +540,99 @@ bring_up_wireguard() {
     parse_wg_config "$config"
     
     # Create and configure interface
+    # Try kernel WireGuard first, fall back to wireguard-go (userspace) if unavailable
     show_debug "Creating WireGuard interface: pia0"
-    ip link add pia0 type wireguard || { show_debug "Failed to create interface"; return 1; }
+
+    # Allow forcing userspace WireGuard (useful when kernel module is buggy)
+    local use_kernel=true
+    if [ "${FORCE_USERSPACE_WG:-false}" = "true" ]; then
+        show_debug "FORCE_USERSPACE_WG=true, skipping kernel WireGuard"
+        use_kernel=false
+    elif ip link add pia0 type wireguard 2>/dev/null; then
+        show_debug "Using kernel WireGuard"
+        echo "kernel" > /tmp/wg_mode
+    else
+        use_kernel=false
+    fi
+
+    if [ "$use_kernel" = "false" ]; then
+        show_warning "Kernel WireGuard unavailable, using wireguard-go (userspace)"
+
+        # Ensure TUN device exists (required for userspace WireGuard)
+        if [ ! -e /dev/net/tun ]; then
+            show_debug "Creating /dev/net/tun device"
+            mkdir -p /dev/net
+            mknod /dev/net/tun c 10 200 2>/dev/null || {
+                show_error "Failed to create /dev/net/tun - try adding '--device /dev/net/tun:/dev/net/tun' to docker run"
+                return 1
+            }
+            chmod 600 /dev/net/tun
+        fi
+
+        # Start wireguard-go in background (it may run in foreground mode)
+        # Cannot use command substitution as it waits for process to exit
+        show_debug "Starting wireguard-go daemon"
+        wireguard-go pia0 > /tmp/wireguard-go.log 2>&1 &
+        local wg_pid=$!
+
+        # Wait for interface to appear (up to 3 seconds)
+        local waited=0
+        while [ $waited -lt 30 ]; do
+            if ip link show pia0 >/dev/null 2>&1; then
+                show_debug "wireguard-go created interface (waited ${waited}00ms)"
+                break
+            fi
+            sleep 0.1
+            waited=$((waited + 1))
+        done
+
+        # Check if interface was created
+        if ! ip link show pia0 >/dev/null 2>&1; then
+            # Interface not created - check what went wrong
+            sleep 0.5  # Give wireguard-go time to write error
+            local wg_output=$(cat /tmp/wireguard-go.log 2>/dev/null || echo "no output")
+
+            if echo "$wg_output" | grep -q "no such device"; then
+                show_error "TUN kernel module not loaded - run 'sudo modprobe tun' on host"
+            elif echo "$wg_output" | grep -q "operation not permitted"; then
+                show_error "Permission denied creating TUN device - check capabilities"
+            else
+                show_error "Failed to create WireGuard interface"
+                show_debug "wireguard-go output: $wg_output"
+            fi
+            return 1
+        fi
+
+        echo "userspace" > /tmp/wg_mode
+    fi
     
     show_debug "Setting private key"
     wg set pia0 private-key <(echo "${WG_CONFIG[PrivateKey]}") || { show_debug "Failed to set private key"; return 1; }
-    
+
     show_debug "Adding address: ${WG_CONFIG[Address]}"
     ip address add "${WG_CONFIG[Address]}" dev pia0 || { show_debug "Failed to add address"; return 1; }
-    
+
     local mtu="${WG_CONFIG[MTU]:-1392}"
     show_debug "Setting MTU: $mtu"
     ip link set mtu "$mtu" dev pia0
-    
-    # Configure peer
+
+    # CRITICAL: Set fwmark BEFORE configuring peer
+    # When peer is configured with persistent-keepalive, WireGuard immediately sends handshakes
+    # Without fwmark, these packets would be routed via table 51820 (VPN table) and fail
+    show_debug "Setting fwmark: 51820"
+    wg set pia0 fwmark 51820 || { show_debug "Failed to set fwmark"; return 1; }
+
+    # Configure peer (this triggers handshake initiation with keepalive)
     show_debug "Configuring peer:"
     show_debug "  Endpoint: ${WG_CONFIG[Endpoint]}"
     show_debug "  Allowed IPs: ${WG_CONFIG[AllowedIPs]}"
     show_debug "  Keepalive: ${WG_CONFIG[PersistentKeepalive]}s"
-    
+
     wg set pia0 \
         peer "${WG_CONFIG[PublicKey]}" \
         endpoint "${WG_CONFIG[Endpoint]}" \
         allowed-ips "${WG_CONFIG[AllowedIPs]}" \
         persistent-keepalive "${WG_CONFIG[PersistentKeepalive]}" || { show_debug "Failed to configure peer"; return 1; }
-    
-    # Setup routing with fwmark
-    show_debug "Setting fwmark: 51820"
-    wg set pia0 fwmark 51820 || { show_debug "Failed to set fwmark"; return 1; }
     
     show_debug "Bringing interface up"
     ip link set pia0 up || { show_debug "Failed to bring interface up"; return 1; }
@@ -621,11 +686,11 @@ bring_up_wireguard() {
 # Teardown WireGuard tunnel
 teardown_wireguard() {
     show_debug "Tearing down WireGuard tunnel"
-    
+
     # CRITICAL: Remove VPN from killswitch FIRST
     # This prevents any leak window where interface is down but firewall still references it
     remove_vpn_from_killswitch
-    
+
     # Now safe to tear down interface
     if wg show pia0 >/dev/null 2>&1; then
         show_debug "Bringing down interface: pia0"
@@ -635,10 +700,14 @@ teardown_wireguard() {
     else
         show_debug "Interface pia0 not found (already down)"
     fi
-    
+
+    # Clean up wireguard-go process if running (userspace mode)
+    pkill -f "wireguard-go pia0" 2>/dev/null || true
+    rm -f /var/run/wireguard/pia0.sock 2>/dev/null || true
+
     # Clean up local network exceptions
     cleanup_local_exceptions
-    
+
     show_debug "Teardown complete"
 }
 
