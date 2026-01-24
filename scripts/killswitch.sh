@@ -8,7 +8,7 @@
 # 3. Surgical exemptions - temporary firewall holes for VPN setup operations
 #
 # Features:
-# - Auto-detects best iptables backend (iptables-nft → iptables → iptables-legacy)
+# - Auto-detects iptables backend by testing for conflicts (override with IPT_BACKEND=legacy|nft)
 # - Zero-overhead WAN checks via routing bypass
 # - Minimal temporary exemptions for PIA API calls
 # - No leak windows during reconnection
@@ -23,18 +23,38 @@ source /app/scripts/ui.sh
 IPT_CMD=""
 IP6T_CMD=""
 
-legacy_lines=$(iptables-legacy-save 2>/dev/null | wc -l || echo 0)
-nft_lines=$(iptables-nft-save 2>/dev/null | wc -l || echo 0)
-
-if (( legacy_lines > nft_lines + 3 )); then
-    # legacy has meaningfully more content → docker/whatever wrote there
-    show_debug "Warning detected → choosing legacy"
+# Check for manual override first
+if [ "${IPT_BACKEND:-}" = "legacy" ]; then
+    show_debug "IPT_BACKEND=legacy, using iptables-legacy"
     IPT_CMD="iptables-legacy"
     IP6T_CMD="ip6tables-legacy"
-else
-    show_debug "No legacy warning → choosing nft"
+elif [ "${IPT_BACKEND:-}" = "nft" ]; then
+    show_debug "IPT_BACKEND=nft, using iptables-nft"
     IPT_CMD="iptables-nft"
     IP6T_CMD="ip6tables-nft"
+else
+    # Auto-detect: Try nft first, check for warnings/errors indicating legacy is needed
+    # Note: Use || to prevent set -e from exiting on command failure
+    nft_exit=0
+    nft_output=$(iptables-nft -L -n 2>&1) || nft_exit=$?
+
+    # Check for signs that legacy backend is in use:
+    # 1. Command failed entirely
+    # 2. Warning about iptables-legacy rules present (Docker/host wrote there)
+    #    The specific warning is: "Warning: iptables-legacy tables present"
+    if [ $nft_exit -ne 0 ]; then
+        show_debug "iptables-nft failed (exit $nft_exit), using legacy"
+        IPT_CMD="iptables-legacy"
+        IP6T_CMD="ip6tables-legacy"
+    elif echo "$nft_output" | grep -qi "iptables-legacy"; then
+        show_debug "iptables-nft detected legacy tables, using legacy"
+        IPT_CMD="iptables-legacy"
+        IP6T_CMD="ip6tables-legacy"
+    else
+        show_debug "iptables-nft works cleanly, using nft"
+        IPT_CMD="iptables-nft"
+        IP6T_CMD="ip6tables-nft"
+    fi
 fi
 
 # Get default gateway and interface

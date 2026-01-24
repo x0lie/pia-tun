@@ -89,6 +89,8 @@ See [`docs/`](docs/docker-compose%20examples/) for complete configurations:
 | `PIA_LOCATION` | Comma-separated locations (e.g., `ca_ontario,ca_toronto`). Tests latency and selects the best server. Invalid values will log all available regions. | Required |
 | `TZ` | Timezone for logging | `UTC` |
 | `LOG_LEVEL` | Logging verbosity: `error`, `info`, `debug` | `info` |
+| `WG_BACKEND` | WireGuard implementation: `kernel` (faster) or `userspace` (wireguard-go). Auto-detected if not set. | Auto |
+| `MTU` | Max Packet Size for the WireGuard Interface (pia0) | 1420 |
 
 ### Network & Firewall
 
@@ -98,6 +100,7 @@ See [`docs/`](docs/docker-compose%20examples/) for complete configurations:
 | `LOCAL_PORTS` | Ports accessible from LAN (comma-separated) | None |
 | `DNS` | DNS provider: `pia` (10.0.0.243), or specific IP (e.g., `8.8.8.8`). Routes through VPN tunnel unless the IP is in `LOCAL_NETWORKS` | `pia` |
 | `IPV6_ENABLED` | Enable IPv6 routing to VPN interface. **Note:** PIA does not support IPv6. See IPv6 section below. | `false` |
+| `IPT_BACKEND` | iptables backend: `nft` or `legacy`. Auto-detected if not set. | Auto |
 
 **Local Network Behavior:**
 - `LOCAL_NETWORKS` + `LOCAL_PORTS`: Bidirectional access on specified ports (expose services to LAN)
@@ -190,7 +193,7 @@ environment:
 The firewall uses a DROP-first architecture optimized for security and throughput:
 - **Zero leak windows**: DROP rule is established immediately and never removed
 - **Optimized rule ordering**: Established/Related connections matched first for maximum performance
-- **Auto-detection**: Automatically selects best available iptables backend (iptables-nft → iptables → iptables-legacy)
+- **Auto-detection**: Automatically selects iptables backend by testing for conflicts (override with `IPT_BACKEND`)
 - **Default-deny**: All traffic blocked except loopback and VPN interface
 - **Firewall persistence**: Rules remain active during reconnections
 - **Local network control**: LAN access requires explicit `LOCAL_NETWORKS` configuration

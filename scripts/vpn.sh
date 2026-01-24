@@ -543,11 +543,20 @@ bring_up_wireguard() {
     # Try kernel WireGuard first, fall back to wireguard-go (userspace) if unavailable
     show_debug "Creating WireGuard interface: pia0"
 
-    # Allow forcing userspace WireGuard (useful when kernel module is buggy)
+    # Check for manual override
     local use_kernel=true
-    if [ "${FORCE_USERSPACE_WG:-false}" = "true" ]; then
-        show_debug "FORCE_USERSPACE_WG=true, skipping kernel WireGuard"
+    if [ "${WG_BACKEND:-}" = "userspace" ]; then
+        show_debug "WG_BACKEND=userspace, skipping kernel WireGuard"
         use_kernel=false
+    elif [ "${WG_BACKEND:-}" = "kernel" ]; then
+        # Explicit kernel request - try it, fail if unavailable
+        if ip link add pia0 type wireguard 2>/dev/null; then
+            show_debug "WG_BACKEND=kernel, using kernel WireGuard"
+            echo "kernel" > /tmp/wg_mode
+        else
+            show_error "WG_BACKEND=kernel requested but kernel WireGuard unavailable"
+            return 1
+        fi
     elif ip link add pia0 type wireguard 2>/dev/null; then
         show_debug "Using kernel WireGuard"
         echo "kernel" > /tmp/wg_mode
