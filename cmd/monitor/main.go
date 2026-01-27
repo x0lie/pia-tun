@@ -101,7 +101,8 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 	if m.metrics != nil {
 		latency := m.getServerLatency()
 		if latency > 0 {
-			m.metrics.SetServerLatency(latency)
+			// Convert milliseconds to seconds
+			m.metrics.ObserveServerLatency(float64(latency) / 1000.0)
 		}
 	}
 
@@ -127,6 +128,22 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 				continue
 			}
 
+			// Start server latency ping in parallel (only during normal checks, not rapid)
+			var serverLatencyChan chan float64
+			if m.metrics != nil {
+				serverLatencyChan = make(chan float64, 1)
+				go func() {
+					serverIP := m.getServerEndpoint()
+					if serverIP == "" {
+						serverLatencyChan <- -1
+						return
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+					defer cancel()
+					serverLatencyChan <- m.pingServerLatency(ctx, serverIP)
+				}()
+			}
+
 			// Normal health check
 			result, err := m.checkVPNHealth(normalTimeout)
 
@@ -134,6 +151,14 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 
 			if m.metrics != nil {
 				m.metrics.RecordCheck(err == nil, result.CheckDuration)
+
+				// Collect server latency result (non-blocking, already completed or nearly done)
+				if serverLatencyChan != nil {
+					latency := <-serverLatencyChan
+					if latency > 0 {
+						m.metrics.ObserveServerLatency(latency)
+					}
+				}
 			}
 
 			// If check failed, enter rapid check mode
@@ -208,12 +233,28 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 						select {
 						case <-reconnectTimeout:
 							m.debugLog("Reconnection wait timeout, resuming health checks")
+							// Still reset session metrics on timeout
+							if m.metrics != nil {
+								m.metrics.ResetSession()
+								if latency := m.getServerLatency(); latency > 0 {
+									m.metrics.ObserveServerLatency(float64(latency) / 1000.0)
+								}
+							}
 							goto resumeMonitoring
 						case <-checkTicker.C:
 							if _, err := os.Stat("/tmp/reconnecting"); os.IsNotExist(err) {
 								// File removed, reconnection complete
 								m.debugLog("Reconnection complete, resuming health checks")
 								time.Sleep(5 * time.Second) // Additional grace period for tunnel stability
+
+								// Reset session metrics and update latency after reconnect
+								if m.metrics != nil {
+									m.metrics.ResetSession()
+									if latency := m.getServerLatency(); latency > 0 {
+										m.metrics.ObserveServerLatency(float64(latency) / 1000.0)
+									}
+								}
+
 								goto resumeMonitoring
 							}
 						}
@@ -227,6 +268,8 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 
 func (m *Monitor) updateMetrics(result *HealthCheckResult, healthy bool) {
 	if m.metrics != nil {
+		const iface = "pia0"
+
 		rx, tx, _ := m.getTransferBytes()
 		server := m.getCurrentServer()
 
@@ -236,14 +279,18 @@ func (m *Monitor) updateMetrics(result *HealthCheckResult, healthy bool) {
 			ip = m.getCurrentIP()
 		}
 
-		m.metrics.UpdateVPNInfo(server, ip, rx, tx)
-		m.metrics.UpdateConnectionStatus(healthy && result.InterfaceUp && result.Connectivity)
+		m.metrics.UpdateVPNInfo(iface, server, ip, rx, tx)
+		m.metrics.UpdateConnectionStatus(iface, healthy && result.InterfaceUp && result.Connectivity)
 		m.metrics.UpdateKillswitchStatus(m.isKillswitchActive())
-		m.metrics.UpdateLastHandshake(m.getLastHandshake())
+		m.metrics.UpdateLastHandshake(iface, m.getLastHandshake())
 
 		pfActive := m.isPortForwardingActive()
 		pfPort := m.getPortForwardingPort()
 		m.metrics.UpdatePortForwarding(pfActive, pfPort)
+
+		// Collect killswitch drop stats
+		pktsIn, bytesIn, pktsOut, bytesOut := m.getKillswitchDropStats()
+		m.metrics.UpdateKillswitchDrops(pktsIn, bytesIn, pktsOut, bytesOut)
 	}
 }
 
@@ -279,6 +326,8 @@ func main() {
 
 	if config.MetricsEnabled {
 		go startMetricsServer(monitor)
+		// Start connection pipe listener for reliable VPN info updates
+		metrics.StartConnectionPipeListener(monitor.debugLog)
 	}
 
 	monitor.monitorLoop(ctx)

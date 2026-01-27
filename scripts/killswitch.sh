@@ -803,5 +803,5 @@ show_ruleset_stats() {
 
     local total_rules=$((ipv4_out_rules + ipv4_in_rules + ipv6_out_rules + ipv6_in_rules))
     show_debug "iptables stats: $ipv4_out_rules IPv4 out, $ipv4_in_rules IPv4 in, $ipv6_out_rules IPv6 out, $ipv6_in_rules IPv6 in"
-    show_success "Firewall: ${total_rules} rules, $IPT_CMD"
+    show_success "Firewall: ${total_rules} rules"
 }

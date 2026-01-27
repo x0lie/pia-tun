@@ -138,7 +138,7 @@ func (m *KeepaliveManager) initialSetup() error {
 	expiryDate := expiresAt.Format("2006-01-02 15:04:05")
 
 	debugLog(m.config, "Expiration info: %d seconds (%d days)", secondsUntilExpiry, daysUntilExpiry)
-	showSuccess(fmt.Sprintf("Port expires: %s (in %d days)", expiryDate, daysUntilExpiry))
+	showSuccess(fmt.Sprintf("Port expires: %s (%d days)", expiryDate, daysUntilExpiry))
 	showSuccess(fmt.Sprintf("Keep-alive: Bind refresh every %d minutes", int(m.config.BindInterval.Minutes())))
 
 	if m.config.SignatureRefreshDays > 0 {

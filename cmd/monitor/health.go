@@ -55,34 +55,26 @@ func (m *Monitor) getCurrentIP() string {
 			n, _ := resp.Body.Read(body)
 			if n > 0 {
 				ip := strings.TrimSpace(string(body[:n]))
-				// Validate it looks like an IP
-				if len(ip) > 6 && len(ip) < 40 {
+				// Validate it looks like an IP and is not private
+				if len(ip) > 6 && len(ip) < 40 && !isPrivateIP(ip) {
 					return ip
 				}
 			}
 		}
 	}
 
-	// Fallback: return tunnel IP
-	cmd := exec.Command("ip", "addr", "show", "pia0")
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "inet ") {
-			fields := strings.Fields(line)
-			for i, field := range fields {
-				if field == "inet" && i+1 < len(fields) {
-					ip := strings.Split(fields[i+1], "/")[0]
-					return ip
-				}
-			}
-		}
-	}
+	// Return empty if we couldn't get a valid public IP
+	// Next health check will retry
 	return ""
+}
+
+// isPrivateIP checks if an IP address is in a private range
+func isPrivateIP(ip string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	return parsed.IsPrivate() || parsed.IsLoopback() || parsed.IsLinkLocalUnicast()
 }
 
 func (m *Monitor) checkConnectivityPing(ctx context.Context, host string) bool {
@@ -189,17 +181,11 @@ func (m *Monitor) waitForWAN() bool {
 	// Initial quick check
 	if m.checkWANConnectivity(5 * time.Second) {
 		m.showSuccess("Internet up")
-		if m.metrics != nil {
-			m.metrics.RecordWANCheck(true)
-		}
 		return true
 	}
 
 	// WAN is down, poll every 10s until it comes back
 	m.showError("Internet down, waiting...")
-	if m.metrics != nil {
-		m.metrics.RecordWANCheck(false)
-	}
 
 	// Check every 10 seconds indefinitely
 	// No aggressive backoff needed - we're disconnected so not stressing anything
@@ -209,14 +195,7 @@ func (m *Monitor) waitForWAN() bool {
 			downtime := time.Since(downSince)
 			fmt.Printf("\r")
 			m.showSuccess(fmt.Sprintf("Internet restored (down for %s)", formatDuration(downtime)))
-			if m.metrics != nil {
-				m.metrics.RecordWANCheck(true)
-			}
 			return true
-		}
-
-		if m.metrics != nil {
-			m.metrics.RecordWANCheck(false)
 		}
 	}
 }
@@ -308,6 +287,43 @@ func (m *Monitor) getLastHandshake() int64 {
 	return timestamp
 }
 
+// getServerEndpoint returns the VPN server IP from wireguard endpoint
+func (m *Monitor) getServerEndpoint() string {
+	cmd := exec.Command("wg", "show", "pia0", "endpoints")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+
+	// Format: <public_key>\t<ip>:<port>
+	parts := strings.Fields(lines[0])
+	if len(parts) < 2 {
+		return ""
+	}
+
+	// Extract IP from ip:port
+	endpoint := parts[1]
+	if idx := strings.LastIndex(endpoint, ":"); idx > 0 {
+		return endpoint[:idx]
+	}
+	return endpoint
+}
+
+// pingServerLatency pings the VPN server and returns latency in seconds, or -1 on failure
+func (m *Monitor) pingServerLatency(ctx context.Context, serverIP string) float64 {
+	start := time.Now()
+	cmd := exec.CommandContext(ctx, "ping", "-c", "1", "-W", "2", serverIP)
+	if err := cmd.Run(); err != nil {
+		return -1
+	}
+	return time.Since(start).Seconds()
+}
+
 func (m *Monitor) isKillswitchActive() bool {
 	// Check if killswitch flag file exists
 	// Created by killswitch.sh when active, removed on cleanup
@@ -338,4 +354,62 @@ func (m *Monitor) isPortForwardingActive() bool {
 	// Check if port file exists and has a valid port
 	port := m.getPortForwardingPort()
 	return port > 0
+}
+
+// getKillswitchDropStats returns dropped packets and bytes from iptables DROP rules.
+// Returns separate counts for inbound (VPN_IN) and outbound (VPN_OUT) chains.
+// Includes both IPv4 (iptables) and IPv6 (ip6tables) drops.
+func (m *Monitor) getKillswitchDropStats() (packetsIn, bytesIn, packetsOut, bytesOut int64) {
+	// Get iptables binaries (supports both -nft and -legacy)
+	iptables := "iptables"
+	if path := os.Getenv("IPT_CMD"); path != "" {
+		iptables = path
+	}
+	ip6tables := "ip6tables"
+	if path := os.Getenv("IP6T_CMD"); path != "" {
+		ip6tables = path
+	}
+
+	// Helper to parse DROP stats from a chain
+	parseChain := func(iptCmd, chain string) (packets, bytes int64) {
+		cmd := exec.Command(iptCmd, "-L", chain, "-v", "-n", "-x")
+		output, err := cmd.Output()
+		if err != nil {
+			// Don't log for IPv6 - chain may not exist if IPv6 is disabled
+			if iptCmd == iptables {
+				m.debugLog("Failed to get iptables stats for %s: %v", chain, err)
+			}
+			return 0, 0
+		}
+
+		// Parse output looking for DROP rules
+		// Format: "pkts bytes target prot opt in out source destination"
+		lines := strings.Split(string(output), "\n")
+		for _, line := range lines {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 && fields[2] == "DROP" {
+				if p, err := strconv.ParseInt(fields[0], 10, 64); err == nil {
+					packets += p
+				}
+				if b, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
+					bytes += b
+				}
+			}
+		}
+		return packets, bytes
+	}
+
+	// IPv4
+	packetsIn, bytesIn = parseChain(iptables, "VPN_IN")
+	packetsOut, bytesOut = parseChain(iptables, "VPN_OUT")
+
+	// IPv6 - add to totals (chains are named VPN_IN6/VPN_OUT6)
+	p, b := parseChain(ip6tables, "VPN_IN6")
+	packetsIn += p
+	bytesIn += b
+	p, b = parseChain(ip6tables, "VPN_OUT6")
+	packetsOut += p
+	bytesOut += b
+
+	return packetsIn, bytesIn, packetsOut, bytesOut
 }

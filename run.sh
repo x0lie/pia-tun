@@ -35,6 +35,7 @@ export HC_INTERVAL HC_FAILURE_WINDOW HANDSHAKE_TIMEOUT
 export PROXY_ENABLED SOCKS5_PORT HTTP_PROXY_PORT
 export PORT_SYNC_ENABLED PORT_SYNC_CLIENT PORT_SYNC_URL PORT_SYNC_USER PORT_SYNC_PASS PORT_SYNC_CMD
 export METRICS METRICS_PORT
+export IPT_CMD IP6T_CMD
 
 # Boolean flags (set once, check many times)
 PF_ENABLED=false
@@ -163,10 +164,15 @@ initial_connect() {
     show_step "Verifying connection..."
     if verify_connection; then
         show_debug "Connection verification passed"
+        # Signal connection ready to monitor (provides verified server/IP data)
     else
         show_warning "Connection verification found issues"
         show_debug "verify_connection returned non-zero exit code"
+        # Still try to signal connection (VPN may be working despite verification issues)
         show_info
+    fi
+    if $METRICS; then
+        signal_connection_ready
     fi
 }
 
@@ -300,9 +306,12 @@ main_loop() {
 
     sleep 1
 
-  # Create named pipe for monitor communication
+  # Create named pipes for monitor communication
   RECONNECT_PIPE="/tmp/vpn_reconnect_pipe"
   [ -p "$RECONNECT_PIPE" ] || mkfifo "$RECONNECT_PIPE"
+
+  CONNECTION_PIPE="/tmp/vpn_connection_pipe"
+  [ -p "$CONNECTION_PIPE" ] || mkfifo "$CONNECTION_PIPE"
 
   show_debug "Entering reconnection monitor loop (blocking on pipe)"
   while true; do
@@ -318,6 +327,45 @@ main_loop() {
           fi
       fi
   done
+}
+
+# Signal connection ready to the monitor via named pipe
+# This provides the verified connection data directly, avoiding race conditions
+signal_connection_ready() {
+    local pipe="/tmp/vpn_connection_pipe"
+
+    # Only signal if pipe exists (monitor is running)
+    if [ ! -p "$pipe" ]; then
+        show_debug "Connection pipe not found, skipping signal"
+        return 0
+    fi
+
+    local server=$(cat /tmp/meta_cn 2>/dev/null || echo "")
+    if [ -z "$server" ]; then
+        show_debug "No server info available, skipping connection signal"
+        return 1
+    fi
+
+    # Get the verified external IP
+    local vpn_ip=$(cat /tmp/server_endpoint 2>/dev/null || echo "")
+    if [ -z "$vpn_ip" ]; then
+        show_debug "Could not get external IP, skipping connection signal"
+        return 1
+    fi
+
+    local timestamp=$(date +%s)
+    local data="${server}|${vpn_ip}|${timestamp}"
+
+    show_debug "Signaling connection ready: $data"
+
+    # Non-blocking write to pipe (timeout prevents hanging if no reader)
+    if timeout 2 bash -c "echo '$data' > '$pipe'" 2>/dev/null; then
+        show_debug "Connection signal sent successfully"
+        return 0
+    else
+        show_debug "Failed to send connection signal (no reader or timeout)"
+        return 1
+    fi
 }
 
 # Debug: Show environment configuration
