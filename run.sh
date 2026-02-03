@@ -9,7 +9,7 @@ source /app/scripts/verify_connection.sh
 source /app/scripts/proxy_go.sh
 
 # OPTIMIZED: Set defaults inline, export only what's needed by child processes
-PORT_FORWARDING=${PORT_FORWARDING:-false}
+PF_ENABLED=${PF_ENABLED:-false}
 IPV6_ENABLED=${IPV6_ENABLED:-false}
 DNS=${DNS:-pia}
 LOCAL_NETWORKS=${LOCAL_NETWORKS:-""}
@@ -20,38 +20,33 @@ HC_FAILURE_WINDOW=${HC_FAILURE_WINDOW:-30}
 PROXY_ENABLED=${PROXY_ENABLED:-false}
 SOCKS5_PORT=${SOCKS5_PORT:-1080}
 HTTP_PROXY_PORT=${HTTP_PROXY_PORT:-8888}
-PORT_SYNC_ENABLED=${PORT_SYNC_ENABLED:-false}
+PS_ENABLED=${PS_ENABLED:-false}
+PIA_CN=${PIA_CN:-""}
+PIA_IP=${PIA_IP:-""}
 
-# Auto-enable PORT_SYNC_ENABLED and PORT_FORWARDING if PORT_SYNC_CLIENT or PORT_SYNC_CMD is set
-if [ -n "${PORT_SYNC_CLIENT:-}" ] || [ -n "${PORT_SYNC_CMD:-}" ]; then
-    PORT_SYNC_ENABLED=true
-    PORT_FORWARDING=true
+# Auto-enable PS_ENABLED and PF_ENABLED if PS_CLIENT or PS_CMD is set
+if [ -n "${PS_CLIENT:-}" ] || [ -n "${PS_CMD:-}" ]; then
+    PS_ENABLED=true
+    PF_ENABLED=true
 fi
 
 # Export only what child processes actually need
-export PORT_FORWARDING
+export PF_ENABLED
 export IPV6_ENABLED DNS LOCAL_NETWORKS LOCAL_PORTS
 export HC_INTERVAL HC_FAILURE_WINDOW HANDSHAKE_TIMEOUT
 export PROXY_ENABLED SOCKS5_PORT HTTP_PROXY_PORT
-export PORT_SYNC_ENABLED PORT_SYNC_CLIENT PORT_SYNC_URL PORT_SYNC_USER PORT_SYNC_PASS PORT_SYNC_CMD
+export PS_ENABLED PS_CLIENT PS_URL PS_USER PS_PASS PS_CMD
 export METRICS METRICS_PORT
 export IPT_CMD IP6T_CMD
-
-# Boolean flags (set once, check many times)
-PF_ENABLED=false
-[ "$PORT_FORWARDING" = "true" ] && PF_ENABLED=true
-
-PROXY_ENABLED_FLAG=false
-[ "$PROXY_ENABLED" = "true" ] && PROXY_ENABLED_FLAG=true
+export PIA_CN PIA_IP
 
 trap cleanup SIGTERM SIGINT SIGQUIT
 
 cleanup() {
-    show_info
     show_step "Shutting down..."
 
-    show_debug "Cleanup: Stopping proxies (enabled=$PROXY_ENABLED_FLAG)"
-    $PROXY_ENABLED_FLAG && stop_proxies
+    show_debug "Cleanup: Stopping proxies (enabled=$PROXY_ENABLED)"
+    stop_proxies
 
     show_debug "Cleanup: Killing monitor processes"
     pkill -f "monitor" 2>/dev/null || true
@@ -59,6 +54,12 @@ cleanup() {
     show_debug "Cleanup: Killing port forwarding processes"
     pkill -f "portforward" 2>/dev/null || true
     pkill -f "port_monitor.sh" 2>/dev/null || true
+
+    show_debug "Cleanup: flag files"
+    rm -f /tmp/port_forwarding_complete
+    rm -f /tmp/reconnecting
+    rm -f /tmp/monitor_up
+    rm -f /tmp/killswitch_up
 
     show_debug "Cleanup: Tearing down VPN tunnel"
     teardown_wireguard
@@ -73,57 +74,31 @@ cleanup() {
     exit 0
 }
 
-initial_connect() {
-    local restart="${1:-false}"
-    
-    show_debug "initial_connect called"
+reconnect() {
+    show_reconnecting
+    touch /tmp/reconnecting
 
-    [ ! -f /tmp/reconnecting ] && print_banner
+    if $PF_ENABLED; then
+        show_debug "Stopping port forwarding processes"
+        pkill -9 -f "portforward" 2>/dev/null || true
+        pkill -9 -f "port_monitor.sh" 2>/dev/null || true
+    fi
 
-    show_debug "Clearing /etc/resolv.conf"
+    pkill -9 -f "cacher" 2>/dev/null || true
+
+    # Teardown VPN (removes from killswitch first, then tears down interface)
+    teardown_wireguard
+
+    connect_loop
+}
+
+connect() {
     echo > /etc/resolv.conf
 
-    # Setup baseline killswitch first (includes bypass route allowances)
-    if [ "$restart" != "true" ]; then
-        setup_baseline_killswitch || {
-            show_error "CRITICAL: Killswitch setup failed - cannot safely connect to VPN"
-            show_error "This is a security issue. Exiting to prevent potential IP leaks."
-            exit 1
-        }
-        show_info
-
-        # Debug: Show killswitch rules
-        if [ $_LOG_LEVEL -ge 2 ]; then
-            show_info
-            show_debug "Baseline killswitch rules:"
-            iptables -L VPN_OUT -n -v 2>/dev/null | head -20 | while read -r line; do
-                show_debug "  $line"
-            done
-            show_info
-        fi
-    else
-        show_debug "Skipping baseline killswitch setup (restart=true)"
-    fi
-
-    # Only capture real IP if not already captured
-    if [ ! -f /tmp/real_ip ]; then
-        capture_real_ip
-        show_info
-    else
-        show_debug "Real IP already captured: $(cat /tmp/real_ip 2>/dev/null || echo 'unknown')"
-    fi
-
-    # VPN setup (uses surgical exemptions internally)
-    /app/scripts/vpn.sh "$restart" || {
+    /app/scripts/vpn.sh || {
         show_error "vpn.sh failed with exit code $?"
         return 1
     }
-
-    # Save server latency for metrics
-    if [ -f /tmp/server_latency_temp ]; then
-        show_debug "Saving server latency: $(cat /tmp/server_latency_temp)"
-        mv /tmp/server_latency_temp /tmp/server_latency
-    fi
 
     show_step "Establishing VPN connection..."
     if bring_up_wireguard /etc/wireguard/pia0.conf; then
@@ -134,8 +109,7 @@ initial_connect() {
         return 1
     fi
 
-    # Add VPN to killswitch (now it's safe to route through VPN)
-    if [ "$restart" != "true" ]; then
+    if [ ! -f /tmp/reconnecting ]; then    
         add_vpn_to_killswitch || {
             show_error "CRITICAL: Failed to add VPN to killswitch"
             show_error "VPN traffic may not be properly protected. Tearing down VPN."
@@ -143,127 +117,29 @@ initial_connect() {
             exit 1
         }
 
-        # Clean up any leftover temporary exemptions from setup phase
         show_debug "Cleaning up temporary exemptions from VPN setup"
         remove_all_temporary_exemptions
-
         show_ruleset_stats
     else
-        show_debug "Adding VPN to killswitch (reconnection, suppressing output)"
-        add_vpn_to_killswitch >/dev/null 2>&1 || {
-            show_error "CRITICAL: Failed to add VPN to killswitch during reconnection"
-            return 1
+        silent add_vpn_to_killswitch || {
+            show_error "CRITICAL: Failed to add VPN to killswitch"
+            show_error "VPN traffic may not be properly protected. Tearing down VPN."
+            teardown_wireguard
+            exit 1
         }
 
-        # Clean up any leftover temporary exemptions from reconnection
-        show_debug "Cleaning up temporary exemptions from reconnection"
-        remove_all_temporary_exemptions >/dev/null 2>&1
+        show_debug "Cleaning up temporary exemptions from VPN setup"
+        silent remove_all_temporary_exemptions
     fi
 
-    show_info
     show_step "Verifying connection..."
     if verify_connection; then
         show_debug "Connection verification passed"
-        # Signal connection ready to monitor (provides verified server/IP data)
+        show_vpn_connected
     else
         show_warning "Connection verification found issues"
         show_debug "verify_connection returned non-zero exit code"
-        # Still try to signal connection (VPN may be working despite verification issues)
-        show_info
-    fi
-    if $METRICS; then
-        signal_connection_ready
-    fi
-}
-
-perform_reconnection() {
-    show_reconnecting
-    touch /tmp/reconnecting
-
-    if $PF_ENABLED; then
-        show_debug "Stopping port forwarding processes"
-        pkill -9 -f "portforward" 2>/dev/null || true
-        pkill -9 -f "port_monitor.sh" 2>/dev/null || true
-    fi
-    
-    if $PROXY_ENABLED_FLAG; then
-        show_debug "Stopping proxies"
-        stop_proxies
-    fi
-
-    # Teardown VPN (removes from killswitch first, then tears down interface)
-    teardown_wireguard
-
-    local attempt=0
-    local delay=5
-    local max_delay=160
-
-    while true; do
-        if initial_connect "true"; then
-            show_debug "Reconnection: VPN established successfully"
-            
-            # Start proxies after VPN is up
-            if $PROXY_ENABLED_FLAG; then
-                show_debug "Restarting proxies"
-                start_proxies >/dev/null 2>&1
-            fi
-
-            if $PF_ENABLED; then
-                show_debug "Starting port forwarding service"
-                /usr/local/bin/portforward & disown
-
-                # Wait for port forwarding to complete (max 30s)
-                local waited=0
-                show_debug "Waiting for port forwarding completion (max 30s)"
-                while [ $waited -lt 30 ]; do
-                    if [ -f /tmp/port_forwarding_complete ]; then
-                        show_debug "Port forwarding completed after ${waited}s"
-                        rm -f /tmp/port_forwarding_complete
-                        break
-                    fi
-                    sleep 1
-                    waited=$((waited + 1))
-                done
-                [ $waited -ge 30 ] && show_debug "Port forwarding wait timed out after 30s"
-            else
-                show_vpn_connected
-            fi
-
-            show_step "Health monitor still running..."
-            show_success "Check interval: ${HC_INTERVAL}s, Failure window: ${HC_FAILURE_WINDOW}s"
-
-            # Restart port monitor if both PF and API are enabled (now after health status)
-            if $PF_ENABLED && [ "$PORT_SYNC_ENABLED" = "true" ]; then
-                show_info
-                show_step "Restarting port monitor..."
-                show_debug "Launching port_monitor.sh"
-                /app/scripts/port_monitor.sh & disown
-            fi
-            
-            sleep 2
-            
-            show_debug "Removing reconnecting flag"
-            rm -f /tmp/reconnecting
-            return 0
-        else
-            show_error "Reconnection failed"
-            show_warning "Will retry in $delay seconds"
-            show_debug "initial_connect returned error during reconnection"
-        fi
-
-        attempt=$((attempt+1))
-        sleep "$delay"
-
-        delay=$((delay * 2))
-        [ "$delay" -gt "$max_delay" ] && delay="$max_delay"
-    done
-}
-
-main_loop() {
-    
-    # Start proxies first if enabled
-    if $PROXY_ENABLED_FLAG; then
-        start_proxies
+        show_vpn_connected_warning
     fi
 
     if $PF_ENABLED; then
@@ -283,43 +159,120 @@ main_loop() {
             waited=$((waited + 1))
         done
         [ $waited -ge 30 ] && show_debug "Port forwarding wait timed out after 30s"
-    else
-        show_vpn_connected
     fi
 
-    show_step "Starting health monitor..."
-    /usr/local/bin/monitor &
-    show_success "Health monitor active"
+    /usr/local/bin/cacher & disown
+
+    if $PROXY_ENABLED; then
+        if [ ! -f /tmp/proxy.pid ]; then
+            start_proxies
+        else
+            show_step "Proxy servers still running"
+            show_success "Proxy servers ready"
+        fi
+    fi
+
+
+    if [ ! -f /tmp/monitor_up ]; then
+        show_step "Starting health monitor..."
+        /usr/local/bin/monitor &
+        touch /tmp/monitor_up
+    else
+        show_step "Health monitor resuming..."
+    fi
     show_success "Check interval: ${HC_INTERVAL}s, Failure window: ${HC_FAILURE_WINDOW}s"
 
     if [ "$METRICS" = "true" ]; then
-        show_success "Metrics available on port ${METRICS_PORT:-9090}"
-        show_info "      Prometheus:  http://<container-ip>:${METRICS_PORT:-9090}/metrics"
-        show_info "      JSON:        http://<container-ip>:${METRICS_PORT:-9090}/metrics?format=json"
+        if [ ! -f /tmp/reconnecting ]; then
+            show_success "Metrics available on port ${METRICS_PORT:-9090}"
+            show_info "      Prometheus:  http://<container-ip>:${METRICS_PORT:-9090}/metrics"
+            show_info "      JSON:        http://<container-ip>:${METRICS_PORT:-9090}/metrics?format=json"
+            show_info "      Health:      http://<container-ip>:${METRICS_PORT:-9090}/health"
+        fi
+    else
+        show_info "      Health:      http://<container-ip>:${METRICS_PORT:-9090}/health"
     fi
 
     # Start port monitor if PF and API updater are enabled
-    if $PF_ENABLED && [ "$PORT_SYNC_ENABLED" = "true" ]; then
-        show_debug "Starting port monitor (PF + API enabled)"
-        /app/scripts/port_monitor.sh & disown
+    if $PS_ENABLED; then
+        if [ ! -f /tmp/reconnecting ]; then
+            show_step "Port monitor starting (sync: $PS_CLIENT)"
+            show_debug "Starting port monitor (PF + API enabled)"
+            /app/scripts/port_monitor.sh & disown
+        else
+            show_step "Restarting port monitor..."
+            show_debug "Launching port_monitor.sh"
+            /app/scripts/port_monitor.sh & disown
+        fi
     fi
 
-    sleep 1
+    if $METRICS; then
+        signal_connection_ready
+    fi
+}
 
-  # Create named pipes for monitor communication
-  RECONNECT_PIPE="/tmp/vpn_reconnect_pipe"
-  [ -p "$RECONNECT_PIPE" ] || mkfifo "$RECONNECT_PIPE"
+initialize() {
+    print_banner
 
-  CONNECTION_PIPE="/tmp/vpn_connection_pipe"
-  [ -p "$CONNECTION_PIPE" ] || mkfifo "$CONNECTION_PIPE"
+    show_debug "Removing stale flag files"
+    rm -f /tmp/port_forwarding_complete
+    rm -f /tmp/reconnecting
+    rm -f /tmp/monitor_up
+    rm -f /tmp/killswitch_up
+    ip link delete pia0 2>/dev/null || true
 
+    show_debug "Clearing /etc/resolv.conf"
+    echo > /etc/resolv.conf
+
+    setup_baseline_killswitch || {
+        show_error "CRITICAL: Killswitch setup failed - cannot safely connect to VPN"
+        show_error "This is a security issue. Exiting to prevent potential IP leaks."
+        exit 1
+    }
+
+    if [ $_LOG_LEVEL -ge 2 ]; then
+        show_debug "Baseline killswitch rules:"
+        iptables -L VPN_OUT -n -v 2>/dev/null | head -20 | while read -r line; do
+            show_debug "  $line"
+        done
+    fi
+
+    capture_real_ip || true
+}
+
+connect_loop() {
+    local attempt=0
+    local delay=5
+    local max_delay=120
+    touch /tmp/monitor_wait
+
+    while true; do
+        if connect "true"; then
+            show_debug "Connection successful"
+            rm -f /tmp/reconnecting
+            rm -f /tmp/monitor_wait
+            return 0
+        else
+            show_error "Connection failed"
+            show_warning "Will retry in $delay seconds"
+            show_info
+        fi
+
+        attempt=$((attempt+1))
+        sleep "$delay"
+
+        delay=$((delay * 2))
+        [ "$delay" -gt "$max_delay" ] && delay="$max_delay"
+    done
+}
+
+main_loop() {
   show_debug "Entering reconnection monitor loop (blocking on pipe)"
   while true; do
-      # This blocks until monitor writes to the pipe
       if read -r reason < "$RECONNECT_PIPE"; then
           show_debug "Reconnection requested: ${reason:-no reason given}"
 
-          if perform_reconnection; then
+          if reconnect; then
               show_debug "Reconnection successful"
           else
               show_warning "Retrying..."
@@ -340,7 +293,7 @@ signal_connection_ready() {
         return 0
     fi
 
-    local server=$(cat /tmp/meta_cn 2>/dev/null || echo "")
+    local server=$(cat /tmp/pia_cn 2>/dev/null || echo "")
     if [ -z "$server" ]; then
         show_debug "No server info available, skipping connection signal"
         return 1
@@ -370,7 +323,7 @@ signal_connection_ready() {
 
 # Debug: Show environment configuration
 show_debug "Environment configuration:"
-show_debug "  PORT_FORWARDING=$PORT_FORWARDING"
+show_debug "  PF_ENABLED=$PF_ENABLED"
 show_debug "  IPV6_ENABLED=$IPV6_ENABLED"
 show_debug "  DNS=$DNS"
 show_debug "  LOCAL_NETWORKS=$LOCAL_NETWORKS"
@@ -379,7 +332,7 @@ show_debug "  HC_INTERVAL=$HC_INTERVAL"
 show_debug "  HC_FAILURE_WINDOW=$HC_FAILURE_WINDOW"
 show_debug "  HANDSHAKE_TIMEOUT=$HANDSHAKE_TIMEOUT"
 show_debug "  PROXY_ENABLED=$PROXY_ENABLED"
-show_debug "  PORT_SYNC_ENABLED=$PORT_SYNC_ENABLED"
+show_debug "  PS_ENABLED=$PS_ENABLED"
 show_debug "  METRICS=$METRICS"
 show_debug "  LOG_LEVEL=${LOG_LEVEL} (numeric: $_LOG_LEVEL)"
 
@@ -395,11 +348,13 @@ if [ $((cap_eff_decimal & CAP_NET_ADMIN)) -eq 0 ]; then
 fi
 show_debug "CAP_NET_ADMIN check passed (CapEff: 0x$cap_eff)"
 
-show_debug "Starting initial connection"
-if initial_connect; then
-    main_loop
-else
-    show_error "Initial connection failed"
-    show_debug "Exiting with error code 1"
-    exit 1
-fi
+# Create named pipes for monitor communication
+RECONNECT_PIPE="/tmp/vpn_reconnect_pipe"
+[ -p "$RECONNECT_PIPE" ] || mkfifo "$RECONNECT_PIPE"
+
+CONNECTION_PIPE="/tmp/vpn_connection_pipe"
+[ -p "$CONNECTION_PIPE" ] || mkfifo "$CONNECTION_PIPE"
+
+initialize
+connect_loop
+main_loop

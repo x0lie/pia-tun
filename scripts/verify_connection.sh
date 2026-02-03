@@ -135,11 +135,11 @@ verify_connection() {
     
     if [ -z "$vpn_ip" ]; then
         # OPTIMIZED: Early exit path for timeout
-        show_warning "Could not verify external IP (DNS likely misconfigured)"
+        show_warning "Could not verify external IP (DNS misconfigured?)\n      DNS: $DNS"
         echo "  ${ylw}ℹ${nc} VPN is connected, but IP verification timed out"
         show_debug "External IP check failed (timeout), exiting verification early"
         show_debug "Final score: $checks_passed/$checks_total checks passed"
-        return 0
+        return 1
     fi
     
     show_debug "External IP retrieved: $vpn_ip"

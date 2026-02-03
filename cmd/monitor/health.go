@@ -20,7 +20,7 @@ type HealthCheckResult struct {
 }
 
 func (m *Monitor) getCurrentServer() string {
-	data, err := os.ReadFile("/tmp/meta_cn")
+	data, err := os.ReadFile("/tmp/pia_cn")
 	if err != nil {
 		return ""
 	}
@@ -181,11 +181,17 @@ func (m *Monitor) waitForWAN() bool {
 	// Initial quick check
 	if m.checkWANConnectivity(5 * time.Second) {
 		m.showSuccess("Internet up")
+		if m.metrics != nil {
+			m.metrics.UpdateWANStatus(true)
+		}
 		return true
 	}
 
 	// WAN is down, poll every 10s until it comes back
 	m.showError("Internet down, waiting...")
+	if m.metrics != nil {
+		m.metrics.UpdateWANStatus(false)
+	}
 
 	// Check every 10 seconds indefinitely
 	// No aggressive backoff needed - we're disconnected so not stressing anything
@@ -195,6 +201,9 @@ func (m *Monitor) waitForWAN() bool {
 			downtime := time.Since(downSince)
 			fmt.Printf("\r")
 			m.showSuccess(fmt.Sprintf("Internet restored (down for %s)", formatDuration(downtime)))
+			if m.metrics != nil {
+				m.metrics.UpdateWANStatus(true)
+			}
 			return true
 		}
 	}

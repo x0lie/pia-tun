@@ -9,10 +9,16 @@ COPY cmd/ ./cmd/
 
 # Build with maximum optimization
 RUN cd cmd/proxy && \
-    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
+    CGO_ENABLED=0 GOOS=linux go build \
+    -a -installsuffix cgo \
     -ldflags="-w -s" \
     -trimpath \
     -o /build/proxy . && \
+    cd ../cacher && \
+    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
+    -ldflags="-w -s" \
+    -trimpath \
+    -o /build/cacher . && \
     cd ../monitor && \
     CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
     -ldflags="-w -s" \
@@ -23,7 +29,7 @@ RUN cd cmd/proxy && \
     -ldflags="-w -s" \
     -trimpath \
     -o /build/portforward . && \
-    chmod +x /build/proxy /build/monitor /build/portforward
+    chmod +x /build/proxy /build/cacher /build/monitor /build/portforward
 
 # Build wireguard-go for userspace fallback (pre-5.6 kernels without WireGuard module)
 RUN git clone --depth 1 https://git.zx2c4.com/wireguard-go /build/wireguard-go-src && \
@@ -45,6 +51,7 @@ RUN apk update && \
     apk add --no-cache \
         bash \
         curl \
+        knot-utils \
         jq \
         ca-certificates \
         wireguard-tools-wg \
@@ -58,18 +65,20 @@ RUN apk update && \
         /var/cache/apk/* \
         /tmp/* \
         /var/tmp/* \
-        /usr/share/man \
-        /usr/share/doc \
-        /usr/share/info \
-        /usr/share/licenses \
+        /usr/share/man/* \
+        /usr/share/doc/* \
+        /usr/share/info/* \
+        /usr/share/licenses/* \
         /usr/lib/python* \
         /root/.cache \
+        /usr/lib*.a /usr/lib/*.la \
     && \
     find /usr/bin /usr/sbin /bin /sbin -type f -executable \
         -exec strip --strip-all {} \; 2>/dev/null || true
 
 # Copy Go binaries (already executable from builder)
 COPY --from=go-builder /build/proxy /usr/local/bin/proxy
+COPY --from=go-builder /build/cacher /usr/local/bin/cacher
 COPY --from=go-builder /build/monitor /usr/local/bin/monitor
 COPY --from=go-builder /build/portforward /usr/local/bin/portforward
 COPY --from=go-builder /build/wireguard-go /usr/local/bin/wireguard-go
@@ -112,11 +121,11 @@ ENV TZ=UTC \
     WG_BACKEND="" \
     IPT_BACKEND="" \
     PORT_FILE=/run/pia-tun/port \
-    PORT_SYNC_CLIENT="" \
-    PORT_SYNC_URL="" \
-    PORT_SYNC_USER="" \
-    PORT_SYNC_PASS="" \
-    PORT_SYNC_CMD="" \
+    PS_CLIENT="" \
+    PS_URL="" \
+    PS_USER="" \
+    PS_PASS="" \
+    PS_CMD="" \
     PROXY_ENABLED=false \
     PROXY_USER="" \
     PROXY_PASS="" \
@@ -129,5 +138,7 @@ ENV TZ=UTC \
     HC_FAILURE_WINDOW=30
 
 EXPOSE 1080 8888 9090
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 CMD wget -q --spider http://127.0.0.1:9090/health || exit 1  
 
 ENTRYPOINT ["/app/run.sh"]

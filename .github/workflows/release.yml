@@ -27,8 +27,8 @@ jobs:
         env:
           PIA_USER: ${{ secrets.PIA_USER }}
           PIA_PASS: ${{ secrets.PIA_PASS }}
-          PIA_LOCATION: us_california
-          PORT_FORWARDING: false
+          PIA_LOCATION: ca_ontario,ca_toronto
+          PF_ENABLED: true
           IMAGE_NAME: ${{ env.IMAGE_NAME }}:test
         run: |
           chmod +x testing/test.sh

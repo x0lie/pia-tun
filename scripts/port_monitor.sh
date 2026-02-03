@@ -21,15 +21,15 @@ PORT_FILE="${PORT_FILE:-/run/pia-tun/port}"
 
 show_debug "Port monitor configuration:"
 show_debug "  PORT_FILE=$PORT_FILE"
-show_debug "  PORT_SYNC_CLIENT=${PORT_SYNC_CLIENT:-none}"
-show_debug "  PORT_SYNC_URL=${PORT_SYNC_URL:-none}"
-show_debug "  PORT_SYNC_CMD=${PORT_SYNC_CMD:+set}"
+show_debug "  PS_CLIENT=${PS_CLIENT:-none}"
+show_debug "  PS_URL=${PS_URL:-none}"
+show_debug "  PS_CMD=${PS_CMD:+set}"
 
 # Determine display name for logging (used for startup message and failure messages)
-if [ -n "${PORT_SYNC_CLIENT:-}" ] && [ -n "${PORT_SYNC_CMD:-}" ]; then
-    SYNC_DISPLAY_NAME="$PORT_SYNC_CLIENT + custom command"
-elif [ -n "${PORT_SYNC_CLIENT:-}" ]; then
-    SYNC_DISPLAY_NAME="$PORT_SYNC_CLIENT"
+if [ -n "${PS_CLIENT:-}" ] && [ -n "${PS_CMD:-}" ]; then
+    SYNC_DISPLAY_NAME="$PS_CLIENT + custom command"
+elif [ -n "${PS_CLIENT:-}" ]; then
+    SYNC_DISPLAY_NAME="$PS_CLIENT"
 else
     SYNC_DISPLAY_NAME="custom command"
 fi
@@ -48,9 +48,9 @@ LAST_CMD_SUCCESS=""     # Empty = not yet attempted, true = last succeeded, fals
 # Determine which methods are configured (set once at startup)
 HAS_CLIENT=false
 HAS_CMD=false
-# PORT_SYNC_URL is auto-detected from PORT_SYNC_CLIENT, so just check PORT_SYNC_CLIENT
-[ -n "${PORT_SYNC_CLIENT:-}" ] && HAS_CLIENT=true
-[ -n "${PORT_SYNC_CMD:-}" ] && HAS_CMD=true
+# PS_URL is auto-detected from PS_CLIENT, so just check PS_CLIENT
+[ -n "${PS_CLIENT:-}" ] && HAS_CLIENT=true
+[ -n "${PS_CMD:-}" ] && HAS_CMD=true
 
 show_debug "Configured methods: HAS_CLIENT=$HAS_CLIENT, HAS_CMD=$HAS_CMD"
 
@@ -100,12 +100,12 @@ monitor_port_changes() {
             # Check which methods succeeded
             local client_succeeded=false
             local cmd_succeeded=false
-            [ -f /tmp/port_sync_client_success ] && client_succeeded=true
-            [ -f /tmp/port_sync_cmd_success ] && cmd_succeeded=true
+            [ -f /tmp/ps_client_success ] && client_succeeded=true
+            [ -f /tmp/ps_cmd_success ] && cmd_succeeded=true
 
             # Display success for each method
             if [ "$HAS_CLIENT" = true ] && [ "$client_succeeded" = true ]; then
-                show_success "[$(date '+%Y-%m-%d %H:%M:%S')] ${PORT_SYNC_CLIENT} port updated"
+                show_success "[$(date '+%Y-%m-%d %H:%M:%S')] ${PS_CLIENT} port updated"
                 LAST_CLIENT_SUCCESS="true"
             fi
             if [ "$HAS_CMD" = true ] && [ "$cmd_succeeded" = true ]; then
@@ -115,7 +115,7 @@ monitor_port_changes() {
 
             # Display first failure for each method that failed
             if [ "$HAS_CLIENT" = true ] && [ "$client_succeeded" = false ]; then
-                show_warning "[$(date '+%Y-%m-%d %H:%M:%S')] ${PORT_SYNC_CLIENT} not reachable, will retry"
+                show_warning "[$(date '+%Y-%m-%d %H:%M:%S')] ${PS_CLIENT} not reachable, will retry"
                 LAST_CLIENT_SUCCESS="false"
             fi
             if [ "$HAS_CMD" = true ] && [ "$cmd_succeeded" = false ]; then
@@ -231,23 +231,23 @@ process_sync_results() {
     # Check which methods succeeded
     local client_succeeded=false
     local cmd_succeeded=false
-    [ -f /tmp/port_sync_client_success ] && client_succeeded=true
-    [ -f /tmp/port_sync_cmd_success ] && cmd_succeeded=true
+    [ -f /tmp/ps_client_success ] && client_succeeded=true
+    [ -f /tmp/ps_cmd_success ] && cmd_succeeded=true
 
     # Handle client results
     if [ "$HAS_CLIENT" = true ]; then
         if [ "$client_succeeded" = true ]; then
             # Success
             if [ "$LAST_CLIENT_SUCCESS" = "false" ]; then
-                show_success "[$(date '+%Y-%m-%d %H:%M:%S')] ${PORT_SYNC_CLIENT} now reachable, port updated"
+                show_success "[$(date '+%Y-%m-%d %H:%M:%S')] ${PS_CLIENT} now reachable, port updated"
             elif [ "$is_port_change" = "true" ] || [ -z "$LAST_CLIENT_SUCCESS" ]; then
-                show_success "[$(date '+%Y-%m-%d %H:%M:%S')] ${PORT_SYNC_CLIENT} port updated"
+                show_success "[$(date '+%Y-%m-%d %H:%M:%S')] ${PS_CLIENT} port updated"
             fi
             LAST_CLIENT_SUCCESS="true"
         else
             # Failed
             if [ "$LAST_CLIENT_SUCCESS" != "false" ]; then
-                show_warning "[$(date '+%Y-%m-%d %H:%M:%S')] ${PORT_SYNC_CLIENT} not reachable, will retry"
+                show_warning "[$(date '+%Y-%m-%d %H:%M:%S')] ${PS_CLIENT} not reachable, will retry"
             fi
             LAST_CLIENT_SUCCESS="false"
         fi
@@ -280,14 +280,6 @@ main() {
     show_debug "port_monitor: Starting"
     
     wait_for_port_file
-
-    # Check if this is a restart (reconnecting marker exists)
-    if [ ! -f /tmp/reconnecting ]; then
-        show_info
-        show_step "Port monitor starting (sync: $SYNC_DISPLAY_NAME)"
-    else
-        show_debug "Reconnecting mode detected, suppressing startup message"
-    fi
 
     monitor_port_changes
 }

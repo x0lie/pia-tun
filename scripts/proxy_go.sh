@@ -27,7 +27,6 @@ readonly LOG_FILE="/tmp/proxy.log"
 
 # Start proxy server (single Go binary handles both SOCKS5 and HTTP)
 start_proxies() {
-    show_info
     show_step "Starting proxy servers..."
 
     # Kill any existing proxy process

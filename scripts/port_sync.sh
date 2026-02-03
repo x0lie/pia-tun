@@ -6,66 +6,66 @@
 source /app/scripts/ui.sh
 
 # Configuration
-readonly PORT_SYNC_ENABLED=${PORT_SYNC_ENABLED:-false}
-readonly PORT_SYNC_CLIENT=${PORT_SYNC_CLIENT:-""}
+readonly PS_ENABLED=${PS_ENABLED:-false}
+readonly PS_CLIENT=${PS_CLIENT:-""}
 
-# Set default PORT_SYNC_URL based on client type if not provided
-PORT_SYNC_URL_IS_DEFAULT=false
-if [ -z "${PORT_SYNC_URL:-}" ] && [ -n "$PORT_SYNC_CLIENT" ]; then
-    case "$PORT_SYNC_CLIENT" in
+# Set default PS_URL based on client type if not provided
+PS_URL_IS_DEFAULT=false
+if [ -z "${PS_URL:-}" ] && [ -n "$PS_CLIENT" ]; then
+    case "$PS_CLIENT" in
         qbittorrent|qbit|qb)
-            PORT_SYNC_URL="http://localhost:8080"
-            PORT_SYNC_URL_IS_DEFAULT=true
+            PS_URL="http://localhost:8080"
+            PS_URL_IS_DEFAULT=true
             ;;
         transmission|trans)
-            PORT_SYNC_URL="http://localhost:9091"
-            PORT_SYNC_URL_IS_DEFAULT=true
+            PS_URL="http://localhost:9091"
+            PS_URL_IS_DEFAULT=true
             ;;
         deluge)
-            PORT_SYNC_URL="http://localhost:8112"
-            PORT_SYNC_URL_IS_DEFAULT=true
+            PS_URL="http://localhost:8112"
+            PS_URL_IS_DEFAULT=true
             ;;
         rtorrent|rutorrent)
-            PORT_SYNC_URL="http://localhost:8080"
-            PORT_SYNC_URL_IS_DEFAULT=true
+            PS_URL="http://localhost:8080"
+            PS_URL_IS_DEFAULT=true
             ;;
     esac
 fi
-readonly PORT_SYNC_URL=${PORT_SYNC_URL:-""}
+readonly PS_URL=${PS_URL:-""}
 
 # Check for Docker secrets first, then fall back to environment variables
-if [ -f "/run/secrets/port_sync_user" ]; then
-    show_debug "Found Docker secret: /run/secrets/port_sync_user"
-    readonly PORT_SYNC_USER=$(cat /run/secrets/port_sync_user)
-elif [ -n "${PORT_SYNC_USER:-}" ]; then
-    show_debug "Using PORT_SYNC_USER environment variable"
-    readonly PORT_SYNC_USER="${PORT_SYNC_USER}"
+if [ -f "/run/secrets/ps_user" ]; then
+    show_debug "Found Docker secret: /run/secrets/ps_user"
+    readonly PS_USER=$(cat /run/secrets/ps_user)
+elif [ -n "${PS_USER:-}" ]; then
+    show_debug "Using PS_USER environment variable"
+    readonly PS_USER="${PS_USER}"
 else
-    readonly PORT_SYNC_USER=""
+    readonly PS_USER=""
 fi
 
-if [ -f "/run/secrets/port_sync_pass" ]; then
-    show_debug "Found Docker secret: /run/secrets/port_sync_pass"
-    readonly PORT_SYNC_PASS=$(cat /run/secrets/port_sync_pass)
-elif [ -n "${PORT_SYNC_PASS:-}" ]; then
-    show_debug "Using PORT_SYNC_PASS environment variable"
-    readonly PORT_SYNC_PASS="${PORT_SYNC_PASS}"
+if [ -f "/run/secrets/ps_pass" ]; then
+    show_debug "Found Docker secret: /run/secrets/ps_pass"
+    readonly PS_PASS=$(cat /run/secrets/ps_pass)
+elif [ -n "${PS_PASS:-}" ]; then
+    show_debug "Using PS_PASS environment variable"
+    readonly PS_PASS="${PS_PASS}"
 else
-    readonly PORT_SYNC_PASS=""
+    readonly PS_PASS=""
 fi
 readonly CURL_TIMEOUT="--connect-timeout 5 --max-time 10"
 
 show_debug "Port API updater configuration:"
-show_debug "  PORT_SYNC_ENABLED=$PORT_SYNC_ENABLED"
-show_debug "  PORT_SYNC_CLIENT=$PORT_SYNC_CLIENT"
-if [ "$PORT_SYNC_URL_IS_DEFAULT" = true ]; then
-    show_debug "  PORT_SYNC_URL=$PORT_SYNC_URL (default for $PORT_SYNC_CLIENT)"
+show_debug "  PS_ENABLED=$PS_ENABLED"
+show_debug "  PS_CLIENT=$PS_CLIENT"
+if [ "$PS_URL_IS_DEFAULT" = true ]; then
+    show_debug "  PS_URL=$PS_URL (default for $PS_CLIENT)"
 else
-    show_debug "  PORT_SYNC_URL=$PORT_SYNC_URL"
+    show_debug "  PS_URL=$PS_URL"
 fi
-show_debug "  PORT_SYNC_USER=${PORT_SYNC_USER:+set}"
-show_debug "  PORT_SYNC_PASS=${PORT_SYNC_PASS:+set}"
-show_debug "  PORT_SYNC_CMD=${PORT_SYNC_CMD:+set}"
+show_debug "  PS_USER=${PS_USER:+set}"
+show_debug "  PS_PASS=${PS_PASS:+set}"
+show_debug "  PS_CMD=${PS_CMD:+set}"
 
 # Helper function to escape strings for JSON
 # Escapes: backslash, double quote, and control characters
@@ -303,13 +303,13 @@ update_rtorrent() {
 _execute_custom_command() {
     local port=$1
 
-    if [ -z "$PORT_SYNC_CMD" ]; then
-        show_debug "_execute_custom_command: PORT_SYNC_CMD not set"
+    if [ -z "$PS_CMD" ]; then
+        show_debug "_execute_custom_command: PS_CMD not set"
         return 1
     fi
 
     # Replace {PORT} placeholder in custom command
-    local cmd="${PORT_SYNC_CMD//\{PORT\}/$port}"
+    local cmd="${PS_CMD//\{PORT\}/$port}"
     show_debug "Executing custom command (10s timeout): $cmd"
 
     # Use timeout with bash -c for safer execution and prevent hanging
@@ -332,29 +332,29 @@ _update_port_client_attempt() {
     local port=$1
     local result=1
 
-    case "$PORT_SYNC_CLIENT" in
+    case "$PS_CLIENT" in
         qbittorrent|qbit|qb)
             show_debug "Using qBittorrent updater"
-            update_qbittorrent "$port" "$PORT_SYNC_URL" "$PORT_SYNC_USER" "$PORT_SYNC_PASS"
+            update_qbittorrent "$port" "$PS_URL" "$PS_USER" "$PS_PASS"
             result=$?
             ;;
         transmission|trans)
             show_debug "Using Transmission updater"
-            update_transmission "$port" "$PORT_SYNC_URL" "$PORT_SYNC_USER" "$PORT_SYNC_PASS"
+            update_transmission "$port" "$PS_URL" "$PS_USER" "$PS_PASS"
             result=$?
             ;;
         deluge)
             show_debug "Using Deluge updater"
-            update_deluge "$port" "$PORT_SYNC_URL" "$PORT_SYNC_PASS"
+            update_deluge "$port" "$PS_URL" "$PS_PASS"
             result=$?
             ;;
         rtorrent|rutorrent)
             show_debug "Using rTorrent updater"
-            update_rtorrent "$port" "$PORT_SYNC_URL" "$PORT_SYNC_USER" "$PORT_SYNC_PASS"
+            update_rtorrent "$port" "$PS_URL" "$PS_USER" "$PS_PASS"
             result=$?
             ;;
         *)
-            show_debug "Unknown PORT_SYNC_CLIENT: $PORT_SYNC_CLIENT"
+            show_debug "Unknown PS_CLIENT: $PS_CLIENT"
             return 1
             ;;
     esac
@@ -364,8 +364,8 @@ _update_port_client_attempt() {
 
 # Main update function with short retry for transient failures
 # Supports three modes:
-#   1. PORT_SYNC_CLIENT only - updates torrent client via API
-#   2. PORT_SYNC_CMD only - executes custom command
+#   1. PS_CLIENT only - updates torrent client via API
+#   2. PS_CMD only - executes custom command
 #   3. Both - runs both sequentially, succeeds if either succeeds
 # Returns 0 on success, 1 on failure (caller should handle long-term retry)
 update_port_api() {
@@ -374,8 +374,8 @@ update_port_api() {
     show_debug "update_port_api called with port=$port"
 
     # Quick validation
-    if [ "$PORT_SYNC_ENABLED" != "true" ]; then
-        show_debug "PORT_SYNC_ENABLED is not true, skipping update"
+    if [ "$PS_ENABLED" != "true" ]; then
+        show_debug "PS_ENABLED is not true, skipping update"
         return 0
     fi
 
@@ -383,19 +383,19 @@ update_port_api() {
     local has_client=false
     local has_cmd=false
 
-    if [ -n "$PORT_SYNC_CLIENT" ] && [ -n "$PORT_SYNC_URL" ]; then
+    if [ -n "$PS_CLIENT" ] && [ -n "$PS_URL" ]; then
         has_client=true
-        show_debug "PORT_SYNC_CLIENT configured: $PORT_SYNC_CLIENT"
+        show_debug "PS_CLIENT configured: $PS_CLIENT"
     fi
 
-    if [ -n "$PORT_SYNC_CMD" ]; then
+    if [ -n "$PS_CMD" ]; then
         has_cmd=true
-        show_debug "PORT_SYNC_CMD configured"
+        show_debug "PS_CMD configured"
     fi
 
     # Require at least one method
     if [ "$has_client" = false ] && [ "$has_cmd" = false ]; then
-        show_debug "Neither PORT_SYNC_CLIENT+PORT_SYNC_URL nor PORT_SYNC_CMD is set, cannot update"
+        show_debug "Neither PS_CLIENT+PS_URL nor PS_CMD is set, cannot update"
         return 1
     fi
 
@@ -404,11 +404,11 @@ update_port_api() {
     local cmd_success=false
 
     # Clean up any old success markers
-    rm -f /tmp/port_sync_client_success /tmp/port_sync_cmd_success
+    rm -f /tmp/ps_client_success /tmp/ps_cmd_success
 
     # Try to update client if configured
     if [ "$has_client" = true ]; then
-        show_debug "Attempting client update ($PORT_SYNC_CLIENT)"
+        show_debug "Attempting client update ($PS_CLIENT)"
         local max_attempts=3
         for attempt in $(seq 1 $max_attempts); do
             show_debug "Client update attempt #$attempt (port=$port)"
@@ -416,7 +416,7 @@ update_port_api() {
             if _update_port_client_attempt "$port"; then
                 show_debug "Client update successful on attempt #$attempt"
                 client_success=true
-                touch /tmp/port_sync_client_success
+                touch /tmp/ps_client_success
                 break
             fi
 
@@ -440,7 +440,7 @@ update_port_api() {
             if _execute_custom_command "$port"; then
                 show_debug "Custom command successful on attempt #$attempt"
                 cmd_success=true
-                touch /tmp/port_sync_cmd_success
+                touch /tmp/ps_cmd_success
                 break
             fi
 

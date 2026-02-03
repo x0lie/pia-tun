@@ -2,6 +2,41 @@
 
 Common issues and solutions for pia-tun, particularly on older or minimal host systems.
 
+## Finding Available PIA Locations
+
+Query the PIA server list directly:
+```bash
+curl -s 'https://serverlist.piaservers.net/vpninfo/servers/v6' | head -n -1 | jq -r '.regions[].id' | sort
+```
+
+## Verify VPN is Working
+
+Check your IP is different from your real IP:
+```bash
+docker exec pia-tun curl -s ifconfig.me
+```
+
+View container logs:
+```bash
+docker logs pia-tun
+```
+
+## Common Issues
+
+**Container exits immediately:**
+- Check that `NET_ADMIN` capability is granted
+- Verify PIA credentials are correct
+- Check logs for authentication errors
+
+**API port updater not reaching client:**
+- Verify `PS_URL` is accessible from pia-tun container
+- Check `PS_USER` and `PS_PASS` are correct
+- Review logs for API communication errors
+
+**Cannot access metrics/proxy from LAN:**
+- Ensure the port is explicitly added to `LOCAL_PORTS` (e.g., `LOCAL_PORTS=9090` for metrics, `LOCAL_PORTS=1080,8888` for proxies)
+- Services are localhost-only by default for security
+
 ## Kernel Module Issues
 
 ### Symptoms

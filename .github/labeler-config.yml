@@ -15,6 +15,10 @@ enhancement:
       - 'src/**'
       - 'scripts/**'
 
+# Breaking changes
+breaking-change:
+  head-branch: ['^breaking/', '^major/']
+
 # Bug Fixes
 fix:
   - head-branch: ['^fix/', '^hotfix/']

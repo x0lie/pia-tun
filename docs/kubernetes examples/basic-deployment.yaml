@@ -32,5 +32,5 @@ spec:
               key: password
         - name: PIA_LOCATION
           value: "ca_ontario"
-        - name: PORT_FORWARDING
+        - name: PF_ENABLED
           value: "true"

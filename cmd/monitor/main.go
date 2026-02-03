@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -26,6 +25,10 @@ type Monitor struct {
 	reconnectAttempts int
 	metrics           *Metrics
 	mu                sync.Mutex
+
+	// Health status for /health endpoint
+	healthy         bool
+	lastHealthCheck time.Time
 }
 
 const (
@@ -91,6 +94,27 @@ func (m *Monitor) showError(msg string) {
 	fmt.Printf("  %s✗%s %s\n", colorRed, colorReset, msg)
 }
 
+func (m *Monitor) setHealthStatus(healthy bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.healthy = healthy
+	m.lastHealthCheck = time.Now()
+}
+
+func (m *Monitor) isHealthy() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Consider unhealthy if we haven't had a check in 2x the check interval
+	// This handles cases where the monitor loop is stuck or not running
+	staleThreshold := m.config.CheckInterval * 2
+	if time.Since(m.lastHealthCheck) > staleThreshold && m.lastHealthCheck.Unix() > 0 {
+		return false
+	}
+
+	return m.healthy
+}
+
 func (m *Monitor) monitorLoop(ctx context.Context) {
 	ticker := time.NewTicker(m.config.CheckInterval)
 	defer ticker.Stop()
@@ -128,6 +152,12 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 				continue
 			}
 
+			// Skip checks during active reconnection to avoid races
+			if _, err := os.Stat("/tmp/monitor_wait"); err == nil {
+				m.debugLog("Skipping health check during startup")
+				continue
+			}
+
 			// Start server latency ping in parallel (only during normal checks, not rapid)
 			var serverLatencyChan chan float64
 			if m.metrics != nil {
@@ -147,6 +177,7 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 			// Normal health check
 			result, err := m.checkVPNHealth(normalTimeout)
 
+			m.setHealthStatus(err == nil)
 			m.updateMetrics(result, err == nil)
 
 			if m.metrics != nil {
@@ -194,6 +225,7 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 
 					rapidResult, rapidErr := m.checkVPNHealth(rapidTimeout)
 
+					m.setHealthStatus(rapidErr == nil)
 					m.updateMetrics(rapidResult, rapidErr == nil)
 
 					if rapidErr == nil {
@@ -319,13 +351,11 @@ func main() {
 		cancel()
 	}()
 
-	_, err := net.LookupHost("google.com")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: DNS resolution may not be working: %v\n", err)
-	}
+	// Always start HTTP server for /health endpoint
+	// /metrics is only served when METRICS=true
+	go startHTTPServer(monitor)
 
 	if config.MetricsEnabled {
-		go startMetricsServer(monitor)
 		// Start connection pipe listener for reliable VPN info updates
 		metrics.StartConnectionPipeListener(monitor.debugLog)
 	}

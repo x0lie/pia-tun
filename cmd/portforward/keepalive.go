@@ -59,12 +59,9 @@ func (m *KeepaliveManager) initialSetup() error {
 	// Try to get signature with retries (5 minutes for initial setup)
 	resp, err := m.client.GetSignatureWithRetry(ctx, 5*time.Minute)
 	if err != nil {
-		showError("Port forwarding failed after 5 minutes")
-		debugLog(m.config, "Exhausted all initial signature attempts, giving up")
-		showVPNConnectedWarning()
-
-		// Block forever (matching bash behavior)
-		select {}
+		showError(fmt.Sprintf("Port forwarding failed: %v", err))
+		debugLog(m.config, "Initial signature acquisition failed, triggering reconnect")
+		m.triggerReconnect()
 	}
 
 	// Parse the response
@@ -73,8 +70,7 @@ func (m *KeepaliveManager) initialSetup() error {
 	if err != nil {
 		showError(fmt.Sprintf("Failed to parse signature: %v", err))
 		debugLog(m.config, "Payload parsing failed: %v", err)
-		showVPNConnectedWarning()
-		select {}
+		m.triggerReconnect()
 	}
 
 	debugLog(m.config, "Initial parsed values:")
@@ -86,8 +82,7 @@ func (m *KeepaliveManager) initialSetup() error {
 	if port == 0 {
 		showError("Failed to extract port from response")
 		debugLog(m.config, "PORT is zero after parsing")
-		showVPNConnectedWarning()
-		select {}
+		m.triggerReconnect()
 	}
 
 	// Store state
@@ -111,7 +106,7 @@ func (m *KeepaliveManager) initialSetup() error {
 	// Write port to file
 	debugLog(m.config, "Writing port %d to %s", port, m.config.PortFile)
 	if err := os.WriteFile(m.config.PortFile, []byte(fmt.Sprintf("%d", port)), 0644); err != nil {
-		debugLog(m.config, "ERROR: Failed to write port file: %v", err)
+		showError(fmt.Sprintf("ERROR: Failed to write port file: %v", err))
 	}
 
 	// Notify port monitor via named pipe
@@ -123,22 +118,13 @@ func (m *KeepaliveManager) initialSetup() error {
 	nc := colorReset
 	showSuccess(fmt.Sprintf("Port: %s%s%d%s", grn, bold, port, nc))
 
-	// Show update tactics
-	portAPIEnabled := os.Getenv("PORT_SYNC_ENABLED") == "true"
-	if portAPIEnabled {
-		portAPIType := os.Getenv("PORT_SYNC_CLIENT")
-		showSuccess(fmt.Sprintf("Updated via: File + API (%s)", portAPIType))
-	} else {
-		showSuccess("Updated via: File")
-	}
-
 	// Display expiration info
 	secondsUntilExpiry := int(time.Until(expiresAt).Seconds())
 	daysUntilExpiry := secondsUntilExpiry / 86400
 	expiryDate := expiresAt.Format("2006-01-02 15:04:05")
 
 	debugLog(m.config, "Expiration info: %d seconds (%d days)", secondsUntilExpiry, daysUntilExpiry)
-	showSuccess(fmt.Sprintf("Port expires: %s (%d days)", expiryDate, daysUntilExpiry))
+	showSuccess(fmt.Sprintf("Expires: %s (%d days)", expiryDate, daysUntilExpiry))
 	showSuccess(fmt.Sprintf("Keep-alive: Bind refresh every %d minutes", int(m.config.BindInterval.Minutes())))
 
 	if m.config.SignatureRefreshDays > 0 {
@@ -146,8 +132,6 @@ func (m *KeepaliveManager) initialSetup() error {
 	} else {
 		debugLog(m.config, "Signature refresh disabled (SIGNATURE_REFRESH_DAYS=0, testing mode)")
 	}
-
-	showVPNConnected()
 
 	debugLog(m.config, "Main loop initialized:")
 	debugLog(m.config, "  BIND_COUNT=0")
@@ -404,7 +388,11 @@ func (m *KeepaliveManager) handleRefreshFailure(err error) {
 	showError("Reconnecting...")
 	debugLog(m.config, "Signature refresh failed, triggering VPN reconnection")
 
-	// Immediate reconnect on any signature refresh failure
+	m.triggerReconnect()
+}
+
+// triggerReconnect signals the monitor to reconnect and exits
+func (m *KeepaliveManager) triggerReconnect() {
 	os.WriteFile("/tmp/pf_signature_failed", []byte(""), 0644)
 	os.Exit(1)
 }

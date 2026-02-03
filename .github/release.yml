@@ -24,3 +24,7 @@ changelog:  # Applys based on merged PR's labels
     - title: "🔧 Other Changes"
       labels:
         - "*"
+    - title: "🛠 Breaking Changes"
+      labels:
+        - breaking-change
+        - breaking

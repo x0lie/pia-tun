@@ -180,10 +180,8 @@ start_container() {
         -e PIA_USER="$PIA_USER" \
         -e PIA_PASS="$PIA_PASS" \
         -e PIA_LOCATION="${PIA_LOCATION:-ca_ontario,ca_toronto}" \
-        -e PORT_FORWARDING="${PORT_FORWARDING:-true}" \
+        -e PF_ENABLED="${PF_ENABLED:-true}" \
         -e PROXY_ENABLED="${PROXY_ENABLED:-true}" \
-        -e SOCKS5_PORT="${SOCKS5_PORT:-1080}" \
-        -e HTTP_PROXY_PORT="${HTTP_PROXY_PORT:-8888}" \
         -e PROXY_USER="${PROXY_USER:-}" \
         -e PROXY_PASS="${PROXY_PASS:-}" \
         -e LOG_LEVEL=info \
@@ -234,7 +232,7 @@ wait_for_connection() {
 # Wait for Port file
 wait_for_port() {
     # Skip entirely if port-forwarding feature is disabled
-    [ "${PORT_FORWARDING:-true}" = "true" ] || {
+    [ "${PF_ENABLED:-true}" = "true" ] || {
         skip "Port forwarding not enabled"
         return 0
     }
@@ -803,7 +801,7 @@ test_port_forwarding() {
     echo ""
     echo -e "${BLUE}=== Test: Port Forwarding ===${NC}"
 
-    if [ "${PORT_FORWARDING:-true}" != "true" ]; then
+    if [ "${PF_ENABLED:-true}" != "true" ]; then
         skip "Port forwarding not enabled"
         return 0
     fi
@@ -844,7 +842,7 @@ test_metrics() {
     echo -e "${BLUE}=== Test: Metrics Endpoint ===${NC}"
 
     # Test 1: Check endpoint responds
-    if ! docker exec "$CONTAINER_NAME" curl -s http://localhost:9090/metrics 2>/dev/null | grep -q "vpn_"; then
+    if ! docker exec "$CONTAINER_NAME" curl -s http://localhost:9090/metrics 2>/dev/null | grep -q "pia_tun_"; then
         fail "Metrics endpoint not responding"
         return 1
     fi

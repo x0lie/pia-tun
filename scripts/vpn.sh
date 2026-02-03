@@ -7,44 +7,40 @@ source /app/scripts/ui.sh
 source /app/scripts/killswitch.sh
 
 #═══════════════════════════════════════════════════════════════════════════════
-# DNS RESOLUTION (Using bypass Cloudflare DNS)
+# DNS RESOLUTION (Using Quad9)
 #═══════════════════════════════════════════════════════════════════════════════
 
-# Resolve hostname using Cloudflare DNS (1.0.0.1, already in bypass routes)
+# Resolve hostname using Cloudflare DNS (9.9.9.9, already in bypass routes)
 resolve_hostname() {
     local hostname="$1"
     show_debug "Resolving hostname: $hostname"
+
+    # Try 9.9.9.9 (Quad9)
+    add_temporary_exemption "9.9.9.9" "853" "tcp" "dns_resolve"
     
-    # Try 1.0.0.1 (Cloudflare)
-    add_temporary_exemption "1.0.0.1" "443" "tcp" "dns_resolve"
-    
-    show_debug "Querying 1.0.0.1 for $hostname"
-    local ip=$(curl -fsS --max-time 10 \
-        "https://1.0.0.1/dns-query?name=$hostname&type=A" \
-        -H 'accept: application/dns-json' | \
-        jq -r '.Answer // empty | .[] | select(.type == 1) | .data' | head -n1)
+    show_debug "Querying 9.9.9.9:853 for $hostname"
+    local ip=$(kdig +short +tls-ca +tls-host=dns.quad9.net @9.9.9.9 +time=2 "$hostname" A 2>/dev/null | head -n1)
     remove_temporary_exemption "dns_resolve"
     
     if [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-        show_debug "Resolved $hostname to $ip via 1.0.0.1"
+        show_success "Resolved $hostname"
+        show_debug "Resolved $hostname to $ip via 9.9.9.9"
         echo "$ip"
         return 0
     fi
-    
-    show_debug "1.0.0.1 failed, trying fallback 1.1.1.1"
 
-    # Fallback to 1.1.1.1
-    add_temporary_exemption "1.1.1.1" "443" "tcp" "dns_resolve"
+    show_debug "9.9.9.9 failed, trying fallback 9.9.9.11"
+
+    # Fallback to 9.9.9.11
+    add_temporary_exemption "9.9.9.11" "853" "tcp" "dns_resolve"
     
-    show_debug "Querying 1.1.1.1 for $hostname"
-    local ip=$(curl -fsS --max-time 10 \
-        "https://1.1.1.1/dns-query?name=$hostname&type=A" \
-        -H 'accept: application/dns-json' | \
-        jq -r '.Answer // empty | .[] | select(.type == 1) | .data' | head -n1)
+    show_debug "Querying 9.9.9.11:853 for $hostname"
+    local ip=$(kdig +short +tls-ca +tls-host=dns11.quad9.net @9.9.9.11 +time=2 "$hostname" A 2>/dev/null | head -n1)
     remove_temporary_exemption "dns_resolve"
-    
+
     if [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-        show_debug "Resolved $hostname to $ip via 1.1.1.1"
+        show_success "Resolved $hostname"
+        show_debug "Resolved $hostname to $ip via 9.9.9.11"
         echo "$ip"
         return 0
     else
@@ -57,12 +53,122 @@ resolve_hostname() {
 # AUTHENTICATION & SERVER SELECTION
 #═══════════════════════════════════════════════════════════════════════════════
 
+# Cache file paths
+CACHE_TOKEN_FILE="/tmp/pia_login_token"
+CACHE_TOKEN_TS="/tmp/pia_login_token_ts"
+CACHE_PIA_IPS="/tmp/pia_login_ips"
+CACHE_SERVERLIST_IPS="/tmp/pia_serverlist_ips"
+CACHE_METACN="/tmp/pia_serverlist"
+
+# Maximum token age in seconds (24 hours)
+MAX_TOKEN_AGE=86400
+
+# Helper: Invalidate token cache (forces fresh fetch on next authenticate)
+invalidate_token_cache() {
+    show_debug "Invalidating token cache"
+    rm -f "$CACHE_TOKEN_FILE" "$CACHE_TOKEN_TS"
+}
+
+# Helper: Check if cached token is fresh
+is_token_fresh() {
+    if [ -f "$CACHE_TOKEN_FILE" ] && [ -f "$CACHE_TOKEN_TS" ]; then
+        local token_ts=$(cat "$CACHE_TOKEN_TS" 2>/dev/null || echo "0")
+        local current_ts=$(date +%s)
+        local token_age=$((current_ts - token_ts))
+
+        if [ $token_age -lt $MAX_TOKEN_AGE ]; then
+            local cached_token=$(cat "$CACHE_TOKEN_FILE" 2>/dev/null)
+            if [ -n "$cached_token" ]; then
+                show_debug "Cached token is fresh (age: ${token_age}s)"
+                return 0
+            fi
+        fi
+        show_debug "Cached token is stale (age: ${token_age}s, max: ${MAX_TOKEN_AGE}s)"
+    fi
+    return 1
+}
+
+# Helper: Try to authenticate with a specific IP
+# Returns 0 and prints token on success, returns 1 on failure
+try_auth_with_ip() {
+    local auth_ip="$1"
+    local pia_user="$2"
+    local pia_pass="$3"
+
+    show_debug "Trying authentication with IP: $auth_ip"
+
+    # Add surgical exemption for authentication
+    add_temporary_exemption "$auth_ip" "443" "tcp" "pia_auth"
+
+    # Perform authentication
+    local response=$(curl -s --insecure -w "\n%{http_code}" --connect-timeout 10 \
+        -u "$pia_user:$pia_pass" \
+        --connect-to "www.privateinternetaccess.com::$auth_ip:" \
+        "https://www.privateinternetaccess.com/gtoken/generateToken" 2>/dev/null)
+
+    # Remove exemption immediately
+    remove_temporary_exemption "pia_auth"
+
+    # Split response into body and HTTP code
+    local http_code=$(echo "$response" | tail -1)
+    local body=$(echo "$response" | sed '$d')
+
+    show_debug "Auth response from $auth_ip: HTTP $http_code"
+
+    # Check for network errors
+    if [ "$http_code" = "000" ]; then
+        show_debug "Network error with $auth_ip"
+        return 1
+    fi
+
+    # Check for auth errors (don't retry these - credentials are wrong)
+    if [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
+        show_error "Authentication failed: Invalid username or password"
+        # Return special code to indicate auth failure (don't try more IPs)
+        return 2
+    fi
+
+    if [ "$http_code" != "200" ]; then
+        show_debug "HTTP error $http_code from $auth_ip"
+        return 1
+    fi
+
+    # Check if we got valid JSON
+    if ! echo "$body" | jq -e . >/dev/null 2>&1; then
+        show_debug "Invalid JSON from $auth_ip"
+        return 1
+    fi
+
+    # Extract token
+    local token=$(echo "$body" | jq -r '.token // empty')
+
+    if [ -z "$token" ]; then
+        local error_msg=$(echo "$body" | jq -r '.message // .error // empty')
+        show_debug "No token from $auth_ip: $error_msg"
+
+        # Check for credential errors
+        if [ "$error_msg" = "authentication failed" ]; then
+            show_error "Authentication failed: Invalid username or password"
+            return 2
+        fi
+        return 1
+    fi
+
+    # Success - save and return token
+    show_debug "Token received from $auth_ip (length: ${#token})"
+    echo "$token" > "$CACHE_TOKEN_FILE"
+    chmod 600 "$CACHE_TOKEN_FILE"
+    echo "$(date +%s)" > "$CACHE_TOKEN_TS"
+    echo "$token"
+    return 0
+}
+
 authenticate() {
     local pia_user=""
     local pia_pass=""
-    
+
     show_debug "Checking for PIA credentials..."
-    
+
     # Check for Docker secrets first
     if [ -f "/run/secrets/pia_user" ]; then
         show_debug "Found Docker secret: /run/secrets/pia_user"
@@ -71,7 +177,7 @@ authenticate() {
         show_debug "Using PIA_USER environment variable"
         pia_user="${PIA_USER}"
     fi
-    
+
     if [ -f "/run/secrets/pia_pass" ]; then
         show_debug "Found Docker secret: /run/secrets/pia_pass"
         pia_pass=$(cat /run/secrets/pia_pass)
@@ -79,166 +185,165 @@ authenticate() {
         show_debug "Using PIA_PASS environment variable"
         pia_pass="${PIA_PASS}"
     fi
-    
+
     # Validate we have credentials from either source
     if [ -z "$pia_user" ] || [ -z "$pia_pass" ]; then
         show_error "PIA credentials not found (set PIA_USER/PIA_PASS or use Docker secrets)"
         show_debug "Credential check failed: user=${pia_user:+set} pass=${pia_pass:+set}"
         return 1
     fi
-    
+
     show_debug "Credentials validated: username length=${#pia_user}"
-    
-    # Resolve PIA auth server IP
-    show_debug "Resolving www.privateinternetaccess.com"
+
+    # Step 1: Check if we have a fresh cached token
+    if is_token_fresh; then
+        local cached_token=$(cat "$CACHE_TOKEN_FILE")
+        show_success "Using cached login token"
+        echo "$cached_token"
+        return 0
+    fi
+
+    # Step 2: Try cached PIA IPs
+    if [ -f "$CACHE_PIA_IPS" ]; then
+        show_debug "Trying cached PIA IPs..."
+        while IFS= read -r cached_ip; do
+            [ -z "$cached_ip" ] && continue
+
+            local token
+            token=$(try_auth_with_ip "$cached_ip" "$pia_user" "$pia_pass")
+            local result=$?
+
+            if [ $result -eq 0 ]; then
+                show_success "Authentication succeeded with cached IP: $cached_ip"
+                show_success "Retrieved login token"
+                echo "$token"
+                return 0
+            elif [ $result -eq 2 ]; then
+                # Credential error - don't try more IPs
+                return 1
+            fi
+            # Otherwise try next IP
+        done < "$CACHE_PIA_IPS"
+        show_debug "All cached PIA IPs exhausted"
+    fi
+
+    # Step 3: Fall back to DNS resolution
+    show_debug "Escalating to DNS resolution for www.privateinternetaccess.com"
     local auth_ip=$(resolve_hostname "www.privateinternetaccess.com")
     if [ -z "$auth_ip" ]; then
         show_error "Cannot resolve privateinternetaccess.com"
         return 1
     fi
-    
-    show_debug "PIA auth server resolved to: $auth_ip"
-    
-    # Add surgical exemption for authentication
-    add_temporary_exemption "$auth_ip" "443" "tcp" "pia_auth"
-    
-    # Perform authentication
-    show_debug "Sending authentication request to https://www.privateinternetaccess.com/gtoken/generateToken"
-    local response=$(curl -s --insecure -w "\n%{http_code}" -u "$pia_user:$pia_pass" \
-        --connect-to "www.privateinternetaccess.com::$auth_ip:" \
-        "https://www.privateinternetaccess.com/gtoken/generateToken" 2>/dev/null)
-    
-    # Remove exemption immediately
-    remove_temporary_exemption "pia_auth"
-    
-    # Split response into body and HTTP code
-    local http_code=$(echo "$response" | tail -1)
-    local body=$(echo "$response" | sed '$d')
-    
-    show_debug "Authentication response: HTTP $http_code"
-    [ $_LOG_LEVEL -ge 2 ] && [ -n "$body" ] && show_debug "Response body: ${body:0:200}..."
-    
-    # Check HTTP status
-    if [ "$http_code" = "000" ]; then
-        show_error "Authentication failed: Cannot reach PIA servers"
-        show_debug "Connection failed (HTTP 000 - network error)"
-        return 1
-    elif [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
-        show_error "Authentication failed: Invalid username or password"
-        show_debug "Authentication rejected (HTTP $http_code)"
-        return 1
-    elif [ "$http_code" != "200" ]; then
-        show_error "Authentication failed: PIA server error (HTTP $http_code)"
-        show_debug "Unexpected HTTP status code"
-        return 1
+
+    local token
+    token=$(try_auth_with_ip "$auth_ip" "$pia_user" "$pia_pass")
+    local result=$?
+
+    if [ $result -eq 0 ]; then
+        show_success "Retrieved login token"
+        echo "$token"
+        return 0
     fi
-    
-    # Check if we got valid JSON
-    if ! echo "$body" | jq -e . >/dev/null 2>&1; then
-        show_error "Authentication failed: Invalid response from PIA"
-        show_debug "Response is not valid JSON"
-        return 1
-    fi
-    
-    # Extract token
-    local token=$(echo "$body" | jq -r '.token // empty')
-    
-    if [ -z "$token" ]; then
-        local error_msg=$(echo "$body" | jq -r '.message // .error // empty')
-        show_debug "No token in response, error message: $error_msg"
-        
-        if [ -n "$error_msg" ]; then
-            case "$error_msg" in
-                "authentication failed")
-                    show_error "Authentication failed: Invalid username or password"
-                    ;;
-                *expired*)
-                    show_error "Authentication failed: Account expired"
-                    ;;
-                *suspend*)
-                    show_error "Authentication failed: Account suspended"
-                    ;;
-                *connection*|*limit*)
-                    show_error "Authentication failed: Too many active connections"
-                    ;;
-                *)
-                    show_error "Authentication failed: $error_msg"
-                    ;;
-            esac
-        else
-            show_error "Authentication failed: Unknown error (no token received)"
-        fi
-        
-        return 1
-    fi
-    
-    show_debug "Token received successfully (length: ${#token})"
-    show_debug "Saving token to /tmp/pia_token"
-    echo "$token" > /tmp/pia_token
-    chmod 600 /tmp/pia_token
-    echo "$token"
+
+    show_error "Authentication failed after all attempts"
+    return 1
 }
 
-find_server() {
-    local max_latency="${MAX_LATENCY:-1}"
-    show_debug "Finding server with max_latency=${max_latency}s"
-    
-    # Resolve server list API
-    show_debug "Resolving serverlist.piaservers.net"
-    local serverlist_ip=$(resolve_hostname "serverlist.piaservers.net")
-    if [ -z "$serverlist_ip" ]; then
-        show_error "Cannot resolve serverlist.piaservers.net"
-        return 1
-    fi
-    
-    show_debug "Server list API resolved to: $serverlist_ip"
-    
+# Helper: Try to fetch server list from a specific IP
+# Returns 0 and sets all_regions variable on success
+try_fetch_serverlist_with_ip() {
+    local serverlist_ip="$1"
+
+    show_debug "Trying to fetch server list from IP: $serverlist_ip"
+
     # Add surgical exemption for server list fetch
     add_temporary_exemption "$serverlist_ip" "443" "tcp" "pia_serverlist"
-    
-    show_debug "Fetching server list from https://serverlist.piaservers.net/vpninfo/servers/v6"
-    local all_regions=$(curl -s --connect-to "serverlist.piaservers.net::$serverlist_ip:" \
-        'https://serverlist.piaservers.net/vpninfo/servers/v6' | head -1)
-    
+
+    local response=$(curl -s --connect-timeout 10 \
+        --connect-to "serverlist.piaservers.net::$serverlist_ip:" \
+        'https://serverlist.piaservers.net/vpninfo/servers/v6' 2>/dev/null | head -1)
+
     # Remove exemption immediately
     remove_temporary_exemption "pia_serverlist"
-    
-    show_debug "Server list response size: ${#all_regions} bytes"
-    [ ${#all_regions} -lt 1000 ] && { 
-        show_error "Could not fetch server list"
-        show_debug "Server list too small (< 1000 bytes), likely failed"
+
+    show_debug "Server list response size: ${#response} bytes"
+
+    if [ ${#response} -lt 1000 ]; then
+        show_debug "Server list too small from $serverlist_ip (< 1000 bytes)"
         return 1
-    }
-    
-    # Parse locations (comma or space separated)
-    local locations="${PIA_LOCATION}"
-    locations=$(echo "$locations" | tr ',' ' ')
-    
-    # Check if multiple locations provided
-    local location_count=$(echo "$locations" | wc -w)
-    show_debug "Processing $location_count location(s): $locations"
-    
-    local all_candidates=$(mktemp)
-    local pf_required=false
-    [ "$PORT_FORWARDING" = "true" ] && pf_required=true
-    show_debug "Port forwarding required: $pf_required"
-    
-    # Collect all WireGuard servers from all specified locations
+    fi
+
+    # Set the global variable
+    all_regions="$response"
+    return 0
+}
+
+# Helper: Get candidates from cached metacn_cache
+# Populates all_candidates file with servers matching locations and PF requirements
+get_candidates_from_cache() {
+    local locations="$1"
+    local pf_required="$2"
+    local all_candidates="$3"
+
+    if [ ! -f "$CACHE_METACN" ]; then
+        show_debug "No cached server list available"
+        return 1
+    fi
+
+    show_debug "Using cached server list from $CACHE_METACN"
+
+    local found_any=false
+
+    for location in $locations; do
+        show_debug "Looking for cached servers in: $location"
+
+        # Filter by region and optionally by port forwarding
+        local filter=".[] | select(.region == \"$location\")"
+        if [ "$pf_required" = "true" ]; then
+            filter="$filter | select(.pf == true)"
+        fi
+
+        local servers=$(jq -r "$filter | \"\(.ip) \(.cn) \(.region) \(.region)\"" "$CACHE_METACN" 2>/dev/null)
+
+        if [ -n "$servers" ]; then
+            echo "$servers" >> "$all_candidates"
+            found_any=true
+            local count=$(echo "$servers" | wc -l)
+            show_debug "Found $count cached server(s) for $location"
+        else
+            show_debug "No cached servers for $location (pf_required=$pf_required)"
+        fi
+    done
+
+    if [ "$found_any" = "true" ]; then
+        return 0
+    fi
+    return 1
+}
+
+# Helper: Parse fresh server list response into candidates
+# Populates all_candidates file
+parse_serverlist_to_candidates() {
+    local all_regions="$1"
+    local locations="$2"
+    local pf_required="$3"
+    local all_candidates="$4"
+
     for location in $locations; do
         show_debug "Processing location: $location"
         local region_data=$(echo "$all_regions" | jq --arg REGION "$location" -r '.regions[] | select(.id==$REGION)')
-        
+
         if [ -z "$region_data" ]; then
             echo "  ${ylw}⚠${nc} Location not found: $location (skipping)" >&2
             show_debug "Location '$location' not found in server list"
             continue
         fi
-        
+
         local region_name=$(echo "$region_data" | jq -r '.name')
         show_debug "Found region: $region_name (id: $location)"
-        
+
         # Check port forwarding if needed
-        if $pf_required; then
+        if [ "$pf_required" = "true" ]; then
             local supports_pf=$(echo "$region_data" | jq -r '.port_forward')
             show_debug "Port forwarding support for $location: $supports_pf"
             if [ "$supports_pf" != "true" ]; then
@@ -246,45 +351,50 @@ find_server() {
                 continue
             fi
         fi
-        
+
         # Extract WireGuard servers with location info
         local server_count=$(echo "$region_data" | jq -r '.servers.wg | length')
         show_debug "Found $server_count WireGuard server(s) in $location"
-        
+
         echo "$region_data" | jq -r --arg LOC "$location" --arg NAME "$region_name" \
             '.servers.wg[] | "\(.ip) \(.cn) \($LOC) \($NAME)"' >> "$all_candidates"
     done
-    
-    # Check if we found any candidates
+}
+
+# Helper: Test latency and select best server from candidates
+# Sets BEST_* variables and returns result
+test_and_select_server() {
+    local all_candidates="$1"
+    local max_latency="$2"
+    local location_count="$3"
+
     local candidate_count=$(wc -l < "$all_candidates" 2>/dev/null || echo "0")
     show_debug "Total candidates collected: $candidate_count"
-    
+
     if [ ! -s "$all_candidates" ]; then
-        rm -f "$all_candidates"
         show_debug "No valid servers found after filtering"
-        echo "error|No valid servers found"
         return 1
     fi
-    
+
     # Test latency for all candidates (with surgical exemptions)
     show_debug "Starting latency tests for $candidate_count servers"
     local latencies=$(mktemp)
     local tested=0
     local successful=0
-    
+
     while read -r ip cn location_id location_name; do
         tested=$((tested + 1))
         show_debug "Testing server $tested/$candidate_count: $cn ($ip) in $location_name"
-        
+
         # Add surgical exemption for this specific server test
         add_temporary_exemption "$ip" "443" "tcp" "latency_test_$tested"
-        
+
         local time_sec=$(curl -k -o /dev/null -s --connect-timeout "$max_latency" \
             --write-out "%{time_connect}" "https://$ip:443" 2>/dev/null || echo "999")
-        
+
         # Remove exemption immediately
         remove_temporary_exemption "latency_test_$tested"
-        
+
         if [[ "$time_sec" != "999" && "$time_sec" != "0.000"* ]]; then
             local time_ms=$(awk "BEGIN {printf \"%.0f\", $time_sec * 1000}")
             show_debug "Server $cn responded: ${time_ms}ms"
@@ -294,15 +404,14 @@ find_server() {
             show_debug "Server $cn timed out or failed"
         fi
     done < "$all_candidates"
-    
+
     show_debug "Latency testing complete: $successful/$tested servers responded"
-    rm -f "$all_candidates"
-    
+
     # Select best server
     if [ -s "$latencies" ]; then
         read -r BEST_TIME BEST_IP BEST_CN BEST_LOCATION_ID BEST_LOCATION_NAME <<< "$(sort -n "$latencies" | head -1)"
         show_debug "Best server selected: $BEST_CN ($BEST_IP) - ${BEST_TIME}ms"
-        
+
         # Debug: Show top 5 servers
         if [ $_LOG_LEVEL -ge 2 ]; then
             show_debug "Top 5 servers by latency:"
@@ -310,15 +419,15 @@ find_server() {
                 show_debug "  ${ms}ms - $cn ($loc_name)"
             done
         fi
-        
+
         # Save stats for later display
         echo "$tested" > /tmp/servers_tested
         echo "$successful" > /tmp/servers_responded
         echo "$location_count" > /tmp/location_count
     else
-        show_debug "All servers timed out, using fallback"
+        show_debug "All servers timed out, using fallback from candidates"
         # Fallback to first server if all timeout
-        read -r ip cn location_id location_name <<< "$(head -1 < "$all_candidates" 2>/dev/null || show_info)"
+        read -r ip cn location_id location_name <<< "$(head -1 "$all_candidates" 2>/dev/null)"
         if [ -z "$ip" ]; then
             rm -f "$latencies"
             show_debug "No fallback server available"
@@ -329,13 +438,15 @@ find_server() {
         BEST_LOCATION_ID="$location_id"
         BEST_LOCATION_NAME="$location_name"
         BEST_TIME="timeout"
-        
+
         show_debug "Fallback server: $BEST_CN ($BEST_IP)"
-        
+
         echo "$tested" > /tmp/servers_tested
         echo "0" > /tmp/servers_responded
         echo "$location_count" > /tmp/location_count
     fi
+
+    rm -f "$latencies"
 
     # Save latency for metrics
     if [[ "$BEST_TIME" != "timeout" && "$BEST_TIME" =~ ^[0-9]+$ ]]; then
@@ -343,31 +454,112 @@ find_server() {
         echo "$BEST_TIME" > /tmp/server_latency_temp
     fi
 
-    rm -f "$latencies"
-
+    # Save server selection to temp files
     show_debug "Saving server selection to temp files"
     echo "$BEST_IP" > /tmp/server_endpoint
-    echo "$BEST_CN" > /tmp/meta_cn
+    echo "$BEST_CN" > /tmp/pia_cn
     echo "$BEST_LOCATION_ID" > /tmp/server_location
     echo "$BEST_LOCATION_NAME" > /tmp/server_location_name
-    
+
+    return 0
+}
+
+find_server() {
+    local max_latency="${MAX_LATENCY:-1}"
+    show_debug "Finding server with max_latency=${max_latency}s"
+
+    # Parse locations (comma or space separated)
+    local locations="${PIA_LOCATION}"
+    locations=$(echo "$locations" | tr ',' ' ')
+    local location_count=$(echo "$locations" | wc -w)
+    show_debug "Processing $location_count location(s): $locations"
+
+    local pf_required="false"
+    [ "$PF_ENABLED" = "true" ] && pf_required="true"
+    show_debug "Port forwarding required: $pf_required"
+
+    local all_regions=""
+    local all_candidates=$(mktemp)
+    local got_fresh_list=false
+
+    # Step 1: Try cached serverlist IPs to get fresh server list
+    if [ -f "$CACHE_SERVERLIST_IPS" ]; then
+        show_debug "Trying cached serverlist IPs..."
+        while IFS= read -r cached_ip; do
+            [ -z "$cached_ip" ] && continue
+
+            if try_fetch_serverlist_with_ip "$cached_ip"; then
+                show_success "Retrieved server list from cached IP: $cached_ip"
+                got_fresh_list=true
+                break
+            fi
+        done < "$CACHE_SERVERLIST_IPS"
+    fi
+
+    # Step 2: If we have a fresh list, parse it
+    if [ "$got_fresh_list" = "true" ]; then
+        parse_serverlist_to_candidates "$all_regions" "$locations" "$pf_required" "$all_candidates"
+    fi
+
+    # Step 3: If no fresh list or no candidates, try cached metacn_cache
+    if [ ! -s "$all_candidates" ]; then
+        show_debug "No candidates from fresh list, trying cached servers..."
+        if get_candidates_from_cache "$locations" "$pf_required" "$all_candidates"; then
+            show_success "Using cached server candidates"
+        fi
+    fi
+
+    # Step 4: If still no candidates, escalate to DNS resolution
+    if [ ! -s "$all_candidates" ]; then
+        show_debug "Escalating to DNS resolution for serverlist.piaservers.net"
+        local serverlist_ip=$(resolve_hostname "serverlist.piaservers.net")
+        if [ -z "$serverlist_ip" ]; then
+            rm -f "$all_candidates"
+            show_error "Cannot resolve serverlist.piaservers.net"
+            echo "error|No valid servers found"
+            return 1
+        fi
+
+        if try_fetch_serverlist_with_ip "$serverlist_ip"; then
+            parse_serverlist_to_candidates "$all_regions" "$locations" "$pf_required" "$all_candidates"
+        else
+            rm -f "$all_candidates"
+            show_error "Could not fetch server list"
+            echo "error|No valid servers found"
+            return 1
+        fi
+    fi
+
+    # Step 5: Test latency and select best server
+    if ! test_and_select_server "$all_candidates" "$max_latency" "$location_count"; then
+        rm -f "$all_candidates"
+        echo "error|No valid servers found"
+        return 1
+    fi
+
+    rm -f "$all_candidates"
+
     # Return simple info for display (just server name and latency)
     echo "$BEST_CN|$BEST_TIME"
 }
 
 generate_config() {
+    if [ -n "${PIA_CN:-}" ] && [ -n "${PIA_IP:-}" ]; then
+        echo $PIA_CN > /tmp/pia_cn
+        echo $PIA_IP > /tmp/server_endpoint
+    fi
     local token="$1"
     local endpoint_ip=$(cat /tmp/server_endpoint)
-    local meta_cn=$(cat /tmp/meta_cn)
+    local pia_cn=$(cat /tmp/pia_cn)
     
-    show_debug "Generating WireGuard config for server: $meta_cn ($endpoint_ip)"
+    show_debug "Generating WireGuard config for server: $pia_cn ($endpoint_ip)"
     
-    # Allow manual META_CN override
-    if [ -n "${META_CN:-}" ]; then
-        show_warning "Using manual META_CN override: $META_CN"
-        show_debug "META_CN override: $META_CN (was: $meta_cn)"
-        meta_cn="$META_CN"
-        echo "$META_CN" > /tmp/meta_cn
+    # Allow manual PIA_CN override
+    if [ -n "${PIA_CN:-}" ]; then
+        show_warning "Using manual PIA_CN override: $PIA_CN"
+        show_debug "PIA_CN override: $PIA_CN"
+        pia_cn="$PIA_CN"
+        echo "$PIA_CN" > /tmp/pia_cn
     fi
 
     local private_key=$(wg genkey)
@@ -377,12 +569,12 @@ generate_config() {
     # Add surgical exemption for addKey registration (port 1337)
     add_temporary_exemption "$endpoint_ip" "1337" "tcp" "pia_addkey"
     
-    show_debug "Registering public key with PIA server: https://$meta_cn:1337/addKey"
+    show_debug "Registering public key with PIA server: https://$pia_cn:1337/addKey"
     local response=$(curl -s -k -G \
-        --connect-to "$meta_cn::$endpoint_ip:" \
+        --connect-to "$pia_cn::$endpoint_ip:" \
         --data-urlencode "pt=$token" \
         --data-urlencode "pubkey=$public_key" \
-        "https://$meta_cn:1337/addKey")
+        "https://$pia_cn:1337/addKey")
     
     # Remove exemption immediately
     remove_temporary_exemption "pia_addkey"
@@ -401,8 +593,13 @@ generate_config() {
     
     if [ "$status" != "OK" ]; then
         show_error "Server registration failed"
+        show_info "    Cached login token invalid?"
         show_debug "Registration status was '$status', expected 'OK'"
+        # Token might be invalid - clear cache so next attempt gets fresh token
+        invalidate_token_cache
         return 1
+    else
+        show_success "Login token accepted"
     fi
     
     show_debug "Saving client IP: $peer_ip"
@@ -536,7 +733,8 @@ cleanup_local_exceptions() {
 bring_up_wireguard() {
     local config="$1"
     show_debug "Bringing up WireGuard interface: $config"
-    
+    ip link delete pia0 2>/dev/null || true
+
     parse_wg_config "$config"
     
     # Create and configure interface
@@ -725,72 +923,57 @@ teardown_wireguard() {
 #═══════════════════════════════════════════════════════════════════════════════
 
 setup_vpn() {
-    local restart="${1:-false}"
+    if [ ! -f /tmp/reconnecting ]; then
+        local restart="${1:-false}"
+    else
+        local restart="${1:-true}"
+    fi
     show_debug "setup_vpn called with restart=$restart"
     
     show_step "Authenticating with PIA..."
     local token
     token=$(authenticate) || return 1
-    show_success "Authentication successful"
     show_debug "Token length: ${#token}"
-    show_info
     
-    # Parse location display
-    local locations="${PIA_LOCATION}"
-    locations=$(echo "$locations" | tr ',' ' ')
-    local location_count=$(echo "$locations" | wc -w)
-    
-    if [ $location_count -gt 1 ]; then
-        show_step "Finding optimal server across locations: ${bold}$(echo $locations | tr ' ' ', ')${nc}..."
-    else
-        show_step "Finding optimal server for ${bold}${PIA_LOCATION}${nc}..."
-    fi
-    
-    local server_info=$(find_server) || return 1
-    IFS='|' read -r server_name latency <<< "$server_info"
-    show_debug "Server selection result: $server_name (${latency}ms)"
-    
-    # Check if we tested multiple locations
-    if [ -f /tmp/location_count ] && [ "$(cat /tmp/location_count)" -gt 1 ]; then
-        local tested=$(cat /tmp/servers_tested 2>/dev/null || echo "0")
-        local responded=$(cat /tmp/servers_responded 2>/dev/null || echo "0")
-        local location_name=$(cat /tmp/server_location_name 2>/dev/null || show_info)
+    if [ -z "$PIA_CN" ] && [ -z "$PIA_IP" ]; then
+        # Parse location display
+        local locations="${PIA_LOCATION}"
+        locations=$(echo "$locations" | tr ',' ' ')
+        local location_count=$(echo "$locations" | wc -w)
         
-        [ "$responded" -gt 0 ] && show_success "Tested ${tested} servers, ${responded} responded"
-        [ -n "$location_name" ] && show_success "Best server: ${location_name}"
+
+        if [ $location_count -gt 1 ]; then
+            show_step "Finding optimal server across locations: ${bold}$(echo $locations | tr ' ' ', ')${nc}..."
+        else
+            show_step "Finding optimal server for ${bold}${PIA_LOCATION}${nc}..."
+        fi
+        
+        local server_info=$(find_server) || return 1
+        IFS='|' read -r -t 3 server_name latency <<< "$server_info"
+        show_debug "Server selection result: $server_name (${latency}ms)"
+        
+        # Check if we tested multiple locations
+        if [ -f /tmp/location_count ] && [ "$(cat /tmp/location_count)" -gt 1 ]; then
+            local tested=$(cat /tmp/servers_tested 2>/dev/null || echo "0")
+            local responded=$(cat /tmp/servers_responded 2>/dev/null || echo "0")
+            local location_name=$(cat /tmp/server_location_name 2>/dev/null || show_info)
+            
+            [ "$responded" -gt 0 ] && show_success "Tested ${tested} servers, ${responded} responded"
+            [ -n "$location_name" ] && show_success "Best server: ${location_name}"
+        fi
+        
+        if [ "$latency" = "timeout" ]; then
+            show_warning "Server selected: $server_name (no latency data)"
+        else
+            show_success "Connecting to: ${bold}${server_name}${nc} (${latency}ms)"
+        fi
     fi
-    
-    if [ "$latency" = "timeout" ]; then
-        show_warning "Server selected: $server_name (no latency data)"
-    else
-        show_success "Connected to: ${bold}${server_name}${nc} (${latency}ms)"
-        show_info
-    fi
-    
-    if [ "$restart" != "true" ]; then
-        show_step "Configuring WireGuard tunnel..."
-        generate_config "$token" && show_success "Tunnel configured" || return 1
-        show_info
-    else
-        # Silent configuration during reconnection
-        show_debug "Generating config silently (restart=true)"
-        generate_config "$token" >/dev/null 2>&1 || return 1
-    fi
+
+    show_step "Configuring WireGuard tunnel..."
+    generate_config "$token" && show_success "Tunnel configured" || return 1
 }
 
 # Only run setup_vpn if executed directly (not sourced)
 if [ "${BASH_SOURCE[0]}" -ef "$0" ]; then
     setup_vpn "$@"
 fi
-
-# USAGE EXAMPLES:
-#
-# Single location (original behavior):
-#   PIA_LOCATION=ca_toronto
-#
-# Multiple locations (picks lowest ping):
-#   PIA_LOCATION=ca_ontario,ca_toronto
-#   PIA_LOCATION="ca_ontario ca_toronto"  # Space-separated also works
-#
-# Manual META_CN override (for advanced users):
-#   META_CN=toronto401  # Overrides automatic CN detection

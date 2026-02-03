@@ -41,12 +41,17 @@ log_error() {
 
 # log_info: Shown at info and debug levels
 log_info() {
-    [[ $_LOG_LEVEL -ge 1 ]] && echo "$@" || true
+    [[ $_LOG_LEVEL -ge 1 ]] && echo -e "$@" || true
 }
 
 # log_debug: Only shown at debug level
 log_debug() {
     [[ $_LOG_LEVEL -ge 2 ]] && echo "$@" >&2 || true
+}
+
+# silence output
+silent() {
+    "$@" > /dev/null 2>&1
 }
 
 # ============================================================================
@@ -94,6 +99,7 @@ print_banner() {
     local version_padding=$(( (box_width - version_len - 2) / 2 ))
     local author_padding=$(( (box_width - author_len - 2) / 2 ))
 
+    echo ""
     # Generate top border
     printf "${cyn}╔"
     printf '═%.0s' $(seq 1 $((box_width - 2)))
@@ -132,25 +138,23 @@ print_banner() {
     if [[ "$version" == "develop" && -n "${SHA:-}" && "$SHA" != "local" ]]; then
         echo "commit $SHA"
     fi
-
-    echo ""
 }
 
 # Status indicators - info level
 show_step() {
-    log_info "${blu}▶${nc} $1"
+    log_info "\n${blu}▶${nc} $1" >&2
 }
 
 show_success() {
-    log_info "  ${grn}✓${nc} $1"
+    log_info "  ${grn}✓${nc} $1" >&2
 }
 
 show_warning() {
-    log_info "  ${ylw}⚠${nc} $1"
+    log_info "  ${ylw}⚠${nc} $1" >&2
 }
 
 show_info() {
-    log_info "${1:-}"
+    log_info "${1:-}" >&2
 }
 
 show_error() {
@@ -174,7 +178,6 @@ show_vpn_connected() {
 ${grn}╔════════════════════════════════════════════════╗${nc}
 ${grn}║${nc}                ${grn}✓${nc} ${bold}VPN Connected${nc}                 ${grn}║${nc}
 ${grn}╚════════════════════════════════════════════════╝${nc}
-
 EOF
 }
 
@@ -186,7 +189,6 @@ show_vpn_connected_warning() {
 ${ylw}╔════════════════════════════════════════════════╗${nc}
 ${ylw}║${nc}                ${ylw}⚠${nc} ${bold}VPN Connected${nc}                 ${ylw}║${nc}
 ${ylw}╚════════════════════════════════════════════════╝${nc}
-
 EOF
 }
 
@@ -198,7 +200,6 @@ show_reconnecting() {
 ${ylw}╔════════════════════════════════════════════════╗${nc}
 ${ylw}║${nc}               ${ylw}↻${nc} ${bold}Reconnecting VPN${nc}               ${ylw}║${nc}
 ${ylw}╚════════════════════════════════════════════════╝${nc}
-
 EOF
 }
 

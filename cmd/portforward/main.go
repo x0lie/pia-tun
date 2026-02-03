@@ -49,7 +49,7 @@ func loadConfig() (*Config, error) {
 	}
 
 	// Read required files
-	token, err := os.ReadFile("/tmp/pia_token")
+	token, err := os.ReadFile("/tmp/pia_login_token")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read token: %w", err)
 	}
@@ -59,7 +59,7 @@ func loadConfig() (*Config, error) {
 		return nil, fmt.Errorf("failed to read client IP: %w", err)
 	}
 
-	metaCN, err := os.ReadFile("/tmp/meta_cn")
+	metaCN, err := os.ReadFile("/tmp/pia_cn")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read meta CN: %w", err)
 	}
@@ -124,31 +124,12 @@ func showWarning(msg string) {
 	fmt.Printf("  %s⚠%s %s\n", colorYellow, colorReset, msg)
 }
 
-func showVPNConnected() {
-	grn := colorGreen
-	bold := colorBold
-	nc := colorReset
-	fmt.Printf("\n%s╔════════════════════════════════════════════════╗%s\n", grn, nc)
-	fmt.Printf("%s║%s                %s✓%s %sVPN Connected%s                 %s║%s\n", grn, nc, grn, nc, bold, nc, grn, nc)
-	fmt.Printf("%s╚════════════════════════════════════════════════╝%s\n\n", grn, nc)
-}
-
-func showVPNConnectedWarning() {
-	ylw := colorYellow
-	bold := colorBold
-	nc := colorReset
-	fmt.Printf("\n%s╔════════════════════════════════════════════════╗%s\n", ylw, nc)
-	fmt.Printf("%s║%s                %s⚠%s %sVPN Connected%s                 %s║%s\n", ylw, nc, ylw, nc, bold, nc, ylw, nc)
-	fmt.Printf("%s╚════════════════════════════════════════════════╝%s\n\n", ylw, nc)
-}
-
 func main() {
 	// Load configuration
 	config, err := loadConfig()
 	if err != nil {
 		showError(fmt.Sprintf("Port forwarding failed: %v", err))
 		debugLog(&Config{DebugMode: os.Getenv("_LOG_LEVEL") == "2"}, "Failed to load config: %v", err)
-		showVPNConnectedWarning()
 
 		// Create completion flag and block forever
 		os.WriteFile("/tmp/port_forwarding_complete", []byte(""), 0644)
@@ -162,7 +143,7 @@ func main() {
 	debugLog(config, "  PF_GATEWAY=%s", config.PFGateway)
 	debugLog(config, "  TOKEN length: %d", len(config.Token))
 	debugLog(config, "  PEER_IP: %s", config.PeerIP)
-	debugLog(config, "  META_CN: %s", config.MetaCN)
+	debugLog(config, "  PIA_CN: %s", config.MetaCN)
 
 	// Create PIA client
 	client := NewPIAClient(config)

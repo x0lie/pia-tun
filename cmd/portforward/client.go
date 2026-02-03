@@ -10,6 +10,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -111,10 +113,23 @@ func NewPIAClient(config *Config) *PIAClient {
 func (c *PIAClient) GetSignature() (*SignatureResponse, error) {
 	debugLog(c.config, "Requesting signature from %s", c.config.PFGateway)
 
+	// Read fresh token from cache
+	token := c.config.Token
+	if tokenBytes, err := os.ReadFile("/tmp/pia_login_token"); err == nil {
+		token = strings.TrimSpace(string(tokenBytes))
+		preview := token
+		if len(preview) > 8 {
+			preview = preview[:8] + "..."
+		}
+		debugLog(c.config, "Using fresh token from cache (%s)", preview)
+	} else {
+		debugLog(c.config, "Failed to read cached token, using initial token: %v", err)
+	}
+
 	// Build URL with query parameters
 	baseURL := fmt.Sprintf("https://%s:19999/getSignature", c.config.PFGateway)
 	params := url.Values{}
-	params.Add("token", c.config.Token)
+	params.Add("token", token)
 	fullURL := baseURL + "?" + params.Encode()
 
 	// Redact token in logs (show first 8 chars only)

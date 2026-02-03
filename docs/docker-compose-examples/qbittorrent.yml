@@ -9,19 +9,18 @@ services:
     environment:
       - TZ=America/New_York
       - PIA_LOCATION=ca_ontario,ca_ontario-so,ca_toronto
-      - PORT_SYNC_CLIENT=qbittorrent
-      # PORT_SYNC_URL=http://localhost:8080  # Optional - auto-detected from PORT_SYNC_CLIENT=qbittorrent
+      - PS_CLIENT=qbittorrent
       - LOCAL_NETWORKS=192.168.1.0/24,172.18.0.0/16
       - LOCAL_PORTS=8080
-      # Auth options (choose one):
+      # Auth options for PS_CLIENT (choose one):
       # 1. Docker secrets (most secure) - see secrets section below
-      # 2. Environment vars - set PORT_SYNC_USER/PORT_SYNC_PASS
-      # 3. No auth - enable "Bypass authentication for clients on localhost" in qBittorrent settings
+      # 2. Environment vars - set PS_USER/PS_PASS
+      # 3. No auth - enable "Bypass authentication for clients on localhost" in qBittorrent settings (Options > WebUI > Authentication)
     secrets:
       - pia_user
       - pia_pass
-      - port_sync_user
-      - port_sync_pass
+      - ps_user
+      - ps_pass
     ports:
       - 8080:8080
 
@@ -45,7 +44,7 @@ secrets:
     file: ./secrets/pia_user
   pia_pass:
     file: ./secrets/pia_pass
-  port_sync_user:
-    file: ./secrets/port_sync_user
-  port_sync_pass:
-    file: ./secrets/port_sync_pass
+  ps_user:
+    file: ./secrets/ps_user
+  ps_pass:
+    file: ./secrets/ps_pass

@@ -286,6 +286,9 @@ func NewMetrics() *Metrics {
 	}
 	m.buildInfo.WithLabelValues(version).Set(1)
 
+	// Assume WAN is up at startup (container wouldn't have connected otherwise)
+	m.wanUp.Set(1)
+
 	// Add container start timestamp as a gauge function (also with name label)
 	registerer.MustRegister(prometheus.NewGaugeFunc(
 		prometheus.GaugeOpts{
@@ -503,6 +506,14 @@ func (m *Metrics) UpdateKillswitchStatus(active bool) {
 	}
 }
 
+func (m *Metrics) UpdateWANStatus(up bool) {
+	if up {
+		m.wanUp.Set(1)
+	} else {
+		m.wanUp.Set(0)
+	}
+}
+
 func (m *Metrics) UpdateLastHandshake(iface string, timestamp int64) {
 	m.lastHandshake.WithLabelValues(iface).Set(float64(timestamp))
 }
@@ -602,10 +613,21 @@ func (m *Metrics) GetStats() map[string]interface{} {
 	}
 }
 
-func startMetricsServer(m *Monitor) {
+func startHTTPServer(m *Monitor) {
 	mux := http.NewServeMux()
 
-	// Default /metrics endpoint - Prometheus format
+	// Health endpoint - always available for Docker HEALTHCHECK
+	mux.Handle("/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if m.isHealthy() {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("healthy\n"))
+		} else {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("unhealthy\n"))
+		}
+	}))
+
+	// Metrics endpoint - only available when METRICS=true
 	mux.Handle("/metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if m.metrics == nil {
 			http.Error(w, "Metrics not enabled", http.StatusNotFound)
@@ -637,6 +659,6 @@ func startMetricsServer(m *Monitor) {
 	}
 
 	if err := server.ListenAndServe(); err != nil {
-		fmt.Fprintf(os.Stderr, "Metrics server error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "HTTP server error: %v\n", err)
 	}
 }
