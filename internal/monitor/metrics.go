@@ -1,4 +1,4 @@
-package main
+package monitor
 
 import (
 	"bufio"
@@ -15,20 +15,21 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/x0lie/pia-tun/internal/log"
 )
 
 func getInstanceName() string {
-	// Explicit override takes priority
 	if name := os.Getenv("INSTANCE_NAME"); name != "" {
 		return name
 	}
-	// Fallback to hostname (usually unique in containerized environments)
 	if hostname, err := os.Hostname(); err == nil && hostname != "" {
 		return hostname
 	}
 	return "pia-tun"
 }
 
+// Metrics tracks VPN health metrics and exposes them via Prometheus.
 type Metrics struct {
 	// Internal state tracking (for JSON endpoint)
 	TotalChecks       int64
@@ -73,31 +74,29 @@ type Metrics struct {
 	killswitchActive prometheus.Gauge
 	lastHandshake        *prometheus.GaugeVec
 	portForwardingStatus *prometheus.GaugeVec
-	lastForwardedPort    int // Track last port to handle label changes
+	lastForwardedPort    int
 
-	// Killswitch drop counters (with direction label)
+	// Killswitch drop counters
 	killswitchPacketsDropped *prometheus.CounterVec
 	killswitchBytesDropped   *prometheus.CounterVec
 
-	// Internal tracking for drop stats (to handle counter resets)
+	// Internal tracking for drop stats
 	lastDroppedPacketsIn  int64
 	lastDroppedBytesIn    int64
 	lastDroppedPacketsOut int64
 	lastDroppedBytesOut   int64
 
-	// Flag to track pending vpnInfo update after reconnect
 	vpnInfoNeedsUpdate bool
 
-	// Custom registry (excludes go_memstats_* metrics)
 	registry *prometheus.Registry
 }
 
+// NewMetrics creates and registers all Prometheus metrics.
 func NewMetrics() *Metrics {
 	m := &Metrics{
 		UptimeStart: time.Now(),
 	}
 
-	// Create Prometheus metrics
 	m.healthChecksTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "pia_tun_health_checks_total",
 		Help: "Total number of health checks performed",
@@ -180,7 +179,6 @@ func NewMetrics() *Metrics {
 		[]string{"version"},
 	)
 
-	// New metrics
 	m.connectionUp = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "pia_tun_connection_up",
@@ -226,13 +224,10 @@ func NewMetrics() *Metrics {
 		[]string{"direction"},
 	)
 
-	// Create a custom registry (excludes go_memstats_* metrics)
 	m.registry = prometheus.NewRegistry()
 
-	// Add process collector (keeps process_* metrics)
 	m.registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 
-	// Add Go collector with only gc/sched runtime metrics (excludes all go_memstats_*)
 	m.registry.MustRegister(collectors.NewGoCollector(
 		collectors.WithGoCollectorMemStatsMetricsDisabled(),
 		collectors.WithGoCollectorRuntimeMetrics(
@@ -245,13 +240,11 @@ func NewMetrics() *Metrics {
 		),
 	))
 
-	// Create a registerer with the name label applied to all pia_tun_* metrics
 	registerer := prometheus.WrapRegistererWith(
 		prometheus.Labels{"name": getInstanceName()},
 		m.registry,
 	)
 
-	// Register all metrics with name label
 	registerer.MustRegister(
 		m.healthChecksTotal,
 		m.healthChecksSuccess,
@@ -273,23 +266,19 @@ func NewMetrics() *Metrics {
 		m.killswitchBytesDropped,
 	)
 
-	// Initialize killswitch drop counters so both directions always appear in output
 	m.killswitchPacketsDropped.WithLabelValues("in")
 	m.killswitchPacketsDropped.WithLabelValues("out")
 	m.killswitchBytesDropped.WithLabelValues("in")
 	m.killswitchBytesDropped.WithLabelValues("out")
 
-	// Set build info from VERSION environment variable (set by Dockerfile)
 	version := os.Getenv("VERSION")
 	if version == "" {
 		version = "local"
 	}
 	m.buildInfo.WithLabelValues(version).Set(1)
 
-	// Assume WAN is up at startup (container wouldn't have connected otherwise)
 	m.wanUp.Set(1)
 
-	// Add container start timestamp as a gauge function (also with name label)
 	registerer.MustRegister(prometheus.NewGaugeFunc(
 		prometheus.GaugeOpts{
 			Name: "pia_tun_container_start_timestamp_seconds",
@@ -307,7 +296,6 @@ func (m *Metrics) RecordCheck(success bool, duration time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Update internal state
 	m.TotalChecks++
 	m.LastCheckTime = time.Now()
 	m.LastCheckDuration = duration
@@ -318,7 +306,6 @@ func (m *Metrics) RecordCheck(success bool, duration time.Duration) {
 		m.FailedChecks++
 	}
 
-	// Update Prometheus metrics
 	m.healthChecksTotal.Inc()
 	if success {
 		m.healthChecksSuccess.Inc()
@@ -332,11 +319,9 @@ func (m *Metrics) UpdateVPNInfo(iface, server, ip string, rx, tx int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Track what changed
 	serverChanged := server != "" && server != m.CurrentServer
 	ipChanged := ip != "" && ip != m.CurrentIP
 
-	// Update internal state
 	if serverChanged {
 		m.ConnectedAt = time.Now()
 		m.CurrentServer = server
@@ -346,26 +331,22 @@ func (m *Metrics) UpdateVPNInfo(iface, server, ip string, rx, tx int64) {
 		m.CurrentIP = ip
 	}
 
-	// Update pia_tun_info when either server or IP changes (requires both to be valid)
 	if (serverChanged || ipChanged) && m.CurrentServer != "" && m.CurrentIP != "" {
 		m.vpnInfo.Reset()
 		m.vpnInfo.WithLabelValues(iface, m.CurrentServer, m.CurrentIP).Set(1)
 	}
 
 	if m.CurrentServer != "" {
-		m.ServerUptime = time.Since(m.ConnectedAt) // Keep for JSON endpoint
+		m.ServerUptime = time.Since(m.ConnectedAt)
 		m.sessionUptimeGauge.WithLabelValues(iface).Set(float64(m.ConnectedAt.Unix()))
 	}
 
-	// Update bytes counters (handle resets from container restarts)
 	if rx >= m.BytesReceived {
-		// Normal case: increment
 		delta := rx - m.BytesReceived
 		if delta > 0 {
 			m.bytesReceivedTotal.WithLabelValues(iface).Add(float64(delta))
 		}
 	} else {
-		// Counter reset (reconnection or restart)
 		m.bytesReceivedTotal.WithLabelValues(iface).Add(float64(rx))
 	}
 
@@ -386,7 +367,7 @@ func (m *Metrics) ObserveServerLatency(latencySeconds float64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.ServerLatency = int64(latencySeconds * 1000) // Keep internal state in ms for JSON endpoint
+	m.ServerLatency = int64(latencySeconds * 1000)
 	m.serverLatencyHistogram.Observe(latencySeconds)
 }
 
@@ -398,21 +379,15 @@ func (m *Metrics) RecordReconnect() {
 	m.reconnectsTotal.Inc()
 }
 
-// ResetSession resets session-related metrics after a reconnect.
-// This ensures session_uptime restarts and vpnInfo updates even when
-// reconnecting to the same server.
 func (m *Metrics) ResetSession() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.ConnectedAt = time.Now()
-	m.CurrentServer = "" // Force server change detection on next UpdateVPNInfo call
-	m.CurrentIP = ""     // Force IP update on next UpdateVPNInfo call (when valid IP is available)
+	m.CurrentServer = ""
+	m.CurrentIP = ""
 }
 
-// UpdateVPNInfoFromPipe updates the VPN info metric directly from pipe data.
-// This bypasses the normal change detection and always updates the metric,
-// ensuring reconnections are always reflected even if server/IP are the same.
 func (m *Metrics) UpdateVPNInfoFromPipe(iface, server, ip string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -421,42 +396,35 @@ func (m *Metrics) UpdateVPNInfoFromPipe(iface, server, ip string) {
 		return
 	}
 
-	// Always update on pipe signal - this confirms the connection is fresh
 	m.ConnectedAt = time.Now()
 	m.CurrentServer = server
 	m.CurrentIP = ip
 
-	// Reset and update the metric (ensures old labels are cleared)
 	m.vpnInfo.Reset()
 	m.vpnInfo.WithLabelValues(iface, server, ip).Set(1)
 
-	// Set session start timestamp for the new connection
 	m.ServerUptime = 0
 	m.sessionUptimeGauge.WithLabelValues(iface).Set(float64(m.ConnectedAt.Unix()))
 }
 
 // StartConnectionPipeListener starts a goroutine that listens for connection
-// events from the bash scripts via a named pipe. This provides reliable,
-// event-driven updates to VPN info metrics without polling.
-func (m *Metrics) StartConnectionPipeListener(debugLog func(string, ...interface{})) {
+// events from the bash scripts via a named pipe.
+func (m *Metrics) StartConnectionPipeListener(logger *log.Logger) {
 	go func() {
 		pipePath := "/tmp/vpn_connection_pipe"
 
 		for {
-			// Open pipe - this blocks until a writer opens the other end
 			file, err := os.Open(pipePath)
 			if err != nil {
-				// Pipe may not exist yet during startup
 				if os.IsNotExist(err) {
-					debugLog("Connection pipe not found, waiting...")
+					logger.Debug("Connection pipe not found, waiting...")
 				} else {
-					debugLog("Failed to open connection pipe: %v", err)
+					logger.Debug("Failed to open connection pipe: %v", err)
 				}
 				time.Sleep(5 * time.Second)
 				continue
 			}
 
-			// Read lines from the pipe
 			scanner := bufio.NewScanner(file)
 			for scanner.Scan() {
 				line := strings.TrimSpace(scanner.Text())
@@ -464,7 +432,6 @@ func (m *Metrics) StartConnectionPipeListener(debugLog func(string, ...interface
 					continue
 				}
 
-				// Parse: server|ip|timestamp
 				parts := strings.Split(line, "|")
 				if len(parts) >= 2 {
 					server := strings.TrimSpace(parts[0])
@@ -472,19 +439,18 @@ func (m *Metrics) StartConnectionPipeListener(debugLog func(string, ...interface
 
 					if server != "" && ip != "" {
 						m.UpdateVPNInfoFromPipe("pia0", server, ip)
-						debugLog("Connection pipe: updated VPN info - server=%s, ip=%s", server, ip)
+						logger.Debug("Connection pipe: updated VPN info - server=%s, ip=%s", server, ip)
 					}
 				} else {
-					debugLog("Connection pipe: invalid data format: %s", line)
+					logger.Debug("Connection pipe: invalid data format: %s", line)
 				}
 			}
 
 			if err := scanner.Err(); err != nil {
-				debugLog("Connection pipe read error: %v", err)
+				logger.Debug("Connection pipe read error: %v", err)
 			}
 
 			file.Close()
-			// Small delay before reopening to prevent tight loop on errors
 			time.Sleep(100 * time.Millisecond)
 		}
 	}()
@@ -521,7 +487,6 @@ func (m *Metrics) UpdateLastHandshake(iface string, timestamp int64) {
 func (m *Metrics) UpdatePortForwarding(active bool, port int) {
 	portStr := strconv.Itoa(port)
 
-	// If port changed, reset the old metric to avoid stale labels
 	if m.lastForwardedPort != 0 && m.lastForwardedPort != port {
 		m.portForwardingStatus.DeleteLabelValues(strconv.Itoa(m.lastForwardedPort))
 	}
@@ -530,7 +495,6 @@ func (m *Metrics) UpdatePortForwarding(active bool, port int) {
 		m.portForwardingStatus.WithLabelValues(portStr).Set(1)
 		m.lastForwardedPort = port
 	} else {
-		// When inactive, show port=0 with value 0
 		m.portForwardingStatus.WithLabelValues("0").Set(0)
 		m.lastForwardedPort = 0
 	}
@@ -540,13 +504,11 @@ func (m *Metrics) UpdateKillswitchDrops(packetsIn, bytesIn, packetsOut, bytesOut
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Handle inbound counter increments
 	if packetsIn >= m.lastDroppedPacketsIn {
 		if delta := packetsIn - m.lastDroppedPacketsIn; delta > 0 {
 			m.killswitchPacketsDropped.WithLabelValues("in").Add(float64(delta))
 		}
 	} else {
-		// Counter reset (reconnection cleared iptables rules)
 		m.killswitchPacketsDropped.WithLabelValues("in").Add(float64(packetsIn))
 	}
 
@@ -558,7 +520,6 @@ func (m *Metrics) UpdateKillswitchDrops(packetsIn, bytesIn, packetsOut, bytesOut
 		m.killswitchBytesDropped.WithLabelValues("in").Add(float64(bytesIn))
 	}
 
-	// Handle outbound counter increments
 	if packetsOut >= m.lastDroppedPacketsOut {
 		if delta := packetsOut - m.lastDroppedPacketsOut; delta > 0 {
 			m.killswitchPacketsDropped.WithLabelValues("out").Add(float64(delta))
@@ -599,7 +560,7 @@ func (m *Metrics) GetStats() map[string]interface{} {
 		"success_rate_decimal":    successRate / 100,
 		"total_reconnects":        m.TotalReconnects,
 		"uptime_seconds":          int(uptime.Seconds()),
-		"uptime_formatted":        formatDuration(uptime),
+		"uptime_formatted":        log.FormatDuration(uptime),
 		"last_check":              m.LastCheckTime.Format("2006-01-02 15:04:05"),
 		"last_check_duration_ms":  m.LastCheckDuration.Milliseconds(),
 		"current_server":          m.CurrentServer,
@@ -609,14 +570,13 @@ func (m *Metrics) GetStats() map[string]interface{} {
 		"total_bytes":             m.BytesReceived + m.BytesTransmitted,
 		"server_latency_ms":       m.ServerLatency,
 		"server_uptime_seconds":   int(m.ServerUptime.Seconds()),
-		"server_uptime_formatted": formatDuration(m.ServerUptime),
+		"server_uptime_formatted": log.FormatDuration(m.ServerUptime),
 	}
 }
 
 func startHTTPServer(m *Monitor) {
 	mux := http.NewServeMux()
 
-	// Health endpoint - always available for Docker HEALTHCHECK
 	mux.Handle("/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if m.isHealthy() {
 			w.WriteHeader(http.StatusOK)
@@ -627,14 +587,12 @@ func startHTTPServer(m *Monitor) {
 		}
 	}))
 
-	// Metrics endpoint - only available when METRICS=true
 	mux.Handle("/metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if m.metrics == nil {
 			http.Error(w, "Metrics not enabled", http.StatusNotFound)
 			return
 		}
 
-		// Check if JSON format requested
 		if r.URL.Query().Get("format") == "json" {
 			w.Header().Set("Content-Type", "application/json")
 			stats := m.metrics.GetStats()
@@ -642,7 +600,6 @@ func startHTTPServer(m *Monitor) {
 			return
 		}
 
-		// Default: Prometheus format (use custom registry)
 		promhttp.HandlerFor(m.metrics.registry, promhttp.HandlerOpts{}).ServeHTTP(w, r)
 	}))
 

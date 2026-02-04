@@ -5,31 +5,17 @@ RUN apk add --no-cache git
 WORKDIR /build
 
 COPY go.mod go.sum ./
-COPY cmd/ ./cmd/
+COPY cmd/pia-tun/ ./cmd/pia-tun/
+COPY internal/ ./internal/
 
-# Build with maximum optimization
-RUN cd cmd/proxy && \
+# Build single binary with maximum optimization
+RUN cd cmd/pia-tun && \
     CGO_ENABLED=0 GOOS=linux go build \
     -a -installsuffix cgo \
     -ldflags="-w -s" \
     -trimpath \
-    -o /build/proxy . && \
-    cd ../cacher && \
-    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
-    -ldflags="-w -s" \
-    -trimpath \
-    -o /build/cacher . && \
-    cd ../monitor && \
-    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
-    -ldflags="-w -s" \
-    -trimpath \
-    -o /build/monitor . && \
-    cd ../portforward && \
-    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
-    -ldflags="-w -s" \
-    -trimpath \
-    -o /build/portforward . && \
-    chmod +x /build/proxy /build/cacher /build/monitor /build/portforward
+    -o /build/pia-tun . && \
+    chmod +x /build/pia-tun
 
 # Build wireguard-go for userspace fallback (pre-5.6 kernels without WireGuard module)
 RUN git clone --depth 1 https://git.zx2c4.com/wireguard-go /build/wireguard-go-src && \
@@ -76,11 +62,12 @@ RUN apk update && \
     find /usr/bin /usr/sbin /bin /sbin -type f -executable \
         -exec strip --strip-all {} \; 2>/dev/null || true
 
-# Copy Go binaries (already executable from builder)
-COPY --from=go-builder /build/proxy /usr/local/bin/proxy
-COPY --from=go-builder /build/cacher /usr/local/bin/cacher
-COPY --from=go-builder /build/monitor /usr/local/bin/monitor
-COPY --from=go-builder /build/portforward /usr/local/bin/portforward
+# Copy single Go binary and create symlinks (busybox-style dispatch)
+COPY --from=go-builder /build/pia-tun /usr/local/bin/pia-tun
+RUN ln -s pia-tun /usr/local/bin/monitor && \
+    ln -s pia-tun /usr/local/bin/cacher && \
+    ln -s pia-tun /usr/local/bin/portforward && \
+    ln -s pia-tun /usr/local/bin/proxy
 COPY --from=go-builder /build/wireguard-go /usr/local/bin/wireguard-go
 
 # Copy certificate

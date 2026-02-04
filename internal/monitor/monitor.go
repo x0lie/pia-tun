@@ -1,18 +1,19 @@
-package main
+package monitor
 
 import (
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
-	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	"github.com/x0lie/pia-tun/internal/config"
+	"github.com/x0lie/pia-tun/internal/log"
 )
 
+// Config holds monitor configuration.
 type Config struct {
 	CheckInterval  time.Duration
 	FailureWindow  time.Duration
@@ -20,8 +21,10 @@ type Config struct {
 	MetricsEnabled bool
 }
 
+// Monitor manages VPN health monitoring.
 type Monitor struct {
 	config            Config
+	log               *log.Logger
 	reconnectAttempts int
 	metrics           *Metrics
 	mu                sync.Mutex
@@ -31,67 +34,13 @@ type Monitor struct {
 	lastHealthCheck time.Time
 }
 
-const (
-	colorReset  = "\033[0m"
-	colorRed    = "\033[0;31m"
-	colorGreen  = "\033[0;32m"
-	colorBlue   = "\033[0;34m"
-	colorYellow = "\033[0;33m"
-)
-
 func loadConfig() Config {
-	getEnvInt := func(key string, defaultVal int) int {
-		if val := os.Getenv(key); val != "" {
-			if i, err := strconv.Atoi(val); err == nil {
-				return i
-			}
-		}
-		return defaultVal
-	}
-
-	getEnvDuration := func(key string, defaultVal int) time.Duration {
-		return time.Duration(getEnvInt(key, defaultVal)) * time.Second
-	}
-
-	getEnvBool := func(key string) bool {
-		return os.Getenv(key) == "true"
-	}
-
 	return Config{
-		CheckInterval:  getEnvDuration("HC_INTERVAL", 10),
-		FailureWindow:  getEnvDuration("HC_FAILURE_WINDOW", 30),
-		DebugMode:      getEnvInt("_LOG_LEVEL", 0) == 2,
-		MetricsEnabled: getEnvBool("METRICS"),
+		CheckInterval:  config.GetEnvDuration("HC_INTERVAL", 10),
+		FailureWindow:  config.GetEnvDuration("HC_FAILURE_WINDOW", 30),
+		DebugMode:      config.IsDebugMode(),
+		MetricsEnabled: config.GetEnvBool("METRICS"),
 	}
-}
-
-func formatDuration(d time.Duration) string {
-	days := int(d.Hours()) / 24
-	hours := int(d.Hours()) % 24
-	minutes := int(d.Minutes()) % 60
-
-	if days > 0 {
-		return fmt.Sprintf("%dd %dh %dm", days, hours, minutes)
-	} else if hours > 0 {
-		return fmt.Sprintf("%dh %dm", hours, minutes)
-	}
-	return fmt.Sprintf("%dm", minutes)
-}
-
-func (m *Monitor) debugLog(format string, args ...interface{}) {
-	if m.config.DebugMode {
-		timestamp := time.Now().Format("15:04:05")
-		msg := fmt.Sprintf(format, args...)
-		fmt.Fprintf(os.Stderr, "    %s[DEBUG]%s %s - %s\n", colorBlue, colorReset, timestamp, msg)
-	}
-}
-
-func (m *Monitor) showSuccess(msg string) {
-	fmt.Printf("  %s✓%s %s\n", colorGreen, colorReset, msg)
-}
-
-func (m *Monitor) showError(msg string) {
-	fmt.Printf("  %s✗%s %s\n", colorRed, colorReset, msg)
 }
 
 func (m *Monitor) setHealthStatus(healthy bool) {
@@ -105,8 +54,6 @@ func (m *Monitor) isHealthy() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Consider unhealthy if we haven't had a check in 2x the check interval
-	// This handles cases where the monitor loop is stuck or not running
 	staleThreshold := m.config.CheckInterval * 2
 	if time.Since(m.lastHealthCheck) > staleThreshold && m.lastHealthCheck.Unix() > 0 {
 		return false
@@ -125,7 +72,6 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 	if m.metrics != nil {
 		latency := m.getServerLatency()
 		if latency > 0 {
-			// Convert milliseconds to seconds
 			m.metrics.ObserveServerLatency(float64(latency) / 1000.0)
 		}
 	}
@@ -133,14 +79,14 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			m.debugLog("Monitor loop received shutdown signal")
+			m.log.Debug("Monitor loop received shutdown signal")
 			return
 
 		case <-ticker.C:
 			// Check for port forwarding signature failure flag
 			if _, err := os.Stat("/tmp/pf_signature_failed"); err == nil {
 				if removeErr := os.Remove("/tmp/pf_signature_failed"); removeErr != nil {
-					m.debugLog("Failed to remove PF failure flag: %v", removeErr)
+					m.log.Debug("Failed to remove PF failure flag: %v", removeErr)
 				}
 				m.triggerReconnect()
 				continue
@@ -148,17 +94,17 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 
 			// Skip checks during active reconnection to avoid races
 			if _, err := os.Stat("/tmp/reconnecting"); err == nil {
-				m.debugLog("Skipping health check during active reconnection")
+				m.log.Debug("Skipping health check during active reconnection")
 				continue
 			}
 
-			// Skip checks during active reconnection to avoid races
+			// Skip checks during startup
 			if _, err := os.Stat("/tmp/monitor_wait"); err == nil {
-				m.debugLog("Skipping health check during startup")
+				m.log.Debug("Skipping health check during startup")
 				continue
 			}
 
-			// Start server latency ping in parallel (only during normal checks, not rapid)
+			// Start server latency ping in parallel
 			var serverLatencyChan chan float64
 			if m.metrics != nil {
 				serverLatencyChan = make(chan float64, 1)
@@ -183,7 +129,6 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 			if m.metrics != nil {
 				m.metrics.RecordCheck(err == nil, result.CheckDuration)
 
-				// Collect server latency result (non-blocking, already completed or nearly done)
 				if serverLatencyChan != nil {
 					latency := <-serverLatencyChan
 					if latency > 0 {
@@ -194,10 +139,10 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 
 			// If check failed, enter rapid check mode
 			if err != nil {
-				m.debugLog("Entering rapid check mode (failure window: %s)", m.config.FailureWindow)
+				m.log.Debug("Entering rapid check mode (failure window: %s)", m.config.FailureWindow)
 
 				if m.config.DebugMode {
-					fmt.Printf("  %sℹ%s Debug info:\n", colorYellow, colorReset)
+					fmt.Printf("  %s\u2139%s Debug info:\n", log.ColorYellow, log.ColorReset)
 					cmd := exec.Command("wg", "show", "pia0")
 					output, wgErr := cmd.Output()
 					if wgErr == nil {
@@ -214,12 +159,10 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 				failureStart := time.Now()
 				recovered := false
 
-				// Rapid check loop - timeout provides natural 2s interval when failing
 				for {
-					// Check for manual reconnect triggers
 					if _, pfErr := os.Stat("/tmp/pf_signature_failed"); pfErr == nil {
 						os.Remove("/tmp/pf_signature_failed")
-						m.debugLog("Port forwarding failure during rapid checks")
+						m.log.Debug("Port forwarding failure during rapid checks")
 						break
 					}
 
@@ -229,34 +172,31 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 					m.updateMetrics(rapidResult, rapidErr == nil)
 
 					if rapidErr == nil {
-						m.debugLog("Connectivity recovered during rapid checks")
+						m.log.Debug("Connectivity recovered during rapid checks")
 						recovered = true
 						break
 					}
 
-					// Check if we've exceeded the failure window
 					elapsed := time.Since(failureStart)
 					if elapsed >= m.config.FailureWindow {
-						m.debugLog("Rapid check failed (elapsed: %s/%s)",
+						m.log.Debug("Rapid check failed (elapsed: %s/%s)",
 							elapsed.Round(time.Second),
 							m.config.FailureWindow)
 						break
 					}
 
-					m.debugLog("Rapid check failed (elapsed: %s/%s)",
+					m.log.Debug("Rapid check failed (elapsed: %s/%s)",
 						elapsed.Round(time.Second),
 						m.config.FailureWindow)
 				}
 
-				// If still failing after failure window, reconnect
 				if !recovered {
-					fmt.Printf("\n  %s✗%s VPN connection lost (down for more than %s)\n",
-						colorRed, colorReset, m.config.FailureWindow)
+					fmt.Printf("\n  %s\u2717%s VPN connection lost (down for more than %s)\n",
+						log.ColorRed, log.ColorReset, m.config.FailureWindow)
 					exec.Command("pkill", "-f", "portforward").Run()
 					m.triggerReconnect()
 
-					// Wait for reconnection script to complete (poll for flag removal)
-					m.debugLog("Waiting for reconnection to complete")
+					m.log.Debug("Waiting for reconnection to complete")
 					reconnectTimeout := time.After(60 * time.Second)
 					checkTicker := time.NewTicker(2 * time.Second)
 					defer checkTicker.Stop()
@@ -264,8 +204,7 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 					for {
 						select {
 						case <-reconnectTimeout:
-							m.debugLog("Reconnection wait timeout, resuming health checks")
-							// Still reset session metrics on timeout
+							m.log.Debug("Reconnection wait timeout, resuming health checks")
 							if m.metrics != nil {
 								m.metrics.ResetSession()
 								if latency := m.getServerLatency(); latency > 0 {
@@ -275,11 +214,9 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 							goto resumeMonitoring
 						case <-checkTicker.C:
 							if _, err := os.Stat("/tmp/reconnecting"); os.IsNotExist(err) {
-								// File removed, reconnection complete
-								m.debugLog("Reconnection complete, resuming health checks")
-								time.Sleep(5 * time.Second) // Additional grace period for tunnel stability
+								m.log.Debug("Reconnection complete, resuming health checks")
+								time.Sleep(5 * time.Second)
 
-								// Reset session metrics and update latency after reconnect
 								if m.metrics != nil {
 									m.metrics.ResetSession()
 									if latency := m.getServerLatency(); latency > 0 {
@@ -305,7 +242,6 @@ func (m *Monitor) updateMetrics(result *HealthCheckResult, healthy bool) {
 		rx, tx, _ := m.getTransferBytes()
 		server := m.getCurrentServer()
 
-		// Only fetch public IP if connection is healthy (avoids 15s timeout when failing)
 		var ip string
 		if healthy {
 			ip = m.getCurrentIP()
@@ -320,45 +256,37 @@ func (m *Monitor) updateMetrics(result *HealthCheckResult, healthy bool) {
 		pfPort := m.getPortForwardingPort()
 		m.metrics.UpdatePortForwarding(pfActive, pfPort)
 
-		// Collect killswitch drop stats
 		pktsIn, bytesIn, pktsOut, bytesOut := m.getKillswitchDropStats()
 		m.metrics.UpdateKillswitchDrops(pktsIn, bytesIn, pktsOut, bytesOut)
 	}
 }
 
-func main() {
-	config := loadConfig()
+// Run starts the monitor. This is the main entry point called by the dispatcher.
+func Run(ctx context.Context) error {
+	cfg := loadConfig()
+
+	logger := &log.Logger{
+		Enabled: cfg.DebugMode,
+	}
 
 	var metrics *Metrics
-	if config.MetricsEnabled {
+	if cfg.MetricsEnabled {
 		metrics = NewMetrics()
 	}
 
 	monitor := &Monitor{
-		config:  config,
+		config:  cfg,
+		log:     logger,
 		metrics: metrics,
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
-
-	go func() {
-		<-sigChan
-		monitor.debugLog("Received shutdown signal")
-		cancel()
-	}()
-
 	// Always start HTTP server for /health endpoint
-	// /metrics is only served when METRICS=true
 	go startHTTPServer(monitor)
 
-	if config.MetricsEnabled {
-		// Start connection pipe listener for reliable VPN info updates
-		metrics.StartConnectionPipeListener(monitor.debugLog)
+	if cfg.MetricsEnabled {
+		metrics.StartConnectionPipeListener(logger)
 	}
 
 	monitor.monitorLoop(ctx)
+	return nil
 }

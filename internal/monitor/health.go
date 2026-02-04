@@ -1,4 +1,4 @@
-package main
+package monitor
 
 import (
 	"context"
@@ -10,8 +10,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/x0lie/pia-tun/internal/log"
 )
 
+// HealthCheckResult holds the result of a VPN health check.
 type HealthCheckResult struct {
 	InterfaceUp   bool
 	Connectivity  bool
@@ -37,10 +40,8 @@ func (m *Monitor) getServerLatency() int64 {
 }
 
 func (m *Monitor) getCurrentIP() string {
-	// Try to get public IP from external service
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	// Try multiple services in case one is down
 	services := []string{
 		"https://api.ipify.org",
 		"https://ifconfig.me/ip",
@@ -55,7 +56,6 @@ func (m *Monitor) getCurrentIP() string {
 			n, _ := resp.Body.Read(body)
 			if n > 0 {
 				ip := strings.TrimSpace(string(body[:n]))
-				// Validate it looks like an IP and is not private
 				if len(ip) > 6 && len(ip) < 40 && !isPrivateIP(ip) {
 					return ip
 				}
@@ -63,12 +63,9 @@ func (m *Monitor) getCurrentIP() string {
 		}
 	}
 
-	// Return empty if we couldn't get a valid public IP
-	// Next health check will retry
 	return ""
 }
 
-// isPrivateIP checks if an IP address is in a private range
 func isPrivateIP(ip string) bool {
 	parsed := net.ParseIP(ip)
 	if parsed == nil {
@@ -83,7 +80,7 @@ func (m *Monitor) checkConnectivityPing(ctx context.Context, host string) bool {
 }
 
 func (m *Monitor) checkExternalConnectivity(timeout time.Duration) bool {
-	m.debugLog("Checking external connectivity via ping")
+	m.log.Debug("Checking external connectivity via ping")
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -95,7 +92,6 @@ func (m *Monitor) checkExternalConnectivity(timeout time.Duration) bool {
 
 	results := make(chan checkResult, 3)
 
-	// Parallel ping checks - first success wins
 	go func() {
 		success := m.checkConnectivityPing(ctx, "1.1.1.1")
 		results <- checkResult{"1.1.1.1", success}
@@ -114,27 +110,24 @@ func (m *Monitor) checkExternalConnectivity(timeout time.Duration) bool {
 	for i := 0; i < 3; i++ {
 		result := <-results
 		if result.success {
-			m.debugLog("Connectivity check passed: %s responded", result.name)
+			m.log.Debug("Connectivity check passed: %s responded", result.name)
 			return true
 		}
 	}
 
-	m.debugLog("Ping check failed")
+	m.log.Debug("Ping check failed")
 	return false
 }
 
-// Check WAN connectivity using bypass routes (no firewall manipulation needed!)
-// These IPs (1.1.1.1, 8.8.8.8) are in routing table 100 and bypass the VPN
 func (m *Monitor) checkWANConnectivity(timeout time.Duration) bool {
-	m.debugLog("Checking WAN connectivity (bypass routes, parallel)")
+	m.log.Debug("Checking WAN connectivity (bypass routes, parallel)")
 
-	// NIST time servers on TCP port 13 (DAYTIME)
 	targets := []string{
-		"129.6.15.28:13",    // time-a-g.nist.gov
-		"129.6.15.29:13",    // time-b-g.nist.gov
-		"132.163.96.1:13",   // time-a-b.nist.gov
-		"132.163.97.1:13",   // time-a-wwv.nist.gov
-		"128.138.140.44:13", // utcnist.colorado.edu
+		"129.6.15.28:13",
+		"129.6.15.29:13",
+		"132.163.96.1:13",
+		"132.163.97.1:13",
+		"128.138.140.44:13",
 	}
 
 	type result struct {
@@ -144,7 +137,6 @@ func (m *Monitor) checkWANConnectivity(timeout time.Duration) bool {
 
 	results := make(chan result, len(targets))
 
-	// Check all targets in parallel - first success wins
 	for _, target := range targets {
 		go func(t string) {
 			dialer := &net.Dialer{Timeout: timeout}
@@ -158,49 +150,41 @@ func (m *Monitor) checkWANConnectivity(timeout time.Duration) bool {
 		}(target)
 	}
 
-	// Wait for all results, return true on first success
 	for i := 0; i < len(targets); i++ {
 		res := <-results
 		if res.success {
-			m.debugLog("WAN check successful (%s)", res.target)
+			m.log.Debug("WAN check successful (%s)", res.target)
 			return true
 		}
 	}
 
-	m.debugLog("All WAN checks failed")
+	m.log.Debug("All WAN checks failed")
 	return false
 }
 
-// Wait for WAN with regular polling (infinite loop until success)
 func (m *Monitor) waitForWAN() bool {
-	fmt.Printf("\n%s▶%s Testing WAN before reconnect...\n", colorBlue, colorReset)
+	fmt.Printf("\n%s\u25b6%s Testing WAN before reconnect...\n", log.ColorBlue, log.ColorReset)
 
-	// Record start time for downtime calculation
 	downSince := time.Now()
 
-	// Initial quick check
 	if m.checkWANConnectivity(5 * time.Second) {
-		m.showSuccess("Internet up")
+		log.Success("Internet up")
 		if m.metrics != nil {
 			m.metrics.UpdateWANStatus(true)
 		}
 		return true
 	}
 
-	// WAN is down, poll every 10s until it comes back
-	m.showError("Internet down, waiting...")
+	log.Error("Internet down, waiting...")
 	if m.metrics != nil {
 		m.metrics.UpdateWANStatus(false)
 	}
 
-	// Check every 10 seconds indefinitely
-	// No aggressive backoff needed - we're disconnected so not stressing anything
 	for {
-
 		if m.checkWANConnectivity(10 * time.Second) {
 			downtime := time.Since(downSince)
 			fmt.Printf("\r")
-			m.showSuccess(fmt.Sprintf("Internet restored (down for %s)", formatDuration(downtime)))
+			log.Success(fmt.Sprintf("Internet restored (down for %s)", log.FormatDuration(downtime)))
 			if m.metrics != nil {
 				m.metrics.UpdateWANStatus(true)
 			}
@@ -243,7 +227,7 @@ func (m *Monitor) checkVPNHealth(timeout time.Duration) (*HealthCheckResult, err
 	start := time.Now()
 
 	result := &HealthCheckResult{
-		InterfaceUp: true, // Assumed if connectivity passes
+		InterfaceUp: true,
 	}
 
 	if m.checkExternalConnectivity(timeout) {
@@ -262,10 +246,8 @@ func (m *Monitor) triggerReconnect() {
 	m.reconnectAttempts++
 	m.mu.Unlock()
 
-	// Check WAN connectivity before reconnecting
 	m.waitForWAN()
 
-	// Write to named pipe (non-blocking, opens and closes immediately)
 	if err := os.WriteFile("/tmp/vpn_reconnect_pipe", []byte("health_check_failed\n"), 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to signal reconnect via pipe: %v\n", err)
 	}
@@ -296,7 +278,6 @@ func (m *Monitor) getLastHandshake() int64 {
 	return timestamp
 }
 
-// getServerEndpoint returns the VPN server IP from wireguard endpoint
 func (m *Monitor) getServerEndpoint() string {
 	cmd := exec.Command("wg", "show", "pia0", "endpoints")
 	output, err := cmd.Output()
@@ -309,13 +290,11 @@ func (m *Monitor) getServerEndpoint() string {
 		return ""
 	}
 
-	// Format: <public_key>\t<ip>:<port>
 	parts := strings.Fields(lines[0])
 	if len(parts) < 2 {
 		return ""
 	}
 
-	// Extract IP from ip:port
 	endpoint := parts[1]
 	if idx := strings.LastIndex(endpoint, ":"); idx > 0 {
 		return endpoint[:idx]
@@ -323,7 +302,6 @@ func (m *Monitor) getServerEndpoint() string {
 	return endpoint
 }
 
-// pingServerLatency pings the VPN server and returns latency in seconds, or -1 on failure
 func (m *Monitor) pingServerLatency(ctx context.Context, serverIP string) float64 {
 	start := time.Now()
 	cmd := exec.CommandContext(ctx, "ping", "-c", "1", "-W", "2", serverIP)
@@ -334,8 +312,6 @@ func (m *Monitor) pingServerLatency(ctx context.Context, serverIP string) float6
 }
 
 func (m *Monitor) isKillswitchActive() bool {
-	// Check if killswitch flag file exists
-	// Created by killswitch.sh when active, removed on cleanup
 	_, err := os.Stat("/tmp/killswitch_up")
 	return err == nil
 }
@@ -360,16 +336,11 @@ func (m *Monitor) getPortForwardingPort() int {
 }
 
 func (m *Monitor) isPortForwardingActive() bool {
-	// Check if port file exists and has a valid port
 	port := m.getPortForwardingPort()
 	return port > 0
 }
 
-// getKillswitchDropStats returns dropped packets and bytes from iptables DROP rules.
-// Returns separate counts for inbound (VPN_IN) and outbound (VPN_OUT) chains.
-// Includes both IPv4 (iptables) and IPv6 (ip6tables) drops.
 func (m *Monitor) getKillswitchDropStats() (packetsIn, bytesIn, packetsOut, bytesOut int64) {
-	// Get iptables binaries (supports both -nft and -legacy)
 	iptables := "iptables"
 	if path := os.Getenv("IPT_CMD"); path != "" {
 		iptables = path
@@ -379,20 +350,16 @@ func (m *Monitor) getKillswitchDropStats() (packetsIn, bytesIn, packetsOut, byte
 		ip6tables = path
 	}
 
-	// Helper to parse DROP stats from a chain
 	parseChain := func(iptCmd, chain string) (packets, bytes int64) {
 		cmd := exec.Command(iptCmd, "-L", chain, "-v", "-n", "-x")
 		output, err := cmd.Output()
 		if err != nil {
-			// Don't log for IPv6 - chain may not exist if IPv6 is disabled
 			if iptCmd == iptables {
-				m.debugLog("Failed to get iptables stats for %s: %v", chain, err)
+				m.log.Debug("Failed to get iptables stats for %s: %v", chain, err)
 			}
 			return 0, 0
 		}
 
-		// Parse output looking for DROP rules
-		// Format: "pkts bytes target prot opt in out source destination"
 		lines := strings.Split(string(output), "\n")
 		for _, line := range lines {
 			fields := strings.Fields(line)
@@ -408,11 +375,9 @@ func (m *Monitor) getKillswitchDropStats() (packetsIn, bytesIn, packetsOut, byte
 		return packets, bytes
 	}
 
-	// IPv4
 	packetsIn, bytesIn = parseChain(iptables, "VPN_IN")
 	packetsOut, bytesOut = parseChain(iptables, "VPN_OUT")
 
-	// IPv6 - add to totals (chains are named VPN_IN6/VPN_OUT6)
 	p, b := parseChain(ip6tables, "VPN_IN6")
 	packetsIn += p
 	bytesIn += b
