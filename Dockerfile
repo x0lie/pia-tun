@@ -128,4 +128,4 @@ EXPOSE 1080 8888 9090
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 CMD wget -q --spider http://127.0.0.1:9090/health || exit 1  
 
-ENTRYPOINT ["/app/run.sh"]
+ENTRYPOINT ["/usr/local/bin/pia-tun"]
