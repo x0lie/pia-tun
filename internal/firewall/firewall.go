@@ -16,6 +16,9 @@ type Firewall struct {
 	ipt6    *iptables.IPTables
 	log     *log.Logger
 	backend string
+
+	vpnRules4 [][]string // IPv4 VPN rules added by AddVPN, stored for removal
+	vpnRules6 [][]string // IPv6 VPN rules added by AddVPN, stored for removal
 }
 
 // New creates a Firewall with auto-detected or manually specified iptables backend.
