@@ -3,6 +3,7 @@ module github.com/x0lie/pia-tun
 go 1.23.0
 
 require (
+	github.com/coreos/go-iptables v0.8.0
 	github.com/prometheus/client_golang v1.23.2
 	golang.org/x/sync v0.13.0
 )
