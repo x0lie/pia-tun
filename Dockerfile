@@ -76,11 +76,10 @@ COPY ca/rsa_4096.crt /app/ca.rsa.4096.crt
 WORKDIR /app
 
 # Copy scripts
-COPY run.sh /app/run.sh
 COPY scripts/ /app/scripts/
 
 # CRITICAL FIX: Only chmod scripts, NOT the Go binaries (prevents 10MB duplication)
-RUN chmod +x /app/run.sh /app/scripts/*.sh && \
+RUN chmod +x /app/scripts/*.sh && \
     mkdir -p /etc/wireguard && \
     mkdir -p /run/pia-tun
 
