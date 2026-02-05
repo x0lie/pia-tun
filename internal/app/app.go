@@ -15,6 +15,7 @@ import (
 	"github.com/x0lie/pia-tun/internal/monitor"
 	"github.com/x0lie/pia-tun/internal/portforward"
 	"github.com/x0lie/pia-tun/internal/proxy"
+	"github.com/x0lie/pia-tun/internal/vpn"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -29,6 +30,7 @@ type App struct {
 	cfg          Config
 	log          *log.Logger
 	monitorState *monitor.State
+	cache        *vpn.CacheState
 }
 
 // Run is the main entry point for the orchestrated VPN client.
@@ -44,9 +46,14 @@ func Run(ctx context.Context) error {
 		Prefix:  "app",
 	}
 
-	a := &App{cfg: cfg, log: logger, monitorState: &monitor.State{
-		ConnInfo: make(chan monitor.ConnectionInfo, 1),
-	}}
+	a := &App{
+		cfg: cfg,
+		log: logger,
+		monitorState: &monitor.State{
+			ConnInfo: make(chan monitor.ConnectionInfo, 1),
+		},
+		cache: &vpn.CacheState{},
+	}
 
 	a.shellFunc(ctx, "print_banner")
 	a.logConfig()
@@ -226,7 +233,7 @@ func (a *App) runServices(ctx context.Context, reconnectCh chan struct{}) error 
 
 	// Cacher - always runs (refreshes PIA login token and server list)
 	g.Go(func() error {
-		return cacher.Run(gCtx)
+		return cacher.Run(gCtx, a.cache)
 	})
 
 	// Port forwarding - conditional

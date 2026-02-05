@@ -4,25 +4,33 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/config"
 	"github.com/x0lie/pia-tun/internal/log"
+	"github.com/x0lie/pia-tun/internal/pia"
+	"github.com/x0lie/pia-tun/internal/vpn"
 )
 
-// Config holds cacher configuration.
-type Config struct {
-	PIAUser         string
-	PIAPass         string
-	RefreshInterval time.Duration
-	DebugMode       bool
+const (
+	piaAuthHost       = "www.privateinternetaccess.com"
+	piaServerlistHost = "serverlist.piaservers.net"
+	maxCachedIPs      = 5
+)
+
+// cacherConfig holds cacher configuration.
+type cacherConfig struct {
+	piaUser         string
+	piaPass         string
+	refreshInterval time.Duration
+	debugMode       bool
 }
 
-func loadConfig() (*Config, error) {
-	var piaUser, piaPass string
-
-	piaUser = config.GetSecret("PIA_USER", "/run/secrets/pia_user")
-	piaPass = config.GetSecret("PIA_PASS", "/run/secrets/pia_pass")
+func loadConfig() (*cacherConfig, error) {
+	piaUser := strings.TrimSpace(config.GetSecret("PIA_USER", "/run/secrets/pia_user"))
+	piaPass := strings.TrimSpace(config.GetSecret("PIA_PASS", "/run/secrets/pia_pass"))
 
 	if piaUser == "" || piaPass == "" {
 		return nil, fmt.Errorf("PIA credentials not found (set PIA_USER/PIA_PASS or use Docker secrets)")
@@ -33,35 +41,15 @@ func loadConfig() (*Config, error) {
 		refreshHours = 6
 	}
 
-	return &Config{
-		PIAUser:         piaUser,
-		PIAPass:         piaPass,
-		RefreshInterval: time.Duration(refreshHours) * time.Hour,
-		DebugMode:       config.IsDebugMode(),
+	return &cacherConfig{
+		piaUser:         piaUser,
+		piaPass:         piaPass,
+		refreshInterval: time.Duration(refreshHours) * time.Hour,
+		debugMode:       config.IsDebugMode(),
 	}, nil
 }
 
-// isIPv4 checks if an IP string is IPv4.
-func isIPv4(ip string) bool {
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
-		return false
-	}
-	return parsed.To4() != nil
-}
-
-// filterIPv4Only returns only IPv4 addresses from the slice.
-func filterIPv4Only(ips []string) []string {
-	var ipv4s []string
-	for _, ip := range ips {
-		if isIPv4(ip) {
-			ipv4s = append(ipv4s, ip)
-		}
-	}
-	return ipv4s
-}
-
-func refreshAll(ctx context.Context, logger *log.Logger, client *PIAClient) error {
+func refreshAll(ctx context.Context, logger *log.Logger, cfg *cacherConfig, client *http.Client, cache *vpn.CacheState) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -70,27 +58,34 @@ func refreshAll(ctx context.Context, logger *log.Logger, client *PIAClient) erro
 
 	// 1. Refresh login token
 	logger.Debug("Refreshing login token...")
-	token, piaIPs, err := client.GetToken(ctx)
+	authIPs, err := resolveIPv4(ctx, piaAuthHost)
 	if err != nil {
-		logger.Debug("Token refresh failed: %v", err)
+		logger.Debug("Failed to resolve %s: %v", piaAuthHost, err)
 		lastErr = err
 	} else {
-		if err := WriteToken(token); err != nil {
-			logger.Debug("Failed to write token: %v", err)
+		logger.Debug("Resolved %s to %v", piaAuthHost, authIPs)
+		cache.AuthIPs = mergeIPs(cache.AuthIPs, authIPs, maxCachedIPs)
+
+		token, err := pia.GenerateToken(ctx, client, piaAuthHost, cfg.piaUser, cfg.piaPass)
+		if err != nil {
+			logger.Debug("Token refresh failed: %v", err)
 			lastErr = err
 		} else {
-			logger.Debug("Token saved (length: %d)", len(token))
-		}
+			cache.SetToken(token)
+			logger.Debug("Token refreshed (length: %d)", len(token))
 
-		piaIPv4s := filterIPv4Only(piaIPs)
-		logger.Debug("Filtered PIA IPs: %d total, %d IPv4", len(piaIPs), len(piaIPv4s))
-
-		for _, ip := range piaIPv4s {
-			if err := AddIPToCache(PIAIPsFile, ip, MaxCachedIPs); err != nil {
-				logger.Debug("Failed to cache PIA IP %s: %v", ip, err)
+			// Backward compat: write /tmp/ files
+			if err := writeTokenFile(token); err != nil {
+				logger.Debug("Failed to write token file: %v", err)
 			}
 		}
-		logger.Debug("Cached %d PIA IPv4 address(es)", len(piaIPv4s))
+
+		// Backward compat: write auth IPs
+		for _, ip := range authIPs {
+			if err := addIPToFile(piaIPsFile, ip, maxCachedIPs); err != nil {
+				logger.Debug("Failed to cache auth IP %s: %v", ip, err)
+			}
+		}
 	}
 
 	if ctx.Err() != nil {
@@ -99,34 +94,47 @@ func refreshAll(ctx context.Context, logger *log.Logger, client *PIAClient) erro
 
 	// 2. Refresh server list
 	logger.Debug("Refreshing server list...")
-	servers, serverlistIPs, err := client.GetServerList(ctx)
+	slIPs, err := resolveIPv4(ctx, piaServerlistHost)
 	if err != nil {
-		logger.Debug("Server list refresh failed: %v", err)
+		logger.Debug("Failed to resolve %s: %v", piaServerlistHost, err)
 		lastErr = err
 	} else {
-		serverlistIPv4s := filterIPv4Only(serverlistIPs)
-		logger.Debug("Filtered serverlist IPs: %d total, %d IPv4", len(serverlistIPs), len(serverlistIPv4s))
+		logger.Debug("Resolved %s to %v", piaServerlistHost, slIPs)
+		cache.ServerListIPs = mergeIPs(cache.ServerListIPs, slIPs, maxCachedIPs)
 
-		for _, ip := range serverlistIPv4s {
-			if err := AddIPToCache(ServerlistIPsFile, ip, MaxCachedIPs); err != nil {
-				logger.Debug("Failed to cache serverlist IP %s: %v", ip, err)
-			}
-		}
-		logger.Debug("Cached %d serverlist IPv4 address(es)", len(serverlistIPv4s))
-
-		if err := MergeAndSaveServers(servers); err != nil {
-			logger.Debug("Failed to save server cache: %v", err)
+		regions, err := pia.FetchServerList(ctx, client, piaServerlistHost)
+		if err != nil {
+			logger.Debug("Server list refresh failed: %v", err)
 			lastErr = err
 		} else {
-			logger.Debug("Server cache updated with %d servers", len(servers))
+			servers := pia.FlattenRegions(regions)
+			cache.Servers = mergeServers(cache.Servers, servers)
+			logger.Debug("Server cache updated with %d servers", len(cache.Servers))
+
+			// Backward compat: write /tmp/ files
+			if err := writeServerFile(cache.Servers); err != nil {
+				logger.Debug("Failed to write server cache file: %v", err)
+			}
+		}
+
+		// Backward compat: write serverlist IPs
+		for _, ip := range slIPs {
+			if err := addIPToFile(serverlistIPsFile, ip, maxCachedIPs); err != nil {
+				logger.Debug("Failed to cache serverlist IP %s: %v", ip, err)
+			}
 		}
 	}
 
 	return lastErr
 }
 
-// Run starts the cacher service. This is the main entry point called by the dispatcher.
-func Run(ctx context.Context) error {
+// Run starts the cacher service. cache may be nil for standalone mode,
+// in which case a local CacheState is used (only /tmp/ files are written).
+func Run(ctx context.Context, cache *vpn.CacheState) error {
+	if cache == nil {
+		cache = &vpn.CacheState{}
+	}
+
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Error(fmt.Sprintf("Cacher failed to start: %v", err))
@@ -134,24 +142,24 @@ func Run(ctx context.Context) error {
 	}
 
 	logger := &log.Logger{
-		Enabled: cfg.DebugMode,
+		Enabled: cfg.debugMode,
 		Prefix:  "cacher",
 	}
 
-	logger.Debug("Cacher starting with refresh interval: %v", cfg.RefreshInterval)
+	logger.Debug("Cacher starting with refresh interval: %v", cfg.refreshInterval)
 
-	client := NewPIAClient(cfg, logger)
+	client := pia.NewBoundClient(15*time.Second, 30*time.Second)
 
 	// Initial refresh on startup
 	logger.Debug("Performing initial cache refresh")
-	if err := refreshAll(ctx, logger, client); err != nil {
+	if err := refreshAll(ctx, logger, cfg, client, cache); err != nil {
 		log.Warning(fmt.Sprintf("Initial cache refresh failed: %v", err))
 	} else {
 		logger.Debug("Cache initialized")
 	}
 
 	// Periodic refresh
-	ticker := time.NewTicker(cfg.RefreshInterval)
+	ticker := time.NewTicker(cfg.refreshInterval)
 	defer ticker.Stop()
 
 	for {
@@ -162,15 +170,67 @@ func Run(ctx context.Context) error {
 
 		case <-ticker.C:
 			logger.Debug("Starting scheduled cache refresh")
-			if err := refreshAll(ctx, logger, client); err != nil {
+			if err := refreshAll(ctx, logger, cfg, client, cache); err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
 				log.Warning(fmt.Sprintf("Cache refresh failed: %v", err))
 			} else {
-				timestamp := time.Now().Format("2006-01-02 15:04:05")
-				logger.Debug("[%s] Cache refreshed", timestamp)
+				logger.Debug("Cache refreshed")
 			}
 		}
 	}
+}
+
+// resolveIPv4 resolves a hostname to IPv4 addresses using the system resolver.
+func resolveIPv4(ctx context.Context, hostname string) ([]string, error) {
+	addrs, err := net.DefaultResolver.LookupIP(ctx, "ip4", hostname)
+	if err != nil {
+		return nil, err
+	}
+	ips := make([]string, len(addrs))
+	for i, addr := range addrs {
+		ips[i] = addr.String()
+	}
+	return ips, nil
+}
+
+// mergeIPs adds new IPs to front of existing, deduplicates, and caps at max.
+func mergeIPs(existing, newIPs []string, max int) []string {
+	seen := make(map[string]bool, len(existing)+len(newIPs))
+	var merged []string
+	for _, ip := range newIPs {
+		if !seen[ip] {
+			seen[ip] = true
+			merged = append(merged, ip)
+		}
+	}
+	for _, ip := range existing {
+		if !seen[ip] {
+			seen[ip] = true
+			merged = append(merged, ip)
+		}
+	}
+	if len(merged) > max {
+		merged = merged[:max]
+	}
+	return merged
+}
+
+// mergeServers merges new servers into existing by CN, updating IP/PF/Region for
+// known servers and appending new ones.
+func mergeServers(existing, newServers []pia.CachedServer) []pia.CachedServer {
+	byCN := make(map[string]int, len(existing))
+	for i := range existing {
+		byCN[existing[i].CN] = i
+	}
+	for _, srv := range newServers {
+		if idx, ok := byCN[srv.CN]; ok {
+			existing[idx] = srv
+		} else {
+			byCN[srv.CN] = len(existing)
+			existing = append(existing, srv)
+		}
+	}
+	return existing
 }

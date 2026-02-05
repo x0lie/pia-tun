@@ -23,6 +23,22 @@ type CachedServer struct {
 	PF     bool   `json:"pf"`
 }
 
+// FlattenRegions extracts WireGuard servers from regions into a flat CachedServer list.
+func FlattenRegions(regions []Region) []CachedServer {
+	var servers []CachedServer
+	for _, r := range regions {
+		for _, srv := range r.Servers["wg"] {
+			servers = append(servers, CachedServer{
+				CN:     srv.CN,
+				IP:     srv.IP,
+				Region: r.ID,
+				PF:     r.PortForward,
+			})
+		}
+	}
+	return servers
+}
+
 // AddKeyResponse contains the WireGuard tunnel parameters returned by
 // PIA's addKey API after registering a client public key.
 type AddKeyResponse struct {
