@@ -40,11 +40,11 @@ func main() {
 	case "":
 		err = app.Run(ctx)
 	case "monitor":
-		err = monitor.Run(ctx, nil)
+		err = monitor.Run(ctx, nil, nil)
 	case "cacher":
 		err = cacher.Run(ctx)
 	case "portforward":
-		err = portforward.Run(ctx, nil)
+		err = portforward.Run(ctx, nil, nil)
 	case "proxy":
 		err = proxy.Run(ctx)
 	default:

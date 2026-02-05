@@ -27,8 +27,9 @@ const shellPreamble = "set -euo pipefail; source /app/scripts/ui.sh; source /app
 
 // App holds the application state and configuration.
 type App struct {
-	cfg Config
-	log *log.Logger
+	cfg          Config
+	log          *log.Logger
+	monitorState *monitor.State
 }
 
 // Run is the main entry point for the orchestrated VPN client.
@@ -44,7 +45,7 @@ func Run(ctx context.Context) error {
 		Prefix:  "app",
 	}
 
-	a := &App{cfg: cfg, log: logger}
+	a := &App{cfg: cfg, log: logger, monitorState: &monitor.State{}}
 
 	a.shellFunc(ctx, "print_banner")
 	a.logConfig()
@@ -89,10 +90,10 @@ func Run(ctx context.Context) error {
 			a.log.Debug("Services requested reconnect")
 
 			// Pause health monitor immediately, before teardown begins
-			os.WriteFile("/tmp/monitor_wait", []byte(""), 0644)
+			a.monitorState.Paused.Store(true)
 
 			a.shellFunc(ctx, "show_reconnecting")
-			os.WriteFile("/tmp/reconnecting", []byte(""), 0644)
+			a.monitorState.Reconnecting.Store(true)
 			a.teardown()
 			if err := a.connectLoop(ctx); err != nil {
 				return err
@@ -109,8 +110,6 @@ func Run(ctx context.Context) error {
 func (a *App) initialize(ctx context.Context) error {
 	a.log.Debug("Removing stale flag files")
 	for _, f := range []string{
-		"/tmp/port_forwarding_complete",
-		"/tmp/reconnecting",
 		"/tmp/monitor_up",
 		"/tmp/killswitch_up",
 	} {
@@ -184,8 +183,8 @@ func (a *App) connectLoop(ctx context.Context) error {
 	delay := 5 * time.Second
 	const maxDelay = 120 * time.Second
 
-	os.WriteFile("/tmp/monitor_wait", []byte(""), 0644)
-	defer os.Remove("/tmp/monitor_wait")
+	a.monitorState.Paused.Store(true)
+	defer a.monitorState.Paused.Store(false)
 
 	for {
 		if err := a.connect(ctx); err != nil {
@@ -210,7 +209,7 @@ func (a *App) connectLoop(ctx context.Context) error {
 			continue
 		}
 
-		os.Remove("/tmp/reconnecting")
+		a.monitorState.Reconnecting.Store(false)
 		return nil
 	}
 }
@@ -237,14 +236,19 @@ func (a *App) runServices(ctx context.Context, reconnectCh chan struct{}) error 
 
 	// Port forwarding - conditional
 	if a.cfg.PFEnabled {
+		pfReady := make(chan struct{})
 		pfReconnect := func() {
 			svcCancel(ErrReconnect)
 		}
 		g.Go(func() error {
-			return portforward.Run(gCtx, pfReconnect)
+			return portforward.Run(gCtx, pfReconnect, pfReady)
 		})
 
-		a.waitForPortForward(gCtx)
+		select {
+		case <-pfReady:
+			a.log.Debug("Port forwarding ready")
+		case <-gCtx.Done():
+		}
 	}
 
 	// Port monitor script (torrent client API sync) - conditional
@@ -278,24 +282,6 @@ func (a *App) runServices(ctx context.Context, reconnectCh chan struct{}) error 
 		}
 		return fmt.Errorf("services exited: %w", err)
 	}
-}
-
-// waitForPortForward polls for the port forwarding completion flag (max 30s).
-func (a *App) waitForPortForward(ctx context.Context) {
-	a.log.Debug("Waiting for port forwarding completion (max 30s)")
-	for i := 0; i < 30; i++ {
-		if _, err := os.Stat("/tmp/port_forwarding_complete"); err == nil {
-			a.log.Debug("Port forwarding completed after %ds", i)
-			os.Remove("/tmp/port_forwarding_complete")
-			return
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(1 * time.Second):
-		}
-	}
-	a.log.Debug("Port forwarding wait timed out after 30s")
 }
 
 // signalConnectionReady writes connection info to the metrics named pipe.
@@ -382,7 +368,7 @@ func (a *App) startMonitor(ctx context.Context, reconnectCh chan<- struct{}) {
 	}
 
 	go func() {
-		if err := monitor.Run(ctx, reconnect); err != nil {
+		if err := monitor.Run(ctx, reconnect, a.monitorState); err != nil {
 			log.Error(fmt.Sprintf("Health monitor error: %v", err))
 		}
 	}()
@@ -399,8 +385,6 @@ func (a *App) cleanup() {
 	log.Step("Shutting down...")
 
 	for _, f := range []string{
-		"/tmp/port_forwarding_complete",
-		"/tmp/reconnecting",
 		"/tmp/monitor_up",
 		"/tmp/killswitch_up",
 	} {

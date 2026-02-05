@@ -927,13 +927,6 @@ teardown_wireguard() {
 #═══════════════════════════════════════════════════════════════════════════════
 
 setup_vpn() {
-    if [ ! -f /tmp/reconnecting ]; then
-        local restart="${1:-false}"
-    else
-        local restart="${1:-true}"
-    fi
-    show_debug "setup_vpn called with restart=$restart"
-    
     show_step "Authenticating with PIA..."
     local token
     token=$(authenticate) || return 1

@@ -44,12 +44,14 @@ func NewKeepaliveManager(config *Config, client *PIAClient, logger *log.Logger, 
 }
 
 // Run performs initial setup then enters the keepalive loop.
-func (m *KeepaliveManager) Run(ctx context.Context) error {
+func (m *KeepaliveManager) Run(ctx context.Context, onReady func()) error {
 	if err := m.initialSetup(); err != nil {
 		return err
 	}
 
-	os.WriteFile("/tmp/port_forwarding_complete", []byte(""), 0644)
+	if onReady != nil {
+		onReady()
+	}
 	m.log.Debug("Port forwarding setup complete, entering main loop")
 
 	return m.keepaliveLoop(ctx)
@@ -344,7 +346,7 @@ func (m *KeepaliveManager) handleRefreshFailure(err error) {
 
 // triggerReconnect signals that a VPN reconnection is needed.
 // In orchestrated mode, calls the onReconnect callback.
-// In legacy standalone mode, writes a flag file and exits.
+// In legacy standalone mode, exits immediately.
 func (m *KeepaliveManager) triggerReconnect() {
 	if m.onReconnect != nil {
 		m.log.Debug("Signaling orchestrator to reconnect")
@@ -353,7 +355,6 @@ func (m *KeepaliveManager) triggerReconnect() {
 	}
 
 	// Legacy standalone mode
-	os.WriteFile("/tmp/pf_signature_failed", []byte(""), 0644)
 	os.Exit(1)
 }
 

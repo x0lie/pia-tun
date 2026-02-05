@@ -68,7 +68,13 @@ func loadConfig() (*Config, error) {
 // Run starts the port forwarding service. This is the main entry point called by the dispatcher.
 // onReconnect is an optional callback for orchestrated mode. When set, the keepalive manager
 // calls it instead of os.Exit(1) when a reconnect is needed. Pass nil for legacy standalone mode.
-func Run(ctx context.Context, onReconnect func()) error {
+func Run(ctx context.Context, onReconnect func(), ready chan<- struct{}) error {
+	signalReady := func() {
+		if ready != nil {
+			close(ready)
+		}
+	}
+
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Error(fmt.Sprintf("Port forwarding failed: %v", err))
@@ -76,8 +82,7 @@ func Run(ctx context.Context, onReconnect func()) error {
 		logger := &log.Logger{Enabled: config.IsDebugMode()}
 		logger.Debug("Failed to load config: %v", err)
 
-		// Create completion flag and block forever
-		os.WriteFile("/tmp/port_forwarding_complete", []byte(""), 0644)
+		signalReady()
 		<-ctx.Done()
 		return nil
 	}
@@ -98,7 +103,7 @@ func Run(ctx context.Context, onReconnect func()) error {
 	client := NewPIAClient(cfg, logger)
 	manager := NewKeepaliveManager(cfg, client, logger, onReconnect)
 
-	if err := manager.Run(ctx); err != nil {
+	if err := manager.Run(ctx, signalReady); err != nil {
 		return fmt.Errorf("port forwarding failed: %w", err)
 	}
 

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/config"
@@ -21,6 +22,13 @@ type Config struct {
 	MetricsEnabled bool
 }
 
+// State allows the orchestrator to communicate pause/reconnect
+// status to the monitor without filesystem flags. Nil in standalone mode.
+type State struct {
+	Paused       atomic.Bool // pause health checks during startup/reconnection
+	Reconnecting atomic.Bool // active reconnection in progress
+}
+
 // Monitor manages VPN health monitoring.
 type Monitor struct {
 	config            Config
@@ -32,6 +40,9 @@ type Monitor struct {
 	// Reconnect callback for orchestrated mode.
 	// When set, triggerReconnect calls this instead of writing to a pipe file.
 	onReconnect func()
+
+	// Orchestrator state for pause/reconnect signaling. Nil in standalone mode.
+	state *State
 
 	// Health status for /health endpoint
 	healthy         bool
@@ -95,23 +106,14 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 				continue
 			}
 
-			// Check for port forwarding signature failure flag
-			if _, err := os.Stat("/tmp/pf_signature_failed"); err == nil {
-				if removeErr := os.Remove("/tmp/pf_signature_failed"); removeErr != nil {
-					m.log.Debug("Failed to remove PF failure flag: %v", removeErr)
-				}
-				m.triggerReconnect()
-				continue
-			}
-
 			// Skip checks during active reconnection to avoid races
-			if _, err := os.Stat("/tmp/reconnecting"); err == nil {
+			if m.state != nil && m.state.Reconnecting.Load() {
 				m.log.Debug("Skipping health check during active reconnection")
 				continue
 			}
 
-			// Skip checks during startup
-			if _, err := os.Stat("/tmp/monitor_wait"); err == nil {
+			// Skip checks during startup/reconnection
+			if m.state != nil && m.state.Paused.Load() {
 				m.log.Debug("Skipping health check during startup")
 				continue
 			}
@@ -173,15 +175,9 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 
 				for {
 					// Exit rapid checks if reconnect is already in progress
-					if _, err := os.Stat("/tmp/monitor_wait"); err == nil {
+					if m.state != nil && m.state.Paused.Load() {
 						m.log.Debug("Reconnect in progress, exiting rapid checks")
 						recovered = true
-						break
-					}
-
-					if _, pfErr := os.Stat("/tmp/pf_signature_failed"); pfErr == nil {
-						os.Remove("/tmp/pf_signature_failed")
-						m.log.Debug("Port forwarding failure during rapid checks")
 						break
 					}
 
@@ -216,48 +212,13 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 					if m.onReconnect != nil {
 						// Orchestrated mode: signal reconnect and continue monitoring.
 						// The orchestrator handles teardown, reconnection, and service restart.
-						// The monitor will skip health checks while /tmp/monitor_wait exists.
+						// The monitor will skip health checks while state.Paused is set.
 						m.triggerReconnect()
 						continue
 					}
 
-					// Legacy standalone mode: kill portforward and wait for reconnection.
-					exec.Command("pkill", "-f", "portforward").Run()
+					// Legacy standalone mode: no orchestrator to handle reconnection.
 					m.triggerReconnect()
-
-					m.log.Debug("Waiting for reconnection to complete")
-					reconnectTimeout := time.After(60 * time.Second)
-					checkTicker := time.NewTicker(2 * time.Second)
-					defer checkTicker.Stop()
-
-					for {
-						select {
-						case <-reconnectTimeout:
-							m.log.Debug("Reconnection wait timeout, resuming health checks")
-							if m.metrics != nil {
-								m.metrics.ResetSession()
-								if latency := m.getServerLatency(); latency > 0 {
-									m.metrics.ObserveServerLatency(float64(latency) / 1000.0)
-								}
-							}
-							goto resumeMonitoring
-						case <-checkTicker.C:
-							if _, err := os.Stat("/tmp/reconnecting"); os.IsNotExist(err) {
-								m.log.Debug("Reconnection complete, resuming health checks")
-								time.Sleep(5 * time.Second)
-
-								if m.metrics != nil {
-									m.metrics.ResetSession()
-									if latency := m.getServerLatency(); latency > 0 {
-										m.metrics.ObserveServerLatency(float64(latency) / 1000.0)
-									}
-								}
-
-								goto resumeMonitoring
-							}
-						}
-					}
-				resumeMonitoring:
 				}
 			}
 		}
@@ -292,9 +253,10 @@ func (m *Monitor) updateMetrics(result *HealthCheckResult, healthy bool) {
 
 // Run starts the monitor. This is the main entry point called by the dispatcher.
 // onReconnect is an optional callback for orchestrated mode. When set, the monitor
-// calls it instead of writing to a pipe file when a reconnect is needed. Pass nil
-// for legacy standalone mode.
-func Run(ctx context.Context, onReconnect func()) error {
+// calls it instead of writing to a pipe file when a reconnect is needed.
+// state provides orchestrator pause/reconnect signaling. Pass nil for both
+// in standalone mode.
+func Run(ctx context.Context, onReconnect func(), state *State) error {
 	cfg := loadConfig()
 
 	logger := &log.Logger{
@@ -311,6 +273,7 @@ func Run(ctx context.Context, onReconnect func()) error {
 		log:         logger,
 		metrics:     metrics,
 		onReconnect: onReconnect,
+		state:       state,
 	}
 
 	// Always start HTTP server for /health endpoint
