@@ -14,6 +14,15 @@ type Server struct {
 	CN string `json:"cn"`
 }
 
+// CachedServer is a flattened server entry for the persistent cache.
+// Each entry represents one WireGuard server in a specific region.
+type CachedServer struct {
+	CN     string `json:"cn"`
+	IP     string `json:"ip"`
+	Region string `json:"region"`
+	PF     bool   `json:"pf"`
+}
+
 // AddKeyResponse contains the WireGuard tunnel parameters returned by
 // PIA's addKey API after registering a client public key.
 type AddKeyResponse struct {
