@@ -255,12 +255,6 @@ func (m *Monitor) triggerReconnect() {
 	if m.onReconnect != nil {
 		m.log.Debug("Signaling orchestrator to reconnect")
 		m.onReconnect()
-		return
-	}
-
-	// Legacy standalone mode: signal via pipe file
-	if err := os.WriteFile("/tmp/vpn_reconnect_pipe", []byte("health_check_failed\n"), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to signal reconnect via pipe: %v\n", err)
 	}
 }
 

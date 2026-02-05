@@ -208,16 +208,6 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 				if !recovered {
 					fmt.Printf("\n  %s\u2717%s VPN connection lost (down for more than %s)\n",
 						log.ColorRed, log.ColorReset, m.config.FailureWindow)
-
-					if m.onReconnect != nil {
-						// Orchestrated mode: signal reconnect and continue monitoring.
-						// The orchestrator handles teardown, reconnection, and service restart.
-						// The monitor will skip health checks while state.Paused is set.
-						m.triggerReconnect()
-						continue
-					}
-
-					// Legacy standalone mode: no orchestrator to handle reconnection.
 					m.triggerReconnect()
 				}
 			}
