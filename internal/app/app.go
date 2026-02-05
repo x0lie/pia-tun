@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/cacher"
@@ -45,7 +44,9 @@ func Run(ctx context.Context) error {
 		Prefix:  "app",
 	}
 
-	a := &App{cfg: cfg, log: logger, monitorState: &monitor.State{}}
+	a := &App{cfg: cfg, log: logger, monitorState: &monitor.State{
+		ConnInfo: make(chan monitor.ConnectionInfo, 1),
+	}}
 
 	a.shellFunc(ctx, "print_banner")
 	a.logConfig()
@@ -129,12 +130,6 @@ func (a *App) initialize(ctx context.Context) error {
 	if err := a.shellFunc(ctx, "setup_baseline_killswitch"); err != nil {
 		log.Error("CRITICAL: Killswitch setup failed - cannot safely connect to VPN")
 		return fmt.Errorf("killswitch setup failed: %w", err)
-	}
-
-	// Create named pipe for metrics connection signaling
-	if a.cfg.MetricsEnabled {
-		os.Remove("/tmp/vpn_connection_pipe")
-		syscall.Mkfifo("/tmp/vpn_connection_pipe", 0644)
 	}
 
 	// Non-fatal: capture pre-VPN IP for leak detection
@@ -284,31 +279,22 @@ func (a *App) runServices(ctx context.Context, reconnectCh chan struct{}) error 
 	}
 }
 
-// signalConnectionReady writes connection info to the metrics named pipe.
+// signalConnectionReady sends connection info to the metrics listener.
 func (a *App) signalConnectionReady() {
-	pipe := "/tmp/vpn_connection_pipe"
-	if _, err := os.Stat(pipe); err != nil {
-		return
-	}
-
 	server, _ := os.ReadFile("/tmp/pia_cn")
 	vpnIP, _ := os.ReadFile("/tmp/server_endpoint")
 	if len(server) == 0 || len(vpnIP) == 0 {
 		return
 	}
 
-	data := fmt.Sprintf("%s|%s|%d",
-		strings.TrimSpace(string(server)),
-		strings.TrimSpace(string(vpnIP)),
-		time.Now().Unix())
-
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, "bash", "-c",
-			fmt.Sprintf("echo '%s' > '%s'", data, pipe))
-		cmd.Run()
-	}()
+	select {
+	case a.monitorState.ConnInfo <- monitor.ConnectionInfo{
+		Server: strings.TrimSpace(string(server)),
+		IP:     strings.TrimSpace(string(vpnIP)),
+	}:
+	default:
+		a.log.Debug("Connection info channel full, skipping")
+	}
 }
 
 func (a *App) showStatus(verbose bool) {

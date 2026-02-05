@@ -1,14 +1,12 @@
 package monitor
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"regexp"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -388,7 +386,7 @@ func (m *Metrics) ResetSession() {
 	m.CurrentIP = ""
 }
 
-func (m *Metrics) UpdateVPNInfoFromPipe(iface, server, ip string) {
+func (m *Metrics) RecordNewConnection(iface, server, ip string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -405,55 +403,6 @@ func (m *Metrics) UpdateVPNInfoFromPipe(iface, server, ip string) {
 
 	m.ServerUptime = 0
 	m.sessionUptimeGauge.WithLabelValues(iface).Set(float64(m.ConnectedAt.Unix()))
-}
-
-// StartConnectionPipeListener starts a goroutine that listens for connection
-// events from the bash scripts via a named pipe.
-func (m *Metrics) StartConnectionPipeListener(logger *log.Logger) {
-	go func() {
-		pipePath := "/tmp/vpn_connection_pipe"
-
-		for {
-			file, err := os.Open(pipePath)
-			if err != nil {
-				if os.IsNotExist(err) {
-					logger.Debug("Connection pipe not found, waiting...")
-				} else {
-					logger.Debug("Failed to open connection pipe: %v", err)
-				}
-				time.Sleep(5 * time.Second)
-				continue
-			}
-
-			scanner := bufio.NewScanner(file)
-			for scanner.Scan() {
-				line := strings.TrimSpace(scanner.Text())
-				if line == "" {
-					continue
-				}
-
-				parts := strings.Split(line, "|")
-				if len(parts) >= 2 {
-					server := strings.TrimSpace(parts[0])
-					ip := strings.TrimSpace(parts[1])
-
-					if server != "" && ip != "" {
-						m.UpdateVPNInfoFromPipe("pia0", server, ip)
-						logger.Debug("Connection pipe: updated VPN info - server=%s, ip=%s", server, ip)
-					}
-				} else {
-					logger.Debug("Connection pipe: invalid data format: %s", line)
-				}
-			}
-
-			if err := scanner.Err(); err != nil {
-				logger.Debug("Connection pipe read error: %v", err)
-			}
-
-			file.Close()
-			time.Sleep(100 * time.Millisecond)
-		}
-	}()
 }
 
 func (m *Metrics) UpdateConnectionStatus(iface string, connected bool) {

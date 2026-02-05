@@ -22,11 +22,18 @@ type Config struct {
 	MetricsEnabled bool
 }
 
-// State allows the orchestrator to communicate pause/reconnect
-// status to the monitor without filesystem flags. Nil in standalone mode.
+// ConnectionInfo carries VPN connection details for metrics updates.
+type ConnectionInfo struct {
+	Server string
+	IP     string
+}
+
+// State allows the orchestrator to communicate with the monitor
+// without filesystem flags or named pipes. Nil in standalone mode.
 type State struct {
-	Paused       atomic.Bool // pause health checks during startup/reconnection
-	Reconnecting atomic.Bool // active reconnection in progress
+	Paused       atomic.Bool          // pause health checks during startup/reconnection
+	Reconnecting atomic.Bool          // active reconnection in progress
+	ConnInfo     chan ConnectionInfo   // new connection established (for metrics)
 }
 
 // Monitor manages VPN health monitoring.
@@ -269,8 +276,18 @@ func Run(ctx context.Context, onReconnect func(), state *State) error {
 	// Always start HTTP server for /health endpoint
 	go startHTTPServer(monitor)
 
-	if cfg.MetricsEnabled {
-		metrics.StartConnectionPipeListener(logger)
+	if cfg.MetricsEnabled && state != nil && state.ConnInfo != nil {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case info := <-state.ConnInfo:
+					metrics.RecordNewConnection("pia0", info.Server, info.IP)
+					logger.Debug("Connection event: server=%s, ip=%s", info.Server, info.IP)
+				}
+			}
+		}()
 	}
 
 	monitor.monitorLoop(ctx)
