@@ -13,11 +13,12 @@ import (
 
 // KeepaliveManager manages port forward state lifecycle.
 type KeepaliveManager struct {
-	config *Config
-	client *PIAClient
-	log    *log.Logger
-	state  *State
-	mu     sync.Mutex
+	config      *Config
+	client      *PIAClient
+	log         *log.Logger
+	state       *State
+	mu          sync.Mutex
+	onReconnect func()
 }
 
 // State tracks port forwarding state.
@@ -32,12 +33,13 @@ type State struct {
 }
 
 // NewKeepaliveManager creates a new keepalive manager.
-func NewKeepaliveManager(config *Config, client *PIAClient, logger *log.Logger) *KeepaliveManager {
+func NewKeepaliveManager(config *Config, client *PIAClient, logger *log.Logger, onReconnect func()) *KeepaliveManager {
 	return &KeepaliveManager{
-		config: config,
-		client: client,
-		log:    logger,
-		state:  &State{},
+		config:      config,
+		client:      client,
+		log:         logger,
+		state:       &State{},
+		onReconnect: onReconnect,
 	}
 }
 
@@ -54,7 +56,6 @@ func (m *KeepaliveManager) Run(ctx context.Context) error {
 }
 
 func (m *KeepaliveManager) initialSetup() error {
-	log.Blank()
 	log.Step("Acquiring port forward signature...")
 	m.log.Debug("Starting initial signature acquisition (max retries: 5)")
 
@@ -65,6 +66,7 @@ func (m *KeepaliveManager) initialSetup() error {
 		log.Error(fmt.Sprintf("Port forwarding failed: %v", err))
 		m.log.Debug("Initial signature acquisition failed, triggering reconnect")
 		m.triggerReconnect()
+		return fmt.Errorf("signature acquisition failed: %w", err)
 	}
 
 	m.log.Debug("Parsing initial signature response...")
@@ -73,6 +75,7 @@ func (m *KeepaliveManager) initialSetup() error {
 		log.Error(fmt.Sprintf("Failed to parse signature: %v", err))
 		m.log.Debug("Payload parsing failed: %v", err)
 		m.triggerReconnect()
+		return fmt.Errorf("payload parsing failed: %w", err)
 	}
 
 	m.log.Debug("Initial parsed values:")
@@ -85,6 +88,7 @@ func (m *KeepaliveManager) initialSetup() error {
 		log.Error("Failed to extract port from response")
 		m.log.Debug("PORT is zero after parsing")
 		m.triggerReconnect()
+		return fmt.Errorf("port is zero after parsing")
 	}
 
 	m.mu.Lock()
@@ -338,8 +342,17 @@ func (m *KeepaliveManager) handleRefreshFailure(err error) {
 	m.triggerReconnect()
 }
 
-// triggerReconnect signals the monitor to reconnect and exits.
+// triggerReconnect signals that a VPN reconnection is needed.
+// In orchestrated mode, calls the onReconnect callback.
+// In legacy standalone mode, writes a flag file and exits.
 func (m *KeepaliveManager) triggerReconnect() {
+	if m.onReconnect != nil {
+		m.log.Debug("Signaling orchestrator to reconnect")
+		m.onReconnect()
+		return
+	}
+
+	// Legacy standalone mode
 	os.WriteFile("/tmp/pf_signature_failed", []byte(""), 0644)
 	os.Exit(1)
 }

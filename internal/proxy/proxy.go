@@ -37,13 +37,6 @@ func Run(ctx context.Context) error {
 	go p.startSOCKS5()
 
 	// Start HTTP proxy (blocks until context is done or error)
-	authStatus := "no authentication"
-	if p.user != "" {
-		authStatus = "authenticated"
-	}
-	log.Printf("HTTP proxy listening on :%s (%s)", p.httpPort, authStatus)
-	log.Printf("SOCKS5 proxy listening on :%s (%s)", p.socksPort, authStatus)
-
 	server := &http.Server{
 		Addr:         ":" + p.httpPort,
 		Handler:      p,
@@ -165,12 +158,6 @@ func (p *Proxy) startSOCKS5() {
 		log.Fatalf("Failed to start SOCKS5 proxy: %v", err)
 	}
 	defer listener.Close()
-
-	authStatus := "no authentication"
-	if p.user != "" {
-		authStatus = "authenticated"
-	}
-	log.Printf("SOCKS5 proxy listening on :%s (%s)", p.socksPort, authStatus)
 
 	for {
 		conn, err := listener.Accept()

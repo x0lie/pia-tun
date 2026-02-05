@@ -63,6 +63,10 @@ CACHE_METACN="/tmp/pia_serverlist"
 # Maximum token age in seconds (24 hours)
 MAX_TOKEN_AGE=86400
 
+# Establish PIA_CN and PIA_IP
+PIA_CN=${PIA_CN:-""}
+PIA_IP=${PIA_IP:-""}
+
 # Helper: Invalidate token cache (forces fresh fetch on next authenticate)
 invalidate_token_cache() {
     show_debug "Invalidating token cache"
@@ -884,7 +888,7 @@ bring_up_wireguard() {
         show_debug "Routing rules:"
         ip rule show | grep -E "(priority 100|priority 200|priority 300)" | while read -r line; do
             show_debug "  $line"
-        done
+        done || true
     fi
     
     return 0

@@ -48,11 +48,11 @@ func Warning(msg string) {
 }
 
 func Step(msg string) {
-	fmt.Printf("%s\u25b6%s %s\n", ColorBlue, ColorReset, msg)
+	fmt.Printf("\n%s\u25b6%s %s\n", ColorBlue, ColorReset, msg)
 }
 
 func Info(msg string) {
-	fmt.Printf("  %s\u25cb%s %s\n", ColorBlue, ColorReset, msg)
+	fmt.Printf("  %s\n", msg)
 }
 
 func Blank() {

@@ -29,6 +29,10 @@ type Monitor struct {
 	metrics           *Metrics
 	mu                sync.Mutex
 
+	// Reconnect callback for orchestrated mode.
+	// When set, triggerReconnect calls this instead of writing to a pipe file.
+	onReconnect func()
+
 	// Health status for /health endpoint
 	healthy         bool
 	lastHealthCheck time.Time
@@ -83,6 +87,14 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 			return
 
 		case <-ticker.C:
+			// Check for external reconnect trigger (used by test suite)
+			if _, err := os.Stat("/tmp/trigger_reconnect"); err == nil {
+				os.Remove("/tmp/trigger_reconnect")
+				m.log.Debug("External reconnect trigger detected")
+				m.triggerReconnect()
+				continue
+			}
+
 			// Check for port forwarding signature failure flag
 			if _, err := os.Stat("/tmp/pf_signature_failed"); err == nil {
 				if removeErr := os.Remove("/tmp/pf_signature_failed"); removeErr != nil {
@@ -160,6 +172,13 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 				recovered := false
 
 				for {
+					// Exit rapid checks if reconnect is already in progress
+					if _, err := os.Stat("/tmp/monitor_wait"); err == nil {
+						m.log.Debug("Reconnect in progress, exiting rapid checks")
+						recovered = true
+						break
+					}
+
 					if _, pfErr := os.Stat("/tmp/pf_signature_failed"); pfErr == nil {
 						os.Remove("/tmp/pf_signature_failed")
 						m.log.Debug("Port forwarding failure during rapid checks")
@@ -193,6 +212,16 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 				if !recovered {
 					fmt.Printf("\n  %s\u2717%s VPN connection lost (down for more than %s)\n",
 						log.ColorRed, log.ColorReset, m.config.FailureWindow)
+
+					if m.onReconnect != nil {
+						// Orchestrated mode: signal reconnect and continue monitoring.
+						// The orchestrator handles teardown, reconnection, and service restart.
+						// The monitor will skip health checks while /tmp/monitor_wait exists.
+						m.triggerReconnect()
+						continue
+					}
+
+					// Legacy standalone mode: kill portforward and wait for reconnection.
 					exec.Command("pkill", "-f", "portforward").Run()
 					m.triggerReconnect()
 
@@ -262,7 +291,10 @@ func (m *Monitor) updateMetrics(result *HealthCheckResult, healthy bool) {
 }
 
 // Run starts the monitor. This is the main entry point called by the dispatcher.
-func Run(ctx context.Context) error {
+// onReconnect is an optional callback for orchestrated mode. When set, the monitor
+// calls it instead of writing to a pipe file when a reconnect is needed. Pass nil
+// for legacy standalone mode.
+func Run(ctx context.Context, onReconnect func()) error {
 	cfg := loadConfig()
 
 	logger := &log.Logger{
@@ -275,9 +307,10 @@ func Run(ctx context.Context) error {
 	}
 
 	monitor := &Monitor{
-		config:  cfg,
-		log:     logger,
-		metrics: metrics,
+		config:      cfg,
+		log:         logger,
+		metrics:     metrics,
+		onReconnect: onReconnect,
 	}
 
 	// Always start HTTP server for /health endpoint

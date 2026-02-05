@@ -17,7 +17,7 @@ IMAGE_NAME="${IMAGE_NAME:-pia-tun:test}"
 
 # Configurable timeouts (can be overridden via environment variables)
 TEST_TIMEOUT="${TEST_TIMEOUT:-120}"              # VPN connection timeout (seconds)
-PIPE_WAIT_TIMEOUT="${PIPE_WAIT_TIMEOUT:-120}"   # Named pipe creation timeout (seconds)
+MONITOR_READY_TIMEOUT="${MONITOR_READY_TIMEOUT:-30}"  # Health monitor readiness timeout (seconds)
 RECONNECT_TIMEOUT="${RECONNECT_TIMEOUT:-45}"    # Reconnection completion timeout (seconds)
 PORT_FORWARD_TIMEOUT="${PORT_FORWARD_TIMEOUT:-60}"  # Port forwarding timeout (seconds)
 LEAK_TEST_DURATION="${LEAK_TEST_DURATION:-10}"  # Killswitch leak test duration (seconds)
@@ -184,6 +184,7 @@ start_container() {
         -e PROXY_ENABLED="${PROXY_ENABLED:-true}" \
         -e PROXY_USER="${PROXY_USER:-}" \
         -e PROXY_PASS="${PROXY_PASS:-}" \
+        -e HC_FAILURE_WINDOW="${HC_FAILURE_WINDOW:-15}" \
         -e LOG_LEVEL=info \
         "$IMAGE_NAME" > /dev/null
 
@@ -372,10 +373,12 @@ test_killswitch() {
         return 1
     fi
 
+    sleep 3
+
     info "Bringing down VPN interface..."
     docker exec "$CONTAINER_NAME" ip link set pia0 down 2>/dev/null || true
 
-    sleep 2
+    sleep 1
 
     # Run leak tester with high concurrency
     info "Running intensive leak tests (${LEAK_TEST_DURATION}s, 50 concurrent workers)..."
@@ -457,64 +460,15 @@ test_reconnection() {
         return 0
     fi
 
-    # Wait for named pipe to be created (indicates run.sh is ready for reconnection signals)
-    info "Waiting for reconnect named pipe to be created..."
-
-    for i in $(seq 1 $PIPE_WAIT_TIMEOUT); do
-        if docker exec "$CONTAINER_NAME" test -p /tmp/vpn_reconnect_pipe 2>/dev/null; then
-            info "Named pipe ready (found after ${i}s)"
+    # Wait for monitor to be ready (health endpoint responding)
+    info "Waiting for health monitor to be ready..."
+    for i in $(seq 1 30); do
+        if docker exec "$CONTAINER_NAME" curl -s -o /dev/null http://localhost:9090/health 2>/dev/null; then
+            info "Health monitor ready (after ${i}s)"
             break
         fi
-
-        # Progress indicator
-        if [ $((i % 15)) -eq 0 ]; then
-            info "Still waiting for named pipe... (${i}s/${PIPE_WAIT_TIMEOUT}s)"
-        fi
-
         sleep 1
     done
-
-    # Verify pipe exists
-    if ! docker exec "$CONTAINER_NAME" test -p /tmp/vpn_reconnect_pipe 2>/dev/null; then
-        fail "Named pipe not created after ${PIPE_WAIT_TIMEOUT}s"
-        return 1
-    fi
-
-    # Wait for initial port forwarding to complete before triggering reconnection
-    # This prevents killing the port forwarding process mid-acquisition
-    # Check by looking for the /tmp/port_forwarding_complete flag or the port file
-    info "Checking if port forwarding is enabled..."
-
-    # Give it a moment to start
-    sleep 5
-
-    # Check if port forwarding process is running
-    # if docker exec "$CONTAINER_NAME" pgrep -f "portforward" >/dev/null 2>&1; then
-    #     info "Port forwarding is enabled, waiting for initial acquisition to complete..."
-
-    #     for i in $(seq 1 60); do
-    #         # Check for completion flag
-    #         if docker exec "$CONTAINER_NAME" test -f /tmp/port_forwarding_complete 2>/dev/null; then
-    #             INITIAL_PORT=$(docker exec "$CONTAINER_NAME" cat /run/pia-tun/port 2>/dev/null || echo "unknown")
-    #             info "Port forwarding ready (port: $INITIAL_PORT, took ${i}s)"
-    #             break
-    #         fi
-
-    #         if [ $((i % 10)) -eq 0 ]; then
-    #             info "Still waiting for port forwarding... (${i}s/60s)"
-    #         fi
-
-    #         sleep 1
-    #     done
-
-    #     # Check if we got a port
-    #     if ! docker exec "$CONTAINER_NAME" test -f /tmp/port_forwarding_complete 2>/dev/null; then
-    #         skip "Port forwarding did not complete in 60s, skipping reconnection test"
-    #         return 0
-    #     fi
-    # else
-    #     info "Port forwarding not enabled, proceeding with reconnection test"
-    # fi
 
     # Copy leak tester into container BEFORE triggering reconnection
     info "Copying leak tester into container..."
@@ -545,15 +499,11 @@ test_reconnection() {
     # Give leak tester a moment to start
     sleep 2
 
-    # Trigger immediate reconnection by writing to the named pipe
-    info "Triggering reconnection via named pipe..."
-    if ! docker exec "$CONTAINER_NAME" sh -c 'echo "test_suite_reconnection" > /tmp/vpn_reconnect_pipe' 2>/dev/null; then
-        fail "Failed to write to reconnect pipe"
-        docker exec "$CONTAINER_NAME" rm -f /usr/local/bin/leaktest /tmp/reconnection_results.json 2>/dev/null || true
-        return 1
-    fi
+    # Trigger reconnection via trigger file (checked by health monitor)
+    info "Triggering reconnection via interface deletion..."
+    docker exec "$CONTAINER_NAME" ip link delete pia0
 
-    info "Wrote to reconnect pipe successfully"
+    info "Reconnect trigger created"
 
     # Wait for reconnection flag to appear (indicates reconnection has started)
     info "Waiting for reconnection to start..."
