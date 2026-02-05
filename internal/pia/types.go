@@ -1,0 +1,26 @@
+package pia
+
+// Region represents a PIA server region from the server list API.
+type Region struct {
+	ID          string              `json:"id"`
+	Name        string              `json:"name"`
+	PortForward bool                `json:"port_forward"`
+	Servers     map[string][]Server `json:"servers"`
+}
+
+// Server represents a single PIA server within a region.
+type Server struct {
+	IP string `json:"ip"`
+	CN string `json:"cn"`
+}
+
+// AddKeyResponse contains the WireGuard tunnel parameters returned by
+// PIA's addKey API after registering a client public key.
+type AddKeyResponse struct {
+	Status     string   `json:"status"`
+	ServerKey  string   `json:"server_key"`
+	ServerPort int      `json:"server_port"`
+	PeerIP     string   `json:"peer_ip"`
+	ServerVIP  string   `json:"server_vip"`
+	DNSServers []string `json:"dns_servers"`
+}
