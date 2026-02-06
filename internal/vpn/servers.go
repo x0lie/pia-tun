@@ -59,9 +59,10 @@ type serverLatency struct {
 
 // SelectServer tests latency to candidates in parallel and returns the lowest-latency server.
 // Each candidate gets a temporary firewall exemption for its IP on port 443.
+// dialTimeout controls how long to wait for each TCP connection attempt.
 // If all servers timeout, returns the first candidate with latency 0.
 // Returns error only if candidates is empty.
-func SelectServer(ctx context.Context, candidates []pia.CachedServer, fw *firewall.Firewall, maxLatency time.Duration, logger *log.Logger) (pia.CachedServer, time.Duration, error) {
+func SelectServer(ctx context.Context, candidates []pia.CachedServer, fw *firewall.Firewall, dialTimeout time.Duration, logger *log.Logger) (pia.CachedServer, time.Duration, error) {
 	if len(candidates) == 0 {
 		return pia.CachedServer{}, 0, fmt.Errorf("no server candidates")
 	}
@@ -104,7 +105,7 @@ func SelectServer(ctx context.Context, candidates []pia.CachedServer, fw *firewa
 		wg.Add(1)
 		go func(idx int, ip string) {
 			defer wg.Done()
-			lat := measureLatency(ctx, ip, maxLatency)
+			lat := measureLatency(ctx, ip, dialTimeout)
 			resultCh <- result{idx: idx, latency: lat}
 		}(i, srv.IP)
 	}
