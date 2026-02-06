@@ -24,8 +24,9 @@ type Config struct {
 
 // ConnectionInfo carries VPN connection details for metrics updates.
 type ConnectionInfo struct {
-	Server string
-	IP     string
+	Server  string
+	IP      string
+	Latency int64 // milliseconds
 }
 
 // State allows the orchestrator to communicate with the monitor
@@ -54,6 +55,11 @@ type Monitor struct {
 	// Health status for /health endpoint
 	healthy         bool
 	lastHealthCheck time.Time
+
+	// Connection info from orchestrator (replaces /tmp/ file reads)
+	currentServer  string
+	currentIP      string
+	currentLatency int64 // milliseconds
 }
 
 func loadConfig() Config {
@@ -90,13 +96,6 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 
 	const normalTimeout = 5 * time.Second
 	const rapidTimeout = 2 * time.Second
-
-	if m.metrics != nil {
-		latency := m.getServerLatency()
-		if latency > 0 {
-			m.metrics.ObserveServerLatency(float64(latency) / 1000.0)
-		}
-	}
 
 	for {
 		select {
@@ -276,15 +275,27 @@ func Run(ctx context.Context, onReconnect func(), state *State) error {
 	// Always start HTTP server for /health endpoint
 	go startHTTPServer(monitor)
 
-	if cfg.MetricsEnabled && state != nil && state.ConnInfo != nil {
+	// Listen for connection info updates from orchestrator
+	if state != nil && state.ConnInfo != nil {
 		go func() {
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				case info := <-state.ConnInfo:
-					metrics.RecordNewConnection("pia0", info.Server, info.IP)
-					logger.Debug("Connection event: server=%s, ip=%s", info.Server, info.IP)
+					monitor.mu.Lock()
+					monitor.currentServer = info.Server
+					monitor.currentIP = info.IP
+					monitor.currentLatency = info.Latency
+					monitor.mu.Unlock()
+
+					if cfg.MetricsEnabled && metrics != nil {
+						metrics.RecordNewConnection("pia0", info.Server, info.IP)
+						if info.Latency > 0 {
+							metrics.ObserveServerLatency(float64(info.Latency) / 1000.0)
+						}
+					}
+					logger.Debug("Connection event: server=%s, ip=%s, latency=%dms", info.Server, info.IP, info.Latency)
 				}
 			}
 		}()

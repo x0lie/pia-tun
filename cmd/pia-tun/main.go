@@ -11,7 +11,6 @@ import (
 	"github.com/x0lie/pia-tun/internal/app"
 	"github.com/x0lie/pia-tun/internal/cacher"
 	"github.com/x0lie/pia-tun/internal/monitor"
-	"github.com/x0lie/pia-tun/internal/portforward"
 	"github.com/x0lie/pia-tun/internal/proxy"
 )
 
@@ -44,7 +43,9 @@ func main() {
 	case "cacher":
 		err = cacher.Run(ctx, nil)
 	case "portforward":
-		err = portforward.Run(ctx, nil, nil)
+		fmt.Fprintln(os.Stderr, "Standalone portforward mode is no longer supported.")
+		fmt.Fprintln(os.Stderr, "Port forwarding runs automatically when PF_ENABLED=true in the orchestrator.")
+		os.Exit(1)
 	case "proxy":
 		err = proxy.Run(ctx)
 	default:

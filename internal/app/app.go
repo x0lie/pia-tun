@@ -207,9 +207,6 @@ func (a *App) connect(ctx context.Context) error {
 	}
 	a.connInfo = connInfo
 
-	// Write connection info to /tmp/ files for portforward/cacher backward compat
-	a.writeConnectionFiles()
-
 	log.Success("VPN tunnel established")
 	a.log.Debug("Connected to %s (%s) in %s, latency %dms",
 		connInfo.ServerCN, connInfo.ServerIP, connInfo.Location, connInfo.Latency.Milliseconds())
@@ -295,8 +292,14 @@ func (a *App) runServices(ctx context.Context, reconnectCh chan struct{}) error 
 		pfReconnect := func() {
 			svcCancel(ErrReconnect)
 		}
+		pfCfg := portforward.ConnectionConfig{
+			Token:     a.connInfo.Token,
+			ClientIP:  a.connInfo.ClientIP,
+			ServerCN:  a.connInfo.ServerCN,
+			PFGateway: a.connInfo.PFGateway,
+		}
 		g.Go(func() error {
-			return portforward.Run(gCtx, pfReconnect, pfReady)
+			return portforward.Run(gCtx, pfCfg, pfReconnect, pfReady)
 		})
 
 		select {
@@ -347,8 +350,9 @@ func (a *App) signalConnectionReady() {
 
 	select {
 	case a.monitorState.ConnInfo <- monitor.ConnectionInfo{
-		Server: a.connInfo.ServerCN,
-		IP:     a.connInfo.ServerIP,
+		Server:  a.connInfo.ServerCN,
+		IP:      a.connInfo.ServerIP,
+		Latency: a.connInfo.Latency.Milliseconds(),
 	}:
 	default:
 		a.log.Debug("Connection info channel full, skipping")
@@ -560,30 +564,6 @@ func (a *App) logConfig() {
 	a.log.Debug("  PROXY_ENABLED=%v", a.cfg.ProxyEnabled)
 	a.log.Debug("  METRICS=%v", a.cfg.MetricsEnabled)
 	a.log.Debug("  LOG_LEVEL=%s", a.cfg.LogLevel)
-}
-
-// writeConnectionFiles writes connection info to /tmp/ files for backward compat
-// with portforward and other components that still read from temp files.
-func (a *App) writeConnectionFiles() {
-	if a.connInfo == nil {
-		return
-	}
-
-	files := map[string]string{
-		"/tmp/pia_login_token": a.connInfo.Token,
-		"/tmp/client_ip":       a.connInfo.ClientIP,
-		"/tmp/pia_cn":          a.connInfo.ServerCN,
-		"/tmp/pf_gateway":      a.connInfo.PFGateway,
-	}
-
-	for path, content := range files {
-		if content == "" {
-			continue
-		}
-		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-			a.log.Debug("Failed to write %s: %v", path, err)
-		}
-	}
 }
 
 // parseNetworkList splits a comma-separated list of networks into a slice.

@@ -23,20 +23,9 @@ type HealthCheckResult struct {
 }
 
 func (m *Monitor) getCurrentServer() string {
-	data, err := os.ReadFile("/tmp/pia_cn")
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
-
-func (m *Monitor) getServerLatency() int64 {
-	data, err := os.ReadFile("/tmp/server_latency")
-	if err != nil {
-		return 0
-	}
-	latency, _ := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
-	return latency
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.currentServer
 }
 
 func (m *Monitor) getCurrentIP() string {

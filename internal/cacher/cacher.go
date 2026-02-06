@@ -73,18 +73,6 @@ func refreshAll(ctx context.Context, logger *log.Logger, cfg *cacherConfig, clie
 		} else {
 			cache.SetToken(token)
 			logger.Debug("Token refreshed (length: %d)", len(token))
-
-			// Backward compat: write /tmp/ files
-			if err := writeTokenFile(token); err != nil {
-				logger.Debug("Failed to write token file: %v", err)
-			}
-		}
-
-		// Backward compat: write auth IPs
-		for _, ip := range authIPs {
-			if err := addIPToFile(piaIPsFile, ip, maxCachedIPs); err != nil {
-				logger.Debug("Failed to cache auth IP %s: %v", ip, err)
-			}
 		}
 	}
 
@@ -110,18 +98,6 @@ func refreshAll(ctx context.Context, logger *log.Logger, cfg *cacherConfig, clie
 			servers := pia.FlattenRegions(regions)
 			cache.Servers = mergeServers(cache.Servers, servers)
 			logger.Debug("Server cache updated with %d servers", len(cache.Servers))
-
-			// Backward compat: write /tmp/ files
-			if err := writeServerFile(cache.Servers); err != nil {
-				logger.Debug("Failed to write server cache file: %v", err)
-			}
-		}
-
-		// Backward compat: write serverlist IPs
-		for _, ip := range slIPs {
-			if err := addIPToFile(serverlistIPsFile, ip, maxCachedIPs); err != nil {
-				logger.Debug("Failed to cache serverlist IP %s: %v", ip, err)
-			}
 		}
 	}
 
@@ -129,7 +105,7 @@ func refreshAll(ctx context.Context, logger *log.Logger, cfg *cacherConfig, clie
 }
 
 // Run starts the cacher service. cache may be nil for standalone mode,
-// in which case a local CacheState is used (only /tmp/ files are written).
+// in which case a local CacheState is used.
 func Run(ctx context.Context, cache *vpn.CacheState) error {
 	if cache == nil {
 		cache = &vpn.CacheState{}

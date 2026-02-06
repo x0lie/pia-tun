@@ -3,8 +3,6 @@ package portforward
 import (
 	"context"
 	"fmt"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/config"
@@ -24,67 +22,41 @@ type Config struct {
 	DebugMode            bool
 }
 
-func loadConfig() (*Config, error) {
-	token, err := os.ReadFile("/tmp/pia_login_token")
-	if err != nil {
-		return nil, fmt.Errorf("failed to read token: %w", err)
-	}
-
-	peerIP, err := os.ReadFile("/tmp/client_ip")
-	if err != nil {
-		return nil, fmt.Errorf("failed to read client IP: %w", err)
-	}
-
-	metaCN, err := os.ReadFile("/tmp/pia_cn")
-	if err != nil {
-		return nil, fmt.Errorf("failed to read meta CN: %w", err)
-	}
-
-	pfGateway, err := os.ReadFile("/tmp/pf_gateway")
-	if err != nil {
-		return nil, fmt.Errorf("failed to read PF gateway: %w", err)
-	}
-
-	gateway := strings.TrimSpace(string(pfGateway))
-	if gateway == "" || gateway == "null" {
-		return nil, fmt.Errorf("no PF gateway available")
-	}
-
-	cfg := &Config{
-		Token:                strings.TrimSpace(string(token)),
-		PeerIP:               strings.TrimSpace(string(peerIP)),
-		MetaCN:               strings.TrimSpace(string(metaCN)),
-		PFGateway:            gateway,
-		BindInterval:         time.Duration(config.GetEnvInt("PF_BIND_INTERVAL", 900)) * time.Second,
-		SignatureRefreshDays: config.GetEnvInt("PF_SIGNATURE_REFRESH_DAYS", 31),
-		SignatureSafetyHours: config.GetEnvInt("PF_SIGNATURE_SAFETY_HOURS", 24),
-		PortFile:             config.GetEnvOrDefault("PORT_FILE", "/run/pia-tun/port"),
-		DebugMode:            config.IsDebugMode(),
-	}
-
-	return cfg, nil
+// ConnectionConfig holds the VPN connection details needed for port forwarding.
+type ConnectionConfig struct {
+	Token     string // PIA authentication token
+	ClientIP  string // Client's tunnel IP
+	ServerCN  string // Server certificate name
+	PFGateway string // Port forwarding gateway IP
 }
 
-// Run starts the port forwarding service. This is the main entry point called by the dispatcher.
-// onReconnect is an optional callback for orchestrated mode. When set, the keepalive manager
-// calls it instead of os.Exit(1) when a reconnect is needed. Pass nil for legacy standalone mode.
-func Run(ctx context.Context, onReconnect func(), ready chan<- struct{}) error {
+// Run starts the port forwarding service. This is the main entry point called by the orchestrator.
+// connCfg provides the VPN connection details needed for port forwarding.
+// onReconnect is called when a reconnect is needed (e.g., port change or API failure).
+func Run(ctx context.Context, connCfg ConnectionConfig, onReconnect func(), ready chan<- struct{}) error {
 	signalReady := func() {
 		if ready != nil {
 			close(ready)
 		}
 	}
 
-	cfg, err := loadConfig()
-	if err != nil {
-		log.Error(fmt.Sprintf("Port forwarding failed: %v", err))
-
-		logger := &log.Logger{Enabled: config.IsDebugMode()}
-		logger.Debug("Failed to load config: %v", err)
-
+	if connCfg.PFGateway == "" {
+		log.Error("Port forwarding unavailable: no PF gateway")
 		signalReady()
 		<-ctx.Done()
 		return nil
+	}
+
+	cfg := &Config{
+		Token:                connCfg.Token,
+		PeerIP:               connCfg.ClientIP,
+		MetaCN:               connCfg.ServerCN,
+		PFGateway:            connCfg.PFGateway,
+		BindInterval:         time.Duration(config.GetEnvInt("PF_BIND_INTERVAL", 900)) * time.Second,
+		SignatureRefreshDays: config.GetEnvInt("PF_SIGNATURE_REFRESH_DAYS", 31),
+		SignatureSafetyHours: config.GetEnvInt("PF_SIGNATURE_SAFETY_HOURS", 24),
+		PortFile:             config.GetEnvOrDefault("PORT_FILE", "/run/pia-tun/port"),
+		DebugMode:            config.IsDebugMode(),
 	}
 
 	logger := &log.Logger{
