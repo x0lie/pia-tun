@@ -166,6 +166,16 @@ func (a *App) initialize(ctx context.Context) error {
 		return fmt.Errorf("killswitch setup failed: %w", err)
 	}
 
+	// Set up local network bypass routes (once, not on reconnect)
+	if a.cfg.LocalNetworks != "" {
+		networks := parseNetworkList(a.cfg.LocalNetworks)
+		if err := a.fw.SetupLocalNetworkRoutes(networks); err != nil {
+			log.Error("Failed to setup local network routes")
+			return fmt.Errorf("local network routes: %w", err)
+		}
+		a.log.Debug("Local network routes configured for %d networks", len(networks))
+	}
+
 	// Configure DNS once after killswitch is up
 	a.writeDNS()
 
@@ -432,6 +442,7 @@ func (a *App) cleanup() {
 	bgCtx := context.Background()
 	a.fw.RemoveVPN()
 	wg.Down(bgCtx, a.log)
+	a.fw.CleanupLocalNetworkRoutes()
 	a.shellFunc(bgCtx, "cleanup_killswitch")
 
 	log.Success("Cleanup complete")
@@ -573,4 +584,16 @@ func (a *App) writeConnectionFiles() {
 			a.log.Debug("Failed to write %s: %v", path, err)
 		}
 	}
+}
+
+// parseNetworkList splits a comma-separated list of networks into a slice.
+func parseNetworkList(networks string) []string {
+	var result []string
+	for _, net := range strings.Split(networks, ",") {
+		net = strings.TrimSpace(net)
+		if net != "" {
+			result = append(result, net)
+		}
+	}
+	return result
 }
