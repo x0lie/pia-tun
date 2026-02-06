@@ -170,7 +170,7 @@ func (a *App) initialize(ctx context.Context) error {
 	a.writeDNS()
 
 	// Non-fatal: capture pre-VPN IP for leak detection
-	a.shellFunc(ctx, "capture_real_ip")
+	a.captureRealIP(ctx)
 
 	return nil
 }
