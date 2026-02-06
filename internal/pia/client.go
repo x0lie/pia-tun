@@ -21,11 +21,15 @@ const (
 	caCertPath     = "/app/ca.rsa.4096.crt"
 )
 
+// authHostname is used for TLS SNI and Host header when connecting by IP.
+const authHostname = "www.privateinternetaccess.com"
+
 // GenerateToken authenticates with PIA and returns a login token.
-// host is the IP or hostname of the auth server.
+// ip is the server IP to connect to. The hostname is used for TLS SNI.
 // Returns *AuthError for invalid credentials, *ConnectivityError for network failures.
-func GenerateToken(ctx context.Context, client *http.Client, host, user, pass string) (string, error) {
-	reqURL := fmt.Sprintf("https://%s%s", host, authPath)
+func GenerateToken(ctx context.Context, client *http.Client, ip, user, pass string) (string, error) {
+	// Use hostname in URL for correct Host header, but connect to IP
+	reqURL := fmt.Sprintf("https://%s%s", authHostname, authPath)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
@@ -33,7 +37,10 @@ func GenerateToken(ctx context.Context, client *http.Client, host, user, pass st
 	}
 	req.SetBasicAuth(user, pass)
 
-	resp, err := client.Do(req)
+	// Create a client that connects to the IP but uses hostname for SNI
+	authClient := newHostMappedClient(client.Timeout, authHostname, ip)
+
+	resp, err := authClient.Do(req)
 	if err != nil {
 		return "", &ConnectivityError{Op: "auth", Msg: "request failed", Err: err}
 	}
@@ -73,18 +80,25 @@ func GenerateToken(ctx context.Context, client *http.Client, host, user, pass st
 	return result.Token, nil
 }
 
+// serverlistHostname is used for TLS SNI and Host header when connecting by IP.
+const serverlistHostname = "serverlist.piaservers.net"
+
 // FetchServerList fetches the PIA server list.
-// host is the IP or hostname of the serverlist server.
+// ip is the server IP to connect to. The hostname is used for TLS SNI.
 // Returns *ConnectivityError for network failures.
-func FetchServerList(ctx context.Context, client *http.Client, host string) ([]Region, error) {
-	reqURL := fmt.Sprintf("https://%s%s", host, serverListPath)
+func FetchServerList(ctx context.Context, client *http.Client, ip string) ([]Region, error) {
+	// Use hostname in URL for correct Host header, but connect to IP
+	reqURL := fmt.Sprintf("https://%s%s", serverlistHostname, serverListPath)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create serverlist request: %w", err)
 	}
 
-	resp, err := client.Do(req)
+	// Create a client that connects to the IP but uses hostname for SNI
+	serverlistClient := newHostMappedClient(client.Timeout, serverlistHostname, ip)
+
+	resp, err := serverlistClient.Do(req)
 	if err != nil {
 		return nil, &ConnectivityError{Op: "serverlist", Msg: "request failed", Err: err}
 	}
@@ -198,6 +212,29 @@ func newAddKeyClient(serverIP, cn string) (*http.Client, error) {
 			TLSHandshakeTimeout: 5 * time.Second,
 		},
 	}, nil
+}
+
+// newHostMappedClient creates an http.Client that connects to targetIP but uses
+// hostname for TLS SNI and the Host header.
+// Certificate verification is skipped since PIA endpoints use certs that don't
+// chain to system-trusted CAs when accessed by IP.
+func newHostMappedClient(timeout time.Duration, hostname, targetIP string) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				ServerName:         hostname,
+				InsecureSkipVerify: true,
+			},
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				_, port, _ := net.SplitHostPort(addr)
+				return (&net.Dialer{Timeout: timeout}).DialContext(
+					ctx, network, net.JoinHostPort(targetIP, port),
+				)
+			},
+			TLSHandshakeTimeout: 5 * time.Second,
+		},
+	}
 }
 
 // findJSONEnd finds the closing brace of the top-level JSON object.
