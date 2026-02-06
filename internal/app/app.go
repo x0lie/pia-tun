@@ -26,7 +26,7 @@ import (
 var ErrReconnect = errors.New("reconnect requested")
 
 // shellPreamble sources all shell scripts to make their functions available.
-const shellPreamble = "set -euo pipefail; source /app/scripts/ui.sh; source /app/scripts/killswitch.sh; source /app/scripts/vpn.sh; source /app/scripts/verify_connection.sh; "
+const shellPreamble = "set -euo pipefail; source /app/scripts/ui.sh; source /app/scripts/killswitch.sh; source /app/scripts/verify_connection.sh; "
 
 // App holds the application state and configuration.
 type App struct {
