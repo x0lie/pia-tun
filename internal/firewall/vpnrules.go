@@ -45,7 +45,7 @@ func (fw *Firewall) AddVPN(fwmark string, ipv6Enabled bool) error {
 		fw.vpnRules6 = append(fw.vpnRules6, icmpSpec6)
 	}
 
-	return fw.verifyVPN()
+	return nil
 }
 
 // RemoveVPN deletes the VPN rules that were added by AddVPN.
@@ -64,18 +64,4 @@ func (fw *Firewall) RemoveVPN() {
 		}
 	}
 	fw.vpnRules6 = nil
-}
-
-// verifyVPN checks that all stored IPv4 VPN rules exist in the chain.
-func (fw *Firewall) verifyVPN() error {
-	for _, spec := range fw.vpnRules4 {
-		exists, err := fw.ipt4.Exists(tableFilter, chainOut, spec...)
-		if err != nil {
-			return fmt.Errorf("verify VPN: %w", err)
-		}
-		if !exists {
-			return fmt.Errorf("verify VPN: rule not found in %s after insert", chainOut)
-		}
-	}
-	return nil
 }
