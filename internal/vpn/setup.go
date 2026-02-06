@@ -25,8 +25,8 @@ type SetupConfig struct {
 	PIAPass    string
 	Location   string
 	PFRequired bool
-	ManualCN   string // PIA_CN override
-	ManualIP   string // PIA_IP override
+	ManualCN   string
+	ManualIP   string
 	MTU        int
 	IPv6       bool
 	WGBackend  string
@@ -36,16 +36,7 @@ type SetupConfig struct {
 // Returns *pia.AuthError for credential failures (fatal).
 // Returns *pia.ConnectivityError for network failures (retry with WAN check).
 func Setup(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *CacheState, resolver *pia.Resolver, logger *log.Logger) (*ConnectionInfo, error) {
-	// Validate required config
-	if cfg.PIAUser == "" || cfg.PIAPass == "" {
-		return nil, fmt.Errorf("PIA credentials not configured")
-	}
-	if cfg.Location == "" && cfg.ManualCN == "" {
-		return nil, fmt.Errorf("PIA_LOCATION not configured")
-	}
-
-	// Step 1: Select server and authenticate in parallel
-	// These are independent operations that both require network access.
+	// Step 1: Select server and authenticate
 	var serverIP, serverCN, region string
 	var latency time.Duration
 	var token string
@@ -99,14 +90,14 @@ func Setup(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *C
 		return nil, authErr
 	}
 
-	// Step 3: Generate WireGuard key pair
+	// Step 2: Generate WireGuard key pair
 	privateKey, publicKey, err := wg.GenerateKeyPair(ctx)
 	if err != nil {
 		return nil, &pia.ConnectivityError{Op: "keygen", Msg: "generate WireGuard keys", Err: err}
 	}
 	logger.Debug("Generated WireGuard key pair")
 
-	// Step 4: Register public key with PIA server
+	// Step 3: Register public key with PIA server
 	logger.Debug("Registering public key with %s", serverCN)
 	exemption, err := fw.AddTemporaryExemption(serverIP, "1337", "tcp", "addkey")
 	if err != nil {
@@ -119,7 +110,7 @@ func Setup(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *C
 	}
 	logger.Debug("Server accepted public key, peer IP: %s", addKeyResp.PeerIP)
 
-	// Step 5: Bring up WireGuard tunnel
+	// Step 4: Bring up WireGuard tunnel
 	allowedIPs := "0.0.0.0/0"
 	if cfg.IPv6 {
 		allowedIPs = "0.0.0.0/0, ::/0"
@@ -139,7 +130,7 @@ func Setup(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *C
 	}
 	logger.Debug("WireGuard tunnel up (backend: %s)", iface.Backend)
 
-	// Step 6: Add VPN to killswitch
+	// Step 5: Add VPN to killswitch
 	if err := fw.AddVPN("51820", cfg.IPv6); err != nil {
 		wg.Down(ctx, logger)
 		return nil, &pia.ConnectivityError{Op: "firewall", Msg: "add VPN to killswitch", Err: err}
@@ -168,10 +159,8 @@ func selectServer(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, c
 		return pia.CachedServer{}, 0, err
 	}
 
-	// Merge fresh servers with cache (fresh servers take priority)
 	cache.MergeServers(freshServers)
 
-	// Filter merged servers by location and port-forward requirement
 	candidates := FilterServers(cache.Servers, cfg.Location, cfg.PFRequired)
 	if len(candidates) == 0 {
 		return pia.CachedServer{}, 0, &pia.ConnectivityError{
@@ -212,7 +201,6 @@ func fetchServerList(ctx context.Context, cache *CacheState, resolver *pia.Resol
 		return nil, err
 	}
 
-	// Cache the resolved IPs
 	cache.MergeIPs(&cache.ServerListIPs, ips, 5)
 
 	for _, ip := range ips {
@@ -276,7 +264,6 @@ func authenticate(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, c
 		return "", err
 	}
 
-	// Cache the resolved IPs
 	cache.MergeIPs(&cache.AuthIPs, ips, 5)
 
 	for _, ip := range ips {
