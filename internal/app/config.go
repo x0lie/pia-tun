@@ -3,10 +3,15 @@ package app
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
 type Config struct {
+	PIAUser     string
+	PIAPass     string
+	PIALocation string
+
 	LogLevel string
 
 	IPv6Enabled    bool
@@ -48,6 +53,10 @@ type Config struct {
 
 func LoadConfig() Config {
 	return Config{
+		PIAUser:     getEnvOrSecret("PIA_USER", ""),
+		PIAPass:     getEnvOrSecret("PIA_PASS", ""),
+		PIALocation: getEnv("PIA_LOCATION", ""),
+
 		LogLevel: getEnv("LOG_LEVEL", "info"),
 
 		IPv6Enabled:    getEnvBool("IPV6_ENABLED", false),
@@ -68,12 +77,12 @@ func LoadConfig() Config {
 
 		PSClient: getEnv("PS_CLIENT", ""),
 		PSURL:    getEnv("PS_URL", ""),
-		PSUser:   getEnv("PS_USER", ""),
-		PSPass:   getEnv("PS_PASS", ""),
+		PSUser:   getEnvOrSecret("PS_USER", ""),
+		PSPass:   getEnvOrSecret("PS_PASS", ""),
 		PSCmd:    getEnv("PS_CMD", ""),
 
-		ProxyUser:     getEnv("PROXY_USER", ""),
-		ProxyPass:     getEnv("PROXY_PASS", ""),
+		ProxyUser:     getEnvOrSecret("PROXY_USER", ""),
+		ProxyPass:     getEnvOrSecret("PROXY_PASS", ""),
 		Socks5Port:    getEnvInt("SOCKS5_PORT", 1080),
 		HTTPProxyPort: getEnvInt("HTTP_PROXY_PORT", 8888),
 
@@ -92,6 +101,21 @@ func getEnv(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
+	return def
+}
+
+// getEnvOrSecret checks env var first, then Docker secrets at /run/secrets/<key>.
+// File contents are trimmed of whitespace.
+func getEnvOrSecret(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+
+	secretPath := "/run/secrets/" + strings.ToLower(key)
+	if data, err := os.ReadFile(secretPath); err == nil {
+		return strings.TrimSpace(string(data))
+	}
+
 	return def
 }
 

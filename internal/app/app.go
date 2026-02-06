@@ -114,8 +114,20 @@ func Run(ctx context.Context) error {
 	}
 }
 
-// initialize clears stale flag files, sets up the killswitch, and captures the real IP.
+// initialize validates config, clears stale state, sets up the killswitch, and configures DNS.
 func (a *App) initialize(ctx context.Context) error {
+	// Validate required credentials early
+	if a.cfg.PIAUser == "" || a.cfg.PIAPass == "" {
+		log.Error("PIA credentials not configured")
+		log.Error("Set PIA_USER and PIA_PASS environment variables, or use Docker secrets at /run/secrets/pia_user and /run/secrets/pia_pass")
+		return fmt.Errorf("PIA credentials not configured")
+	}
+	if a.cfg.PIALocation == "" && a.cfg.PIACN == "" {
+		log.Error("PIA_LOCATION not configured")
+		log.Error("Set PIA_LOCATION to a region ID (e.g., 'us_california', 'uk_london')")
+		return fmt.Errorf("PIA_LOCATION not configured")
+	}
+
 	a.log.Debug("Removing stale flag files")
 	for _, f := range []string{
 		"/tmp/monitor_up",
@@ -125,7 +137,6 @@ func (a *App) initialize(ctx context.Context) error {
 	}
 
 	exec.CommandContext(ctx, "ip", "link", "delete", "pia0").Run()
-	os.WriteFile("/etc/resolv.conf", []byte("\n"), 0644)
 
 	if err := checkCapNetAdmin(); err != nil {
 		log.Error("Container missing CAP_NET_ADMIN capability")
@@ -138,6 +149,9 @@ func (a *App) initialize(ctx context.Context) error {
 		log.Error("CRITICAL: Killswitch setup failed - cannot safely connect to VPN")
 		return fmt.Errorf("killswitch setup failed: %w", err)
 	}
+
+	// Configure DNS once after killswitch is up
+	a.writeDNS()
 
 	// Non-fatal: capture pre-VPN IP for leak detection
 	a.shellFunc(ctx, "capture_real_ip")
@@ -404,6 +418,48 @@ func (a *App) shellFunc(ctx context.Context, funcCall string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// PIA DNS servers (used when DNS="pia" or empty)
+var piaDNSServers = []string{"10.0.0.243", "10.0.0.242"}
+
+// writeDNS writes /etc/resolv.conf based on the DNS configuration.
+func (a *App) writeDNS() {
+	dns := a.cfg.DNS
+	if dns == "none" {
+		a.log.Debug("DNS disabled (DNS=none)")
+		return
+	}
+
+	var servers []string
+	if dns == "" || dns == "pia" {
+		servers = piaDNSServers
+		a.log.Debug("Using PIA DNS: %v", servers)
+	} else {
+		for _, s := range strings.Split(dns, ",") {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				servers = append(servers, s)
+			}
+		}
+		a.log.Debug("Using custom DNS: %v", servers)
+	}
+
+	if len(servers) == 0 {
+		return
+	}
+
+	var buf strings.Builder
+	buf.WriteString("# Set by pia-tun\n")
+	for _, s := range servers {
+		buf.WriteString("nameserver ")
+		buf.WriteString(s)
+		buf.WriteString("\n")
+	}
+
+	if err := os.WriteFile("/etc/resolv.conf", []byte(buf.String()), 0644); err != nil {
+		a.log.Debug("Failed to write /etc/resolv.conf: %v", err)
+	}
 }
 
 // Environment setup (called before LoadConfig)
