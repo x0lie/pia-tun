@@ -11,11 +11,14 @@ import (
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/cacher"
+	"github.com/x0lie/pia-tun/internal/firewall"
 	"github.com/x0lie/pia-tun/internal/log"
 	"github.com/x0lie/pia-tun/internal/monitor"
+	"github.com/x0lie/pia-tun/internal/pia"
 	"github.com/x0lie/pia-tun/internal/portforward"
 	"github.com/x0lie/pia-tun/internal/proxy"
 	"github.com/x0lie/pia-tun/internal/vpn"
+	"github.com/x0lie/pia-tun/internal/wg"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -31,6 +34,9 @@ type App struct {
 	log          *log.Logger
 	monitorState *monitor.State
 	cache        *vpn.CacheState
+	fw           *firewall.Firewall
+	resolver     *pia.Resolver
+	connInfo     *vpn.ConnectionInfo
 }
 
 // Run is the main entry point for the orchestrated VPN client.
@@ -145,6 +151,16 @@ func (a *App) initialize(ctx context.Context) error {
 	}
 	a.log.Debug("CAP_NET_ADMIN check passed")
 
+	// Initialize firewall
+	fw, err := firewall.New(a.log)
+	if err != nil {
+		log.Error("Failed to initialize firewall")
+		return fmt.Errorf("firewall init: %w", err)
+	}
+	a.fw = fw
+	a.resolver = pia.NewResolver(fw, a.log)
+	a.log.Debug("Firewall initialized (backend: %s)", fw.Backend())
+
 	if err := a.shellFunc(ctx, "setup_baseline_killswitch"); err != nil {
 		log.Error("CRITICAL: Killswitch setup failed - cannot safely connect to VPN")
 		return fmt.Errorf("killswitch setup failed: %w", err)
@@ -159,30 +175,36 @@ func (a *App) initialize(ctx context.Context) error {
 	return nil
 }
 
-// connect runs a single connection attempt: VPN setup, WireGuard interface, killswitch, verification.
+// connect runs a single connection attempt using the Go VPN orchestrator.
 func (a *App) connect(ctx context.Context) error {
-	// Clear DNS config before each connection attempt so stale VPN DNS doesn't interfere
-	os.WriteFile("/etc/resolv.conf", []byte("\n"), 0644)
-
-	// vpn.sh does DNS resolution, PIA authentication, server selection, WG config generation
-	if err := a.runScript(ctx, "/app/scripts/vpn.sh"); err != nil {
-		return fmt.Errorf("vpn.sh failed: %w", err)
-	}
-
 	log.Step("Establishing VPN connection...")
-	if err := a.shellFunc(ctx, "bring_up_wireguard /etc/wireguard/pia0.conf"); err != nil {
-		return fmt.Errorf("bring_up_wireguard failed: %w", err)
+
+	cfg := vpn.SetupConfig{
+		PIAUser:    a.cfg.PIAUser,
+		PIAPass:    a.cfg.PIAPass,
+		Location:   a.cfg.PIALocation,
+		PFRequired: a.cfg.PFEnabled,
+		ManualCN:   a.cfg.PIACN,
+		ManualIP:   a.cfg.PIAIP,
+		MTU:        a.cfg.MTU,
+		IPv6:       a.cfg.IPv6Enabled,
+		WGBackend:  a.cfg.WGBackend,
 	}
+
+	connInfo, err := vpn.Setup(ctx, cfg, a.fw, a.cache, a.resolver, a.log)
+	if err != nil {
+		return err // Error type (AuthError/ConnectivityError) preserved for connectLoop
+	}
+	a.connInfo = connInfo
+
+	// Write connection info to /tmp/ files for portforward/cacher backward compat
+	a.writeConnectionFiles()
+
 	log.Success("VPN tunnel established")
+	a.log.Debug("Connected to %s (%s) in %s, latency %dms",
+		connInfo.ServerCN, connInfo.ServerIP, connInfo.Location, connInfo.Latency.Milliseconds())
 
-	if err := a.shellFunc(ctx, "add_vpn_to_killswitch"); err != nil {
-		log.Error("CRITICAL: Failed to add VPN to killswitch")
-		a.shellFunc(ctx, "teardown_wireguard")
-		return fmt.Errorf("add_vpn_to_killswitch failed: %w", err)
-	}
-
-	a.shellFunc(ctx, "remove_all_temporary_exemptions")
-
+	// Verify connection (non-fatal)
 	log.Step("Verifying connection...")
 	if err := a.runScript(ctx, "/app/scripts/verify_connection.sh"); err != nil {
 		a.shellFunc(ctx, "show_vpn_connected_warning")
@@ -190,11 +212,11 @@ func (a *App) connect(ctx context.Context) error {
 	}
 
 	a.shellFunc(ctx, "show_vpn_connected")
-
 	return nil
 }
 
 // connectLoop retries connect() with exponential backoff until it succeeds or the context is cancelled.
+// Returns immediately on AuthError (bad credentials - fatal).
 func (a *App) connectLoop(ctx context.Context) error {
 	delay := 5 * time.Second
 	const maxDelay = 120 * time.Second
@@ -203,30 +225,37 @@ func (a *App) connectLoop(ctx context.Context) error {
 	defer a.monitorState.Paused.Store(false)
 
 	for {
-		if err := a.connect(ctx); err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-
-			log.Blank()
-			log.Error(fmt.Sprintf("Connection failed: %v", err))
-			log.Warning(fmt.Sprintf("Will retry in %s", delay))
-
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(delay):
-			}
-
-			delay *= 2
-			if delay > maxDelay {
-				delay = maxDelay
-			}
-			continue
+		err := a.connect(ctx)
+		if err == nil {
+			a.monitorState.Reconnecting.Store(false)
+			return nil
 		}
 
-		a.monitorState.Reconnecting.Store(false)
-		return nil
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		// AuthError is fatal - bad credentials, don't retry
+		if _, isAuth := err.(*pia.AuthError); isAuth {
+			log.Blank()
+			log.Error("Authentication failed - check PIA_USER and PIA_PASS")
+			return err
+		}
+
+		log.Blank()
+		log.Error(fmt.Sprintf("Connection failed: %v", err))
+		log.Warning(fmt.Sprintf("Will retry in %s", delay))
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+
+		delay *= 2
+		if delay > maxDelay {
+			delay = maxDelay
+		}
 	}
 }
 
@@ -302,16 +331,14 @@ func (a *App) runServices(ctx context.Context, reconnectCh chan struct{}) error 
 
 // signalConnectionReady sends connection info to the metrics listener.
 func (a *App) signalConnectionReady() {
-	server, _ := os.ReadFile("/tmp/pia_cn")
-	vpnIP, _ := os.ReadFile("/tmp/server_endpoint")
-	if len(server) == 0 || len(vpnIP) == 0 {
+	if a.connInfo == nil {
 		return
 	}
 
 	select {
 	case a.monitorState.ConnInfo <- monitor.ConnectionInfo{
-		Server: strings.TrimSpace(string(server)),
-		IP:     strings.TrimSpace(string(vpnIP)),
+		Server: a.connInfo.ServerCN,
+		IP:     a.connInfo.ServerIP,
 	}:
 	default:
 		a.log.Debug("Connection info channel full, skipping")
@@ -385,7 +412,10 @@ func (a *App) startMonitor(ctx context.Context, reconnectCh chan<- struct{}) {
 
 func (a *App) teardown() {
 	a.log.Debug("Tearing down VPN tunnel")
-	a.shellFunc(context.Background(), "teardown_wireguard")
+	// Remove VPN from killswitch first to prevent leak window
+	a.fw.RemoveVPN()
+	wg.Down(context.Background(), a.log)
+	a.connInfo = nil
 }
 
 func (a *App) cleanup() {
@@ -400,7 +430,8 @@ func (a *App) cleanup() {
 
 	// Use background context since parent ctx is likely cancelled
 	bgCtx := context.Background()
-	a.shellFunc(bgCtx, "teardown_wireguard")
+	a.fw.RemoveVPN()
+	wg.Down(bgCtx, a.log)
 	a.shellFunc(bgCtx, "cleanup_killswitch")
 
 	log.Success("Cleanup complete")
@@ -518,4 +549,28 @@ func (a *App) logConfig() {
 	a.log.Debug("  PROXY_ENABLED=%v", a.cfg.ProxyEnabled)
 	a.log.Debug("  METRICS=%v", a.cfg.MetricsEnabled)
 	a.log.Debug("  LOG_LEVEL=%s", a.cfg.LogLevel)
+}
+
+// writeConnectionFiles writes connection info to /tmp/ files for backward compat
+// with portforward and other components that still read from temp files.
+func (a *App) writeConnectionFiles() {
+	if a.connInfo == nil {
+		return
+	}
+
+	files := map[string]string{
+		"/tmp/pia_login_token": a.connInfo.Token,
+		"/tmp/client_ip":       a.connInfo.ClientIP,
+		"/tmp/pia_cn":          a.connInfo.ServerCN,
+		"/tmp/pf_gateway":      a.connInfo.PFGateway,
+	}
+
+	for path, content := range files {
+		if content == "" {
+			continue
+		}
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			a.log.Debug("Failed to write %s: %v", path, err)
+		}
+	}
 }
