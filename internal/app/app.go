@@ -187,8 +187,6 @@ func (a *App) initialize(ctx context.Context) error {
 
 // connect runs a single connection attempt using the Go VPN orchestrator.
 func (a *App) connect(ctx context.Context) error {
-	log.Step("Establishing VPN connection...")
-
 	cfg := vpn.SetupConfig{
 		PIAUser:    a.cfg.PIAUser,
 		PIAPass:    a.cfg.PIAPass,
@@ -207,7 +205,6 @@ func (a *App) connect(ctx context.Context) error {
 	}
 	a.connInfo = connInfo
 
-	log.Success("VPN tunnel established")
 	a.log.Debug("Connected to %s (%s) in %s, latency %dms",
 		connInfo.ServerCN, connInfo.ServerIP, connInfo.Location, connInfo.Latency.Milliseconds())
 

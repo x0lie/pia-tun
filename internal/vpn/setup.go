@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/firewall"
@@ -51,24 +50,16 @@ func Setup(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *C
 		token, authErr = getToken(ctx, cfg, fw, cache, resolver, logger)
 	} else {
 		// Run server selection and auth in parallel
-		var wg sync.WaitGroup
 		var srv pia.CachedServer
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			srv, latency, srvErr = selectServer(ctx, cfg, fw, cache, resolver, logger)
-		}()
-		go func() {
-			defer wg.Done()
-			token, authErr = getToken(ctx, cfg, fw, cache, resolver, logger)
-		}()
-		wg.Wait()
+		token, authErr = getToken(ctx, cfg, fw, cache, resolver, logger)
+		srv, latency, srvErr = selectServer(ctx, cfg, fw, cache, resolver, logger)
 
 		if srvErr == nil {
 			serverIP = srv.IP
 			serverCN = srv.CN
 			region = srv.Region
 			logger.Debug("Selected server: %s (%s) in %s, latency %dms", serverCN, serverIP, region, latency.Milliseconds())
+			log.Success(fmt.Sprintf("Best server: %s (%dms) in %s", serverCN, latency.Milliseconds(), srv.RegionName))
 		}
 	}
 
@@ -91,6 +82,7 @@ func Setup(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *C
 	}
 
 	// Step 2: Generate WireGuard key pair
+	log.Step(fmt.Sprintf("Establishing connection to %s...", serverCN))
 	privateKey, publicKey, err := wg.GenerateKeyPair(ctx)
 	if err != nil {
 		return nil, &pia.ConnectivityError{Op: "keygen", Msg: "generate WireGuard keys", Err: err}
@@ -109,6 +101,7 @@ func Setup(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *C
 		return nil, err // AddKey returns typed errors
 	}
 	logger.Debug("Server accepted public key, peer IP: %s", addKeyResp.PeerIP)
+	log.Success("Key registered")
 
 	// Step 4: Bring up WireGuard tunnel
 	allowedIPs := "0.0.0.0/0"
@@ -129,13 +122,14 @@ func Setup(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *C
 		return nil, &pia.ConnectivityError{Op: "wireguard", Msg: "bring up tunnel", Err: err}
 	}
 	logger.Debug("WireGuard tunnel up (backend: %s)", iface.Backend)
+	log.Success(fmt.Sprintf("WireGuard tunnel up (%s)", iface.Backend))
 
 	// Step 5: Add VPN to killswitch
 	if err := fw.AddVPN("51820", cfg.IPv6); err != nil {
 		wg.Down(ctx, logger)
 		return nil, &pia.ConnectivityError{Op: "firewall", Msg: "add VPN to killswitch", Err: err}
 	}
-	logger.Debug("VPN added to killswitch")
+	log.Success("VPN added to killswitch")
 
 	return &ConnectionInfo{
 		Token:        token,
@@ -154,6 +148,7 @@ func Setup(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *C
 // Flow: fetch fresh (cached IP or DNS) → merge with cache → filter → latency test
 func selectServer(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *CacheState, resolver *pia.Resolver, logger *log.Logger) (pia.CachedServer, time.Duration, error) {
 	// Fetch fresh server list (uses cached serverlist IPs, falls back to DNS)
+	log.Step(fmt.Sprintf("Selecting server across %s...", cfg.Location))
 	freshServers, err := fetchServerList(ctx, cache, resolver, fw, logger)
 	if err != nil {
 		return pia.CachedServer{}, 0, err
@@ -195,7 +190,6 @@ func fetchServerList(ctx context.Context, cache *CacheState, resolver *pia.Resol
 	}
 
 	// Fall back to DNS resolution
-	logger.Debug("Resolving serverlist.piaservers.net")
 	ips, err := resolver.Resolve(ctx, "serverlist.piaservers.net")
 	if err != nil {
 		return nil, err
@@ -223,17 +217,19 @@ func fetchServerList(ctx context.Context, cache *CacheState, resolver *pia.Resol
 
 // getToken returns a valid authentication token, using cache if fresh.
 func getToken(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *CacheState, resolver *pia.Resolver, logger *log.Logger) (string, error) {
+	log.Step("Authenticating with PIA...")
 	// Use cached token if fresh
 	if cache.TokenFresh(tokenMaxAge) {
 		logger.Debug("Using cached token (age: %s)", time.Since(cache.TokenTime).Round(time.Second))
+		log.Success("Using cached token")
 		return cache.Token, nil
 	}
 
-	logger.Debug("Authenticating with PIA")
 	token, err := authenticate(ctx, cfg, fw, cache, resolver, logger)
 	if err != nil {
 		return "", err
 	}
+	log.Success("Auth token acquired")
 
 	cache.SetToken(token)
 	return token, nil
@@ -258,7 +254,6 @@ func authenticate(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, c
 	}
 
 	// Fall back to DNS resolution
-	logger.Debug("Resolving www.privateinternetaccess.com")
 	ips, err := resolver.Resolve(ctx, "www.privateinternetaccess.com")
 	if err != nil {
 		return "", err

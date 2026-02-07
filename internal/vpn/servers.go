@@ -133,6 +133,7 @@ func SelectServer(ctx context.Context, candidates []pia.CachedServer, fw *firewa
 		logger.Debug("All servers timed out, using fallback: %s", candidates[0].CN)
 		return candidates[0], 0, nil
 	}
+	log.Success(fmt.Sprintf("Tested %d servers, %d responded", len(candidates), len(successful)))
 
 	// Sort by latency and pick lowest
 	sort.Slice(successful, func(i, j int) bool {

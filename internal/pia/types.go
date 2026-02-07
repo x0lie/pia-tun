@@ -17,10 +17,11 @@ type Server struct {
 // CachedServer is a flattened server entry for the persistent cache.
 // Each entry represents one WireGuard server in a specific region.
 type CachedServer struct {
-	CN     string `json:"cn"`
-	IP     string `json:"ip"`
-	Region string `json:"region"`
-	PF     bool   `json:"pf"`
+	CN         string `json:"cn"`
+	IP         string `json:"ip"`
+	Region     string `json:"region"`
+	RegionName string `json:"region_name"`
+	PF         bool   `json:"pf"`
 }
 
 // FlattenRegions extracts WireGuard servers from regions into a flat CachedServer list.
@@ -29,10 +30,11 @@ func FlattenRegions(regions []Region) []CachedServer {
 	for _, r := range regions {
 		for _, srv := range r.Servers["wg"] {
 			servers = append(servers, CachedServer{
-				CN:     srv.CN,
-				IP:     srv.IP,
-				Region: r.ID,
-				PF:     r.PortForward,
+				CN:         srv.CN,
+				IP:         srv.IP,
+				Region:     r.ID,
+				RegionName: r.Name,
+				PF:         r.PortForward,
 			})
 		}
 	}
