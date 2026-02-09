@@ -32,3 +32,12 @@ func (e *ConnectivityError) Error() string {
 func (e *ConnectivityError) Unwrap() error {
 	return e.Err
 }
+
+type LocationError struct {
+	Msg      string
+	Location string
+}
+
+func (e *LocationError) Error() string {
+	return fmt.Sprintf("%s %s", e.Location, e.Msg)
+}

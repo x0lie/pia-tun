@@ -48,10 +48,16 @@ func Setup(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *C
 		serverCN = cfg.ManualCN
 		region = "manual"
 		token, authErr = getToken(ctx, cfg, fw, cache, resolver, logger)
+		if authErr != nil {
+			return nil, authErr
+		}
 	} else {
-		// Run server selection and auth in parallel
+		// Run server selection and auth
 		var srv pia.CachedServer
 		token, authErr = getToken(ctx, cfg, fw, cache, resolver, logger)
+		if authErr != nil {
+			return nil, authErr
+		}
 		srv, latency, srvErr = selectServer(ctx, cfg, fw, cache, resolver, logger)
 
 		if srvErr == nil {
@@ -63,22 +69,11 @@ func Setup(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *C
 		}
 	}
 
-	// Handle errors with priority: AuthError (fatal) > both failed > individual failures
-	if _, isAuth := authErr.(*pia.AuthError); isAuth {
-		return nil, authErr // Fatal: bad credentials
-	}
-	if srvErr != nil && authErr != nil {
-		// Both failed - likely WAN/connectivity issue
-		return nil, &pia.ConnectivityError{
-			Op:  "setup",
-			Msg: fmt.Sprintf("server selection and auth both failed (server: %v, auth: %v)", srvErr, authErr),
-		}
-	}
 	if srvErr != nil {
+		if _, isLocation := srvErr.(*pia.LocationError); isLocation {
+			return nil, srvErr
+		}
 		return nil, fmt.Errorf("server selection: %w", srvErr)
-	}
-	if authErr != nil {
-		return nil, authErr
 	}
 
 	// Step 2: Generate WireGuard key pair
@@ -156,11 +151,18 @@ func selectServer(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, c
 
 	cache.MergeServers(freshServers)
 
-	candidates := FilterServers(cache.Servers, cfg.Location, cfg.PFRequired)
-	if len(candidates) == 0 {
-		return pia.CachedServer{}, 0, &pia.ConnectivityError{
-			Op:  "serverlist",
-			Msg: fmt.Sprintf("no servers found for location %q (pf_required=%v)", cfg.Location, cfg.PFRequired),
+	// Check if Region Exists
+	allInRegion := FilterServers(cache.Servers, cfg.Location, false)
+	if len(allInRegion) == 0 {
+		return pia.CachedServer{}, 0, &pia.LocationError{Msg: "region not found", Location: cfg.Location}
+	}
+
+	// If enabled, check if port forwarding supported
+	candidates := allInRegion
+	if cfg.PFRequired {
+		candidates = FilterServers(cache.Servers, cfg.Location, true)
+		if len(candidates) == 0 {
+			return pia.CachedServer{}, 0, &pia.LocationError{Msg: "does not support port forwarding", Location: cfg.Location}
 		}
 	}
 

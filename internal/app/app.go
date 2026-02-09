@@ -30,13 +30,14 @@ const shellPreamble = "set -euo pipefail; source /app/scripts/ui.sh; source /app
 
 // App holds the application state and configuration.
 type App struct {
-	cfg          Config
-	log          *log.Logger
-	monitorState *monitor.State
-	cache        *vpn.CacheState
-	fw           *firewall.Firewall
-	resolver     *pia.Resolver
-	connInfo     *vpn.ConnectionInfo
+	cfg           Config
+	log           *log.Logger
+	monitorState  *monitor.State
+	cache         *vpn.CacheState
+	fw            *firewall.Firewall
+	resolver      *pia.Resolver
+	connInfo      *vpn.ConnectionInfo
+	exitedCleanly bool
 }
 
 // Run is the main entry point for the orchestrated VPN client.
@@ -97,6 +98,7 @@ func Run(ctx context.Context) error {
 
 		err := a.runServices(ctx, reconnectCh)
 		if ctx.Err() != nil {
+			a.exitedCleanly = true
 			return nil // graceful shutdown (SIGTERM)
 		}
 
@@ -146,7 +148,7 @@ func (a *App) initialize(ctx context.Context) error {
 
 	if err := checkCapNetAdmin(); err != nil {
 		log.Error("Container missing CAP_NET_ADMIN capability")
-		log.Error("Required for firewall management. Add '--cap-add=NET_ADMIN' to docker run")
+		log.Error("Required for firewall management. Add '--cap-add=NET_ADMIN'")
 		return err
 	}
 	a.log.Debug("CAP_NET_ADMIN check passed")
@@ -241,13 +243,19 @@ func (a *App) connectLoop(ctx context.Context) error {
 
 		// AuthError is fatal - bad credentials, don't retry
 		if _, isAuth := err.(*pia.AuthError); isAuth {
-			log.Blank()
 			log.Error("Authentication failed - check PIA_USER and PIA_PASS")
 			return err
 		}
 
-		log.Blank()
-		log.Error(fmt.Sprintf("Connection failed: %v", err))
+		// LocationError is fatal - no servers available, don't retry
+		if _, isLocation := err.(*pia.LocationError); isLocation {
+			log.Error(err.Error())
+			log.Warning("Check PIA_LOCATION")
+			return err
+		}
+
+		// ConnectivityError is nonfatal - retry with backoff
+		log.Error(fmt.Sprintf("%v", err))
 		log.Warning(fmt.Sprintf("Will retry in %s", delay))
 
 		select {
@@ -444,8 +452,11 @@ func (a *App) cleanup() {
 	a.fw.RemoveVPN()
 	wg.Down(bgCtx, a.log)
 	a.fw.CleanupLocalNetworkRoutes()
-	a.shellFunc(bgCtx, "cleanup_killswitch")
-
+	if a.exitedCleanly {
+		a.shellFunc(bgCtx, "cleanup_killswitch")
+	} else {
+		log.Warning("Killswitch preserved due to error exit")
+	}
 	log.Success("Cleanup complete")
 }
 

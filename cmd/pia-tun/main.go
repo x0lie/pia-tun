@@ -55,7 +55,6 @@ func main() {
 	}
 
 	if err != nil && err != context.Canceled {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
