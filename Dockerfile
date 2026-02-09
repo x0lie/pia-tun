@@ -37,9 +37,6 @@ RUN apk update && \
     apk add --no-cache \
         bash \
         curl \
-        knot-utils \
-        jq \
-        ca-certificates \
         wireguard-tools-wg \
         iptables \
         iptables-legacy \
