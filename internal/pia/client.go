@@ -160,6 +160,9 @@ func AddKey(ctx context.Context, serverIP, cn, token, pubkey string) (*AddKeyRes
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, &TokenRejectedError{Msg: fmt.Sprintf("HTTP %d", resp.StatusCode)}
+		}
 		return nil, &ConnectivityError{
 			Op:  "addkey",
 			Msg: fmt.Sprintf("HTTP %d", resp.StatusCode),
@@ -177,7 +180,7 @@ func AddKey(ctx context.Context, serverIP, cn, token, pubkey string) (*AddKeyRes
 	}
 
 	if result.Status != "OK" {
-		return nil, &AuthError{Msg: fmt.Sprintf("addKey rejected (status: %s)", result.Status)}
+		return nil, &TokenRejectedError{Msg: fmt.Sprintf("status: %s", result.Status)}
 	}
 
 	return &result, nil

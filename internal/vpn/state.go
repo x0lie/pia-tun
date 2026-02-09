@@ -43,6 +43,11 @@ func (c *CacheState) SetToken(token string) {
 	c.TokenTime = time.Now()
 }
 
+func (c *CacheState) ClearToken() {
+	c.Token = ""
+	c.TokenTime = time.Time{}
+}
+
 // MergeIPs adds new IPs to front of existing, deduplicates, and caps at max.
 func (c *CacheState) MergeIPs(field *[]string, newIPs []string, max int) {
 	seen := make(map[string]bool)

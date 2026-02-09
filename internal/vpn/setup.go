@@ -93,7 +93,10 @@ func Setup(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *C
 	addKeyResp, err := pia.AddKey(ctx, serverIP, serverCN, token, publicKey)
 	fw.RemoveTemporaryExemption(exemption)
 	if err != nil {
-		return nil, err // AddKey returns typed errors
+		if _, isTokenRejected := err.(*pia.TokenRejectedError); isTokenRejected {
+			cache.ClearToken()
+		}
+		return nil, err
 	}
 	logger.Debug("Server accepted public key, peer IP: %s", addKeyResp.PeerIP)
 	log.Success("Key registered")

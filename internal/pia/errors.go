@@ -41,3 +41,11 @@ type LocationError struct {
 func (e *LocationError) Error() string {
 	return fmt.Sprintf("%s %s", e.Location, e.Msg)
 }
+
+type TokenRejectedError struct {
+	Msg string
+}
+
+func (e *TokenRejectedError) Error() string {
+	return fmt.Sprintf("Token rejected: %s", e.Msg)
+}
