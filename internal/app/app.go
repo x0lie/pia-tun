@@ -27,7 +27,7 @@ import (
 var ErrReconnect = errors.New("reconnect requested")
 
 // shellPreamble sources all shell scripts to make their functions available.
-const shellPreamble = "set -euo pipefail; source /app/scripts/ui.sh; source /app/scripts/killswitch.sh; source /app/scripts/verify_connection.sh; "
+const shellPreamble = "set -euo pipefail; source /app/scripts/ui.sh; source /app/scripts/killswitch.sh;"
 
 // App holds the application state and configuration.
 type App struct {
@@ -216,12 +216,14 @@ func (a *App) connect(ctx context.Context) error {
 
 	// Verify connection (non-fatal)
 	log.Step("Verifying connection...")
-	if err := a.runScript(ctx, "/app/scripts/verify_connection.sh"); err != nil {
+	if publicIP, err := vpn.VerifyConnection(ctx); err != nil {
+		log.Warning(fmt.Sprintf("%v", err))
 		a.shellFunc(ctx, "show_vpn_connected_warning")
 		return nil
+	} else {
+		log.Success(fmt.Sprintf("External IP: %s%s%s%s", log.ColorGreen, log.ColorBold, publicIP, log.ColorReset))
+		a.shellFunc(ctx, "show_vpn_connected")
 	}
-
-	a.shellFunc(ctx, "show_vpn_connected")
 	return nil
 }
 
