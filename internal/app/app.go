@@ -18,6 +18,7 @@ import (
 	"github.com/x0lie/pia-tun/internal/portforward"
 	"github.com/x0lie/pia-tun/internal/proxy"
 	"github.com/x0lie/pia-tun/internal/vpn"
+	"github.com/x0lie/pia-tun/internal/wan"
 	"github.com/x0lie/pia-tun/internal/wg"
 	"golang.org/x/sync/errgroup"
 )
@@ -38,6 +39,7 @@ type App struct {
 	resolver      *pia.Resolver
 	connInfo      *vpn.ConnectionInfo
 	exitedCleanly bool
+	wan           *wan.Checker
 }
 
 // Run is the main entry point for the orchestrated VPN client.
@@ -181,6 +183,8 @@ func (a *App) initialize(ctx context.Context) error {
 	// Configure DNS once after killswitch is up
 	a.writeDNS()
 
+	a.wan = &wan.Checker{Logger: a.log}
+
 	// Non-fatal: capture pre-VPN IP for leak detection
 	a.captureRealIP(ctx)
 
@@ -225,7 +229,7 @@ func (a *App) connect(ctx context.Context) error {
 // Returns immediately on AuthError (bad credentials - fatal).
 func (a *App) connectLoop(ctx context.Context) error {
 	delay := 5 * time.Second
-	const maxDelay = 120 * time.Second
+	const maxDelay = 60 * time.Second
 
 	a.monitorState.Paused.Store(true)
 	defer a.monitorState.Paused.Store(false)
@@ -254,8 +258,13 @@ func (a *App) connectLoop(ctx context.Context) error {
 			return err
 		}
 
-		// ConnectivityError is nonfatal - retry with backoff
+		// ConnectivityError is nonfatal - wait for wan or retry with backoff
 		log.Error(fmt.Sprintf("%v", err))
+		if !a.wan.Check(ctx) {
+			a.wan.WaitForUp(ctx)
+			delay = 5 * time.Second
+			continue
+		}
 		log.Warning(fmt.Sprintf("Will retry in %s", delay))
 
 		select {
@@ -421,7 +430,7 @@ func (a *App) startMonitor(ctx context.Context, reconnectCh chan<- struct{}) {
 	}
 
 	go func() {
-		if err := monitor.Run(ctx, reconnect, a.monitorState); err != nil {
+		if err := monitor.Run(ctx, reconnect, a.monitorState, a.wan); err != nil {
 			log.Error(fmt.Sprintf("Health monitor error: %v", err))
 		}
 	}()

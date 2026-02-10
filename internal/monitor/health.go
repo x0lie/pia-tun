@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/x0lie/pia-tun/internal/log"
 )
 
 // HealthCheckResult holds the result of a VPN health check.
@@ -108,80 +106,6 @@ func (m *Monitor) checkExternalConnectivity(timeout time.Duration) bool {
 	return false
 }
 
-func (m *Monitor) checkWANConnectivity(timeout time.Duration) bool {
-	m.log.Debug("Checking WAN connectivity (bypass routes, parallel)")
-
-	targets := []string{
-		"129.6.15.28:13",
-		"129.6.15.29:13",
-		"132.163.96.1:13",
-		"132.163.97.1:13",
-		"128.138.140.44:13",
-	}
-
-	type result struct {
-		target  string
-		success bool
-	}
-
-	results := make(chan result, len(targets))
-
-	for _, target := range targets {
-		go func(t string) {
-			dialer := &net.Dialer{Timeout: timeout}
-			conn, err := dialer.Dial("tcp", t)
-			if err == nil {
-				conn.Close()
-				results <- result{t, true}
-			} else {
-				results <- result{t, false}
-			}
-		}(target)
-	}
-
-	for i := 0; i < len(targets); i++ {
-		res := <-results
-		if res.success {
-			m.log.Debug("WAN check successful (%s)", res.target)
-			return true
-		}
-	}
-
-	m.log.Debug("All WAN checks failed")
-	return false
-}
-
-func (m *Monitor) waitForWAN() bool {
-	fmt.Printf("\n%s\u25b6%s Testing WAN before reconnect...\n", log.ColorBlue, log.ColorReset)
-
-	downSince := time.Now()
-
-	if m.checkWANConnectivity(5 * time.Second) {
-		log.Success("Internet up")
-		if m.metrics != nil {
-			m.metrics.UpdateWANStatus(true)
-		}
-		return true
-	}
-
-	log.Error("Internet down, waiting...")
-	if m.metrics != nil {
-		m.metrics.UpdateWANStatus(false)
-	}
-
-	for {
-		if m.checkWANConnectivity(10 * time.Second) {
-			downtime := time.Since(downSince)
-			fmt.Printf("\r")
-			log.Success(fmt.Sprintf("Internet restored (down for %s)", log.FormatDuration(downtime)))
-			if m.metrics != nil {
-				m.metrics.UpdateWANStatus(true)
-			}
-			return true
-		}
-	}
-}
-
 func (m *Monitor) getTransferBytes() (rx, tx int64, err error) {
 	cmd := exec.Command("wg", "show", "pia0", "transfer")
 	output, err := cmd.Output()
@@ -230,12 +154,12 @@ func (m *Monitor) checkVPNHealth(timeout time.Duration) (*HealthCheckResult, err
 	return result, result.Error
 }
 
-func (m *Monitor) triggerReconnect() {
+func (m *Monitor) triggerReconnect(ctx context.Context) {
 	m.mu.Lock()
 	m.reconnectAttempts++
 	m.mu.Unlock()
 
-	m.waitForWAN()
+	m.wan.WaitForUp(ctx)
 
 	if m.metrics != nil {
 		m.metrics.RecordReconnect()
