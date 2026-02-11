@@ -1,9 +1,7 @@
 package monitor
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"regexp"
 	"strconv"
@@ -12,7 +10,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/x0lie/pia-tun/internal/log"
 )
@@ -68,8 +65,8 @@ type Metrics struct {
 	buildInfo *prometheus.GaugeVec
 
 	// New metrics
-	connectionUp     *prometheus.GaugeVec
-	killswitchActive prometheus.Gauge
+	connectionUp         *prometheus.GaugeVec
+	killswitchActive     prometheus.Gauge
 	lastHandshake        *prometheus.GaugeVec
 	portForwardingStatus *prometheus.GaugeVec
 	lastForwardedPort    int
@@ -520,51 +517,5 @@ func (m *Metrics) GetStats() map[string]interface{} {
 		"server_latency_ms":       m.ServerLatency,
 		"server_uptime_seconds":   int(m.ServerUptime.Seconds()),
 		"server_uptime_formatted": log.FormatDuration(m.ServerUptime),
-	}
-}
-
-func startHTTPServer(m *Monitor) {
-	mux := http.NewServeMux()
-
-	mux.Handle("/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if m.isHealthy() {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("healthy\n"))
-		} else {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte("unhealthy\n"))
-		}
-	}))
-
-	mux.Handle("/metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if m.metrics == nil {
-			http.Error(w, "Metrics not enabled", http.StatusNotFound)
-			return
-		}
-
-		if r.URL.Query().Get("format") == "json" {
-			w.Header().Set("Content-Type", "application/json")
-			stats := m.metrics.GetStats()
-			json.NewEncoder(w).Encode(stats)
-			return
-		}
-
-		promhttp.HandlerFor(m.metrics.registry, promhttp.HandlerOpts{}).ServeHTTP(w, r)
-	}))
-
-	port := os.Getenv("METRICS_PORT")
-	if port == "" {
-		port = "9090"
-	}
-
-	server := &http.Server{
-		Addr:         ":" + port,
-		Handler:      mux,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-	}
-
-	if err := server.ListenAndServe(); err != nil {
-		fmt.Fprintf(os.Stderr, "HTTP server error: %v\n", err)
 	}
 }
