@@ -13,6 +13,7 @@ import (
 	"github.com/x0lie/pia-tun/internal/cacher"
 	"github.com/x0lie/pia-tun/internal/firewall"
 	"github.com/x0lie/pia-tun/internal/log"
+	"github.com/x0lie/pia-tun/internal/metrics"
 	"github.com/x0lie/pia-tun/internal/monitor"
 	"github.com/x0lie/pia-tun/internal/pia"
 	"github.com/x0lie/pia-tun/internal/portforward"
@@ -40,6 +41,7 @@ type App struct {
 	connInfo      *vpn.ConnectionInfo
 	exitedCleanly bool
 	wan           *wan.Checker
+	metrics       *metrics.Metrics
 }
 
 // Run is the main entry point for the orchestrated VPN client.
@@ -183,6 +185,7 @@ func (a *App) initialize(ctx context.Context) error {
 	// Configure DNS once after killswitch is up
 	a.writeDNS()
 
+	a.metrics = metrics.New()
 	a.wan = &wan.Checker{}
 
 	// Non-fatal: capture pre-VPN IP for leak detection
@@ -432,7 +435,7 @@ func (a *App) startMonitor(ctx context.Context, reconnectCh chan<- struct{}) {
 	}
 
 	go func() {
-		if err := monitor.Run(ctx, reconnect, a.monitorState, a.wan); err != nil {
+		if err := monitor.Run(ctx, reconnect, a.monitorState, a.wan, a.metrics); err != nil {
 			log.Error(fmt.Sprintf("Health monitor error: %v", err))
 		}
 	}()

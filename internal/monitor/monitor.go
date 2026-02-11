@@ -12,6 +12,7 @@ import (
 
 	"github.com/x0lie/pia-tun/internal/config"
 	"github.com/x0lie/pia-tun/internal/log"
+	"github.com/x0lie/pia-tun/internal/metrics"
 	"github.com/x0lie/pia-tun/internal/wan"
 )
 
@@ -43,7 +44,7 @@ type Monitor struct {
 	config            Config
 	log               *log.Logger
 	reconnectAttempts int
-	metrics           *Metrics
+	metrics           *metrics.Metrics
 	mu                sync.Mutex
 
 	// Reconnect callback for orchestrated mode.
@@ -256,7 +257,7 @@ func (m *Monitor) updateMetrics(result *HealthCheckResult, healthy bool) {
 // calls it instead of writing to a pipe file when a reconnect is needed.
 // state provides orchestrator pause/reconnect signaling. Pass nil for both
 // in standalone mode.
-func Run(ctx context.Context, onReconnect func(), state *State, wanChecker *wan.Checker) error {
+func Run(ctx context.Context, onReconnect func(), state *State, wanChecker *wan.Checker, m *metrics.Metrics) error {
 	cfg := loadConfig()
 
 	logger := &log.Logger{
@@ -264,18 +265,14 @@ func Run(ctx context.Context, onReconnect func(), state *State, wanChecker *wan.
 		Prefix:  "monitor",
 	}
 
-	var metrics *Metrics
-	if cfg.MetricsEnabled {
-		metrics = NewMetrics()
-		if wanChecker != nil {
-			wanChecker.Metrics = metrics
-		}
+	if m != nil && wanChecker != nil {
+		wanChecker.Metrics = m
 	}
 
 	monitor := &Monitor{
 		config:      cfg,
 		log:         logger,
-		metrics:     metrics,
+		metrics:     m,
 		onReconnect: onReconnect,
 		state:       state,
 		wan:         wanChecker,
@@ -298,10 +295,10 @@ func Run(ctx context.Context, onReconnect func(), state *State, wanChecker *wan.
 					monitor.currentLatency = info.Latency
 					monitor.mu.Unlock()
 
-					if cfg.MetricsEnabled && metrics != nil {
-						metrics.RecordNewConnection("pia0", info.Server, info.IP)
+					if cfg.MetricsEnabled && m != nil {
+						m.RecordNewConnection("pia0", info.Server, info.IP)
 						if info.Latency > 0 {
-							metrics.ObserveServerLatency(float64(info.Latency) / 1000.0)
+							m.ObserveServerLatency(float64(info.Latency) / 1000.0)
 						}
 					}
 					logger.Debug("Connection event: server=%s, ip=%s, latency=%dms", info.Server, info.IP, info.Latency)

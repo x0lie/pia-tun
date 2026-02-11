@@ -36,7 +36,7 @@ func startHTTPServer(m *Monitor) {
 			return
 		}
 
-		promhttp.HandlerFor(m.metrics.registry, promhttp.HandlerOpts{}).ServeHTTP(w, r)
+		promhttp.HandlerFor(m.metrics.Registry(), promhttp.HandlerOpts{}).ServeHTTP(w, r)
 	}))
 
 	port := os.Getenv("METRICS_PORT")

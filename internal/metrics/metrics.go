@@ -1,4 +1,4 @@
-package monitor
+package metrics
 
 import (
 	"fmt"
@@ -87,7 +87,7 @@ type Metrics struct {
 }
 
 // NewMetrics creates and registers all Prometheus metrics.
-func NewMetrics() *Metrics {
+func New() *Metrics {
 	m := &Metrics{
 		UptimeStart: time.Now(),
 	}
@@ -518,4 +518,8 @@ func (m *Metrics) GetStats() map[string]interface{} {
 		"server_uptime_seconds":   int(m.ServerUptime.Seconds()),
 		"server_uptime_formatted": log.FormatDuration(m.ServerUptime),
 	}
+}
+
+func (m *Metrics) Registry() *prometheus.Registry {
+	return m.registry
 }
