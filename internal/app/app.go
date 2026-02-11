@@ -317,7 +317,7 @@ func (a *App) runServices(ctx context.Context, reconnectCh chan struct{}) error 
 			PFGateway: a.connInfo.PFGateway,
 		}
 		g.Go(func() error {
-			return portforward.Run(gCtx, pfCfg, pfReconnect, pfReady)
+			return portforward.Run(gCtx, pfCfg, pfReconnect, pfReady, a.metrics)
 		})
 
 		select {

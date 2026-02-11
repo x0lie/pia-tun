@@ -196,30 +196,6 @@ func (m *Monitor) isKillswitchActive() bool {
 	return err == nil
 }
 
-func (m *Monitor) getPortForwardingPort() int {
-	portFile := os.Getenv("PORT_FILE")
-	if portFile == "" {
-		portFile = "/run/pia-tun/port"
-	}
-
-	data, err := os.ReadFile(portFile)
-	if err != nil {
-		return 0
-	}
-
-	port, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil {
-		return 0
-	}
-
-	return port
-}
-
-func (m *Monitor) isPortForwardingActive() bool {
-	port := m.getPortForwardingPort()
-	return port > 0
-}
-
 func (m *Monitor) getKillswitchDropStats() (packetsIn, bytesIn, packetsOut, bytesOut int64) {
 	iptables := "iptables"
 	if path := os.Getenv("IPT_CMD"); path != "" {

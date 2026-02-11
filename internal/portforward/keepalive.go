@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/log"
+	"github.com/x0lie/pia-tun/internal/metrics"
 )
 
 // KeepaliveManager manages port forward state lifecycle.
@@ -19,6 +20,7 @@ type KeepaliveManager struct {
 	state       *State
 	mu          sync.Mutex
 	onReconnect func()
+	metrics     *metrics.Metrics
 }
 
 // State tracks port forwarding state.
@@ -33,13 +35,14 @@ type State struct {
 }
 
 // NewKeepaliveManager creates a new keepalive manager.
-func NewKeepaliveManager(config *Config, client *PIAClient, logger *log.Logger, onReconnect func()) *KeepaliveManager {
+func NewKeepaliveManager(config *Config, client *PIAClient, logger *log.Logger, onReconnect func(), metrics *metrics.Metrics) *KeepaliveManager {
 	return &KeepaliveManager{
 		config:      config,
 		client:      client,
 		log:         logger,
 		state:       &State{},
 		onReconnect: onReconnect,
+		metrics:     metrics,
 	}
 }
 
@@ -114,6 +117,7 @@ func (m *KeepaliveManager) initialSetup() error {
 		log.Error(fmt.Sprintf("ERROR: Failed to write port file: %v", err))
 	}
 
+	m.metrics.UpdatePortForwarding(true, port)
 	m.notifyPortChange(port)
 
 	log.Success(fmt.Sprintf("Port: %s%s%d%s", log.ColorGreen, log.ColorBold, port, log.ColorReset))
@@ -300,6 +304,7 @@ func (m *KeepaliveManager) refreshSignature(ctx context.Context) error {
 
 		m.log.Debug("Writing new port to %s", m.config.PortFile)
 		os.WriteFile(m.config.PortFile, []byte(fmt.Sprintf("%d", newPort)), 0644)
+		m.metrics.UpdatePortForwarding(true, newPort)
 		m.notifyPortChange(newPort)
 	} else {
 		m.log.Debug("Port unchanged: %d", newPort)

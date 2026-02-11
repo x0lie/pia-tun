@@ -8,6 +8,7 @@ import (
 
 	"github.com/x0lie/pia-tun/internal/config"
 	"github.com/x0lie/pia-tun/internal/log"
+	"github.com/x0lie/pia-tun/internal/metrics"
 )
 
 // Config holds port forwarding configuration.
@@ -34,7 +35,7 @@ type ConnectionConfig struct {
 // Run starts the port forwarding service. This is the main entry point called by the orchestrator.
 // connCfg provides the VPN connection details needed for port forwarding.
 // onReconnect is called when a reconnect is needed (e.g., port change or API failure).
-func Run(ctx context.Context, connCfg ConnectionConfig, onReconnect func(), ready chan<- struct{}) error {
+func Run(ctx context.Context, connCfg ConnectionConfig, onReconnect func(), ready chan<- struct{}, metrics *metrics.Metrics) error {
 	signalReady := func() {
 		if ready != nil {
 			close(ready)
@@ -75,7 +76,7 @@ func Run(ctx context.Context, connCfg ConnectionConfig, onReconnect func(), read
 	logger.Debug("  PIA_CN: %s", cfg.MetaCN)
 
 	client := NewPIAClient(cfg, logger)
-	manager := NewKeepaliveManager(cfg, client, logger, onReconnect)
+	manager := NewKeepaliveManager(cfg, client, logger, onReconnect, metrics)
 
 	if err := manager.Run(ctx, signalReady); err != nil {
 		return fmt.Errorf("port forwarding failed: %w", err)

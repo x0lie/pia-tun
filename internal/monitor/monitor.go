@@ -223,10 +223,6 @@ func (m *Monitor) updateMetrics(result *HealthCheckResult, healthy bool) {
 		m.metrics.UpdateKillswitchStatus(m.isKillswitchActive())
 		m.metrics.UpdateLastHandshake(iface, m.getLastHandshake())
 
-		pfActive := m.isPortForwardingActive()
-		pfPort := m.getPortForwardingPort()
-		m.metrics.UpdatePortForwarding(pfActive, pfPort)
-
 		pktsIn, bytesIn, pktsOut, bytesOut := m.getKillswitchDropStats()
 		m.metrics.UpdateKillswitchDrops(pktsIn, bytesIn, pktsOut, bytesOut)
 	}
