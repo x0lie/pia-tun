@@ -156,7 +156,7 @@ func (a *App) initialize(ctx context.Context) error {
 	a.log.Debug("CAP_NET_ADMIN check passed")
 
 	// Initialize firewall
-	fw, err := firewall.New(a.log)
+	fw, err := firewall.New()
 	if err != nil {
 		log.Error("Failed to initialize firewall")
 		return fmt.Errorf("firewall init: %w", err)
@@ -183,7 +183,7 @@ func (a *App) initialize(ctx context.Context) error {
 	// Configure DNS once after killswitch is up
 	a.writeDNS()
 
-	a.wan = &wan.Checker{Logger: a.log}
+	a.wan = &wan.Checker{}
 
 	// Non-fatal: capture pre-VPN IP for leak detection
 	a.captureRealIP(ctx)
@@ -205,7 +205,7 @@ func (a *App) connect(ctx context.Context) error {
 		WGBackend:  a.cfg.WGBackend,
 	}
 
-	connInfo, err := vpn.Setup(ctx, cfg, a.fw, a.cache, a.resolver, a.log)
+	connInfo, err := vpn.Setup(ctx, cfg, a.fw, a.cache, a.resolver)
 	if err != nil {
 		return err // Error type (AuthError/ConnectivityError) preserved for connectLoop
 	}

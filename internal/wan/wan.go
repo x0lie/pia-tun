@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/log"
@@ -12,7 +13,6 @@ import (
 type Checker struct {
 	DialTimeout  time.Duration
 	PollInterval time.Duration
-	Logger       *log.Logger
 	Metrics      MetricsUpdater
 }
 
@@ -21,7 +21,11 @@ type MetricsUpdater interface {
 }
 
 func (c *Checker) Check(ctx context.Context) bool {
-	c.Logger.Debug("Checking WAN connectivity (bypass routes, parallel)")
+	logger := &log.Logger{
+		Enabled: os.Getenv("_LOG_LEVEL") == "2",
+		Prefix:  "wan",
+	}
+	logger.Debug("Checking WAN connectivity (bypass routes, parallel)")
 
 	targets := []string{
 		"129.6.15.28:13",
@@ -54,12 +58,12 @@ func (c *Checker) Check(ctx context.Context) bool {
 	for i := 0; i < len(targets); i++ {
 		res := <-results
 		if res.success {
-			c.Logger.Debug("WAN check successful (%s)", res.target)
+			logger.Debug("WAN check successful (%s)", res.target)
 			return true
 		}
 	}
 
-	c.Logger.Debug("All WAN checks failed")
+	logger.Debug("All WAN checks failed")
 	return false
 
 }

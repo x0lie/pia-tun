@@ -3,6 +3,7 @@ package portforward
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/config"
@@ -60,7 +61,8 @@ func Run(ctx context.Context, connCfg ConnectionConfig, onReconnect func(), read
 	}
 
 	logger := &log.Logger{
-		Enabled: cfg.DebugMode,
+		Enabled: os.Getenv("_LOG_LEVEL") == "2",
+		Prefix:  "portforward",
 	}
 
 	logger.Debug("Port forwarding configuration:")

@@ -260,7 +260,8 @@ func Run(ctx context.Context, onReconnect func(), state *State, wanChecker *wan.
 	cfg := loadConfig()
 
 	logger := &log.Logger{
-		Enabled: cfg.DebugMode,
+		Enabled: os.Getenv("_LOG_LEVEL") == "2",
+		Prefix:  "monitor",
 	}
 
 	var metrics *Metrics

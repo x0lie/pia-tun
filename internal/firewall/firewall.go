@@ -20,7 +20,11 @@ type Firewall struct {
 
 // New creates a Firewall with auto-detected or manually specified iptables backend.
 // Respects the IPT_BACKEND environment variable ("legacy" or "nft").
-func New(logger *log.Logger) (*Firewall, error) {
+func New() (*Firewall, error) {
+	logger := &log.Logger{
+		Enabled: os.Getenv("_LOG_LEVEL") == "2",
+		Prefix:  "firewall",
+	}
 	ipt4Name, ipt6Name := detectBackend(logger)
 
 	ipt4, err := iptables.New(iptables.IPFamily(iptables.ProtocolIPv4), iptables.Path(ipt4Name))

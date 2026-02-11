@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/firewall"
@@ -34,7 +35,12 @@ type SetupConfig struct {
 // Setup establishes a VPN connection and returns connection info.
 // Returns *pia.AuthError for credential failures (fatal).
 // Returns *pia.ConnectivityError for network failures (retry with WAN check).
-func Setup(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *CacheState, resolver *pia.Resolver, logger *log.Logger) (*ConnectionInfo, error) {
+func Setup(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *CacheState, resolver *pia.Resolver) (*ConnectionInfo, error) {
+	logger := &log.Logger{
+		Enabled: os.Getenv("_LOG_LEVEL") == "2",
+		Prefix:  "vpn",
+	}
+
 	// Step 1: Select server and authenticate
 	var serverIP, serverCN, region string
 	var latency time.Duration
@@ -99,7 +105,7 @@ func Setup(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *C
 		return nil, err
 	}
 	logger.Debug("Server accepted public key, peer IP: %s", addKeyResp.PeerIP)
-	log.Success("Key registered")
+	log.Success("Auth token accepted")
 
 	// Step 4: Bring up WireGuard tunnel
 	allowedIPs := "0.0.0.0/0"
@@ -120,7 +126,7 @@ func Setup(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *C
 		return nil, &pia.ConnectivityError{Op: "wireguard", Msg: "bring up tunnel", Err: err}
 	}
 	logger.Debug("WireGuard tunnel up (backend: %s)", iface.Backend)
-	log.Success(fmt.Sprintf("WireGuard tunnel up (%s)", iface.Backend))
+	log.Success(fmt.Sprintf("WG tunnel configured (%s)", iface.Backend))
 
 	// Step 5: Add VPN to killswitch
 	if err := fw.AddVPN("51820", cfg.IPv6); err != nil {
