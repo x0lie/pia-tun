@@ -310,23 +310,17 @@ func (m *Metrics) RecordCheck(success bool, duration time.Duration) {
 	m.checkDurationHistogram.Observe(duration.Seconds())
 }
 
-func (m *Metrics) UpdateVPNInfo(iface, server, ip string, rx, tx int64) {
+func (m *Metrics) UpdateVPNInfo(iface, ip string, rx, tx int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	serverChanged := server != "" && server != m.CurrentServer
 	ipChanged := ip != "" && ip != m.CurrentIP
-
-	if serverChanged {
-		m.ConnectedAt = time.Now()
-		m.CurrentServer = server
-	}
 
 	if ipChanged {
 		m.CurrentIP = ip
 	}
 
-	if (serverChanged || ipChanged) && m.CurrentServer != "" && m.CurrentIP != "" {
+	if ipChanged && m.CurrentServer != "" && m.CurrentIP != "" {
 		m.vpnInfo.Reset()
 		m.vpnInfo.WithLabelValues(iface, m.CurrentServer, m.CurrentIP).Set(1)
 	}

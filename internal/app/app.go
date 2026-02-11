@@ -58,12 +58,10 @@ func Run(ctx context.Context) error {
 	}
 
 	a := &App{
-		cfg: cfg,
-		log: logger,
-		monitorState: &monitor.State{
-			ConnInfo: make(chan monitor.ConnectionInfo, 1),
-		},
-		cache: &vpn.CacheState{},
+		cfg:          cfg,
+		log:          logger,
+		monitorState: &monitor.State{},
+		cache:        &vpn.CacheState{},
 	}
 
 	a.shellFunc(ctx, "print_banner")
@@ -213,6 +211,7 @@ func (a *App) connect(ctx context.Context) error {
 		return err // Error type (AuthError/ConnectivityError) preserved for connectLoop
 	}
 	a.connInfo = connInfo
+	a.metrics.RecordNewConnection("pia0", connInfo.ServerCN, connInfo.ServerIP)
 
 	a.log.Debug("Connected to %s (%s) in %s, latency %dms",
 		connInfo.ServerCN, connInfo.ServerIP, connInfo.Location, connInfo.Latency.Milliseconds())
@@ -336,11 +335,6 @@ func (a *App) runServices(ctx context.Context, reconnectCh chan struct{}) error 
 		})
 	}
 
-	// Signal connection info to metrics pipe
-	if a.cfg.MetricsEnabled {
-		a.signalConnectionReady()
-	}
-
 	errCh := make(chan error, 1)
 	go func() { errCh <- g.Wait() }()
 
@@ -358,23 +352,6 @@ func (a *App) runServices(ctx context.Context, reconnectCh chan struct{}) error 
 			return ErrReconnect
 		}
 		return fmt.Errorf("services exited: %w", err)
-	}
-}
-
-// signalConnectionReady sends connection info to the metrics listener.
-func (a *App) signalConnectionReady() {
-	if a.connInfo == nil {
-		return
-	}
-
-	select {
-	case a.monitorState.ConnInfo <- monitor.ConnectionInfo{
-		Server:  a.connInfo.ServerCN,
-		IP:      a.connInfo.ServerIP,
-		Latency: a.connInfo.Latency.Milliseconds(),
-	}:
-	default:
-		a.log.Debug("Connection info channel full, skipping")
 	}
 }
 

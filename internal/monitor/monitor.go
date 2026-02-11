@@ -24,19 +24,11 @@ type Config struct {
 	MetricsEnabled bool
 }
 
-// ConnectionInfo carries VPN connection details for metrics updates.
-type ConnectionInfo struct {
-	Server  string
-	IP      string
-	Latency int64 // milliseconds
-}
-
 // State allows the orchestrator to communicate with the monitor
 // without filesystem flags or named pipes. Nil in standalone mode.
 type State struct {
-	Paused       atomic.Bool         // pause health checks during startup/reconnection
-	Reconnecting atomic.Bool         // active reconnection in progress
-	ConnInfo     chan ConnectionInfo // new connection established (for metrics)
+	Paused       atomic.Bool // pause health checks during startup/reconnection
+	Reconnecting atomic.Bool // active reconnection in progress
 }
 
 // Monitor manages VPN health monitoring.
@@ -57,11 +49,6 @@ type Monitor struct {
 	// Health status for /health endpoint
 	healthy         bool
 	lastHealthCheck time.Time
-
-	// Connection info from orchestrator (replaces /tmp/ file reads)
-	currentServer  string
-	currentIP      string
-	currentLatency int64 // milliseconds
 
 	// Wan checking
 	wan *wan.Checker
@@ -231,14 +218,13 @@ func (m *Monitor) updateMetrics(result *HealthCheckResult, healthy bool) {
 		const iface = "pia0"
 
 		rx, tx, _ := m.getTransferBytes()
-		server := m.getCurrentServer()
 
 		var ip string
 		if healthy {
 			ip = m.getCurrentIP()
 		}
 
-		m.metrics.UpdateVPNInfo(iface, server, ip, rx, tx)
+		m.metrics.UpdateVPNInfo(iface, ip, rx, tx)
 		m.metrics.UpdateConnectionStatus(iface, healthy && result.InterfaceUp && result.Connectivity)
 		m.metrics.UpdateKillswitchStatus(m.isKillswitchActive())
 		m.metrics.UpdateLastHandshake(iface, m.getLastHandshake())
@@ -280,32 +266,6 @@ func Run(ctx context.Context, onReconnect func(), state *State, wanChecker *wan.
 
 	// Always start HTTP server for /health endpoint
 	go startHTTPServer(monitor)
-
-	// Listen for connection info updates from orchestrator
-	if state != nil && state.ConnInfo != nil {
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case info := <-state.ConnInfo:
-					monitor.mu.Lock()
-					monitor.currentServer = info.Server
-					monitor.currentIP = info.IP
-					monitor.currentLatency = info.Latency
-					monitor.mu.Unlock()
-
-					if cfg.MetricsEnabled && m != nil {
-						m.RecordNewConnection("pia0", info.Server, info.IP)
-						if info.Latency > 0 {
-							m.ObserveServerLatency(float64(info.Latency) / 1000.0)
-						}
-					}
-					logger.Debug("Connection event: server=%s, ip=%s, latency=%dms", info.Server, info.IP, info.Latency)
-				}
-			}
-		}()
-	}
 
 	monitor.monitorLoop(ctx)
 	return nil

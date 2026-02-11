@@ -20,12 +20,6 @@ type HealthCheckResult struct {
 	Error         error
 }
 
-func (m *Monitor) getCurrentServer() string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.currentServer
-}
-
 func (m *Monitor) getCurrentIP() string {
 	client := &http.Client{Timeout: 5 * time.Second}
 
