@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
@@ -18,33 +17,6 @@ type HealthCheckResult struct {
 	Connectivity  bool
 	CheckDuration time.Duration
 	Error         error
-}
-
-func (m *Monitor) getCurrentIP() string {
-	client := &http.Client{Timeout: 5 * time.Second}
-
-	services := []string{
-		"https://api.ipify.org",
-		"https://ifconfig.me/ip",
-		"https://icanhazip.com",
-	}
-
-	for _, service := range services {
-		resp, err := client.Get(service)
-		if err == nil {
-			defer resp.Body.Close()
-			body := make([]byte, 128)
-			n, _ := resp.Body.Read(body)
-			if n > 0 {
-				ip := strings.TrimSpace(string(body[:n]))
-				if len(ip) > 6 && len(ip) < 40 && !isPrivateIP(ip) {
-					return ip
-				}
-			}
-		}
-	}
-
-	return ""
 }
 
 func isPrivateIP(ip string) bool {

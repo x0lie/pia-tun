@@ -310,25 +310,9 @@ func (m *Metrics) RecordCheck(success bool, duration time.Duration) {
 	m.checkDurationHistogram.Observe(duration.Seconds())
 }
 
-func (m *Metrics) UpdateVPNInfo(iface, ip string, rx, tx int64) {
+func (m *Metrics) UpdateTransferBytes(iface string, rx, tx int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	ipChanged := ip != "" && ip != m.CurrentIP
-
-	if ipChanged {
-		m.CurrentIP = ip
-	}
-
-	if ipChanged && m.CurrentServer != "" && m.CurrentIP != "" {
-		m.vpnInfo.Reset()
-		m.vpnInfo.WithLabelValues(iface, m.CurrentServer, m.CurrentIP).Set(1)
-	}
-
-	if m.CurrentServer != "" {
-		m.ServerUptime = time.Since(m.ConnectedAt)
-		m.sessionUptimeGauge.WithLabelValues(iface).Set(float64(m.ConnectedAt.Unix()))
-	}
 
 	if rx >= m.BytesReceived {
 		delta := rx - m.BytesReceived

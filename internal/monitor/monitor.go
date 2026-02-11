@@ -216,15 +216,9 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 func (m *Monitor) updateMetrics(result *HealthCheckResult, healthy bool) {
 	if m.metrics != nil {
 		const iface = "pia0"
-
 		rx, tx, _ := m.getTransferBytes()
 
-		var ip string
-		if healthy {
-			ip = m.getCurrentIP()
-		}
-
-		m.metrics.UpdateVPNInfo(iface, ip, rx, tx)
+		m.metrics.UpdateTransferBytes(iface, rx, tx)
 		m.metrics.UpdateConnectionStatus(iface, healthy && result.InterfaceUp && result.Connectivity)
 		m.metrics.UpdateKillswitchStatus(m.isKillswitchActive())
 		m.metrics.UpdateLastHandshake(iface, m.getLastHandshake())
