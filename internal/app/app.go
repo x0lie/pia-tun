@@ -115,7 +115,7 @@ func Run(ctx context.Context) error {
 			a.teardown()
 
 			a.metrics.RecordReconnect()
-			a.wan.WaitForUp(ctx)
+			a.wan.WaitForUp(ctx, a.metrics)
 
 			if err := a.connectLoop(ctx); err != nil {
 				return err
@@ -269,7 +269,7 @@ func (a *App) connectLoop(ctx context.Context) error {
 		// ConnectivityError is nonfatal - wait for wan or retry with backoff
 		log.Error(fmt.Sprintf("%v", err))
 		if !a.wan.Check(ctx) {
-			a.wan.WaitForUp(ctx)
+			a.wan.WaitForUp(ctx, a.metrics)
 			delay = 5 * time.Second
 			continue
 		}

@@ -8,16 +8,12 @@ import (
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/log"
+	"github.com/x0lie/pia-tun/internal/metrics"
 )
 
 type Checker struct {
 	DialTimeout  time.Duration
 	PollInterval time.Duration
-	Metrics      MetricsUpdater
-}
-
-type MetricsUpdater interface {
-	UpdateWANStatus(up bool)
 }
 
 func (c *Checker) Check(ctx context.Context) bool {
@@ -68,23 +64,19 @@ func (c *Checker) Check(ctx context.Context) bool {
 
 }
 
-func (c *Checker) WaitForUp(ctx context.Context) error {
+func (c *Checker) WaitForUp(ctx context.Context, metrics *metrics.Metrics) error {
 	log.Step("Testing WAN...")
 
 	downSince := time.Now()
 
 	if c.Check(ctx) {
 		log.Success("Internet up")
-		if c.Metrics != nil {
-			c.Metrics.UpdateWANStatus(true)
-		}
+		metrics.UpdateWANStatus(true)
 		return nil
 	}
 
 	log.Error("Internet down, waiting...")
-	if c.Metrics != nil {
-		c.Metrics.UpdateWANStatus(false)
-	}
+	metrics.UpdateWANStatus(false)
 
 	for {
 		select {
@@ -94,9 +86,7 @@ func (c *Checker) WaitForUp(ctx context.Context) error {
 			if c.Check(ctx) {
 				log.Success(fmt.Sprintf("Internet restored (down for %s)",
 					log.FormatDuration(time.Since(downSince))))
-				if c.Metrics != nil {
-					c.Metrics.UpdateWANStatus(true)
-				}
+				metrics.UpdateWANStatus(true)
 				return nil
 			}
 		}
