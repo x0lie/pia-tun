@@ -85,19 +85,7 @@ func Run(ctx context.Context) error {
 	}
 	a.startMonitor(ctx, reconnectCh)
 
-	// Main loop: run services, reconnect on failure
-	reconnecting := false
-
 	for {
-		if reconnecting {
-			if a.cfg.ProxyEnabled {
-				log.Step("Proxy servers still running")
-				log.Success("Proxy servers ready")
-			}
-			log.Step("Health monitor resuming...")
-			a.showStatus(false)
-		}
-
 		err := a.runServices(ctx, reconnectCh)
 		if ctx.Err() != nil {
 			a.exitedCleanly = true
@@ -120,7 +108,6 @@ func Run(ctx context.Context) error {
 			if err := a.connectLoop(ctx); err != nil {
 				return err
 			}
-			reconnecting = true
 			continue
 		}
 
@@ -359,14 +346,10 @@ func (a *App) runServices(ctx context.Context, reconnectCh chan struct{}) error 
 	}
 }
 
-func (a *App) showStatus(verbose bool) {
+func (a *App) showStatus() {
 	log.Success(fmt.Sprintf("Check interval: %ds, Failure window: %ds",
 		int(a.cfg.HealthCheckInterval.Seconds()),
 		int(a.cfg.HealthFailureWindow.Seconds())))
-
-	if !verbose {
-		return
-	}
 
 	port := a.cfg.MetricsPort
 	if a.cfg.MetricsEnabled {
@@ -421,7 +404,7 @@ func (a *App) startMonitor(ctx context.Context, reconnectCh chan<- struct{}) {
 		}
 	}()
 
-	a.showStatus(true)
+	a.showStatus()
 }
 
 func (a *App) teardown() {
