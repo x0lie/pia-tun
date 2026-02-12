@@ -3,7 +3,6 @@ package monitor
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"strconv"
@@ -17,14 +16,6 @@ type HealthCheckResult struct {
 	Connectivity  bool
 	CheckDuration time.Duration
 	Error         error
-}
-
-func isPrivateIP(ip string) bool {
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
-		return false
-	}
-	return parsed.IsPrivate() || parsed.IsLoopback() || parsed.IsLinkLocalUnicast()
 }
 
 func (m *Monitor) checkConnectivityPing(ctx context.Context, host string) bool {
