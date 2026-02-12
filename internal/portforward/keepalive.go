@@ -151,6 +151,7 @@ func (m *KeepaliveManager) keepaliveLoop(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			m.metrics.UpdatePortForwarding(false, 0)
 			m.log.Debug("Keepalive loop received shutdown signal")
 			return nil
 
