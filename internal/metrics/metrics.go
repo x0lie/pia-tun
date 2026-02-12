@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"strconv"
 	"sync"
 	"time"
 
@@ -68,8 +67,8 @@ type Metrics struct {
 	connectionUp         *prometheus.GaugeVec
 	killswitchActive     prometheus.Gauge
 	lastHandshake        *prometheus.GaugeVec
-	portForwardingStatus *prometheus.GaugeVec
-	lastForwardedPort    int
+	portForwardingActive prometheus.Gauge
+	portForwardingPort   prometheus.Gauge
 
 	// Killswitch drop counters
 	killswitchPacketsDropped *prometheus.CounterVec
@@ -195,12 +194,18 @@ func New() *Metrics {
 		[]string{"interface"},
 	)
 
-	m.portForwardingStatus = prometheus.NewGaugeVec(
+	m.portForwardingActive = prometheus.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "pia_tun_port_forwarding_status",
-			Help: "Port forwarding status (1=active, 0=inactive) with port as label",
+			Name: "pia_tun_port_forwarding_active",
+			Help: "Port forwarding status (1=active, 0=inactive)",
 		},
-		[]string{"port"},
+	)
+
+	m.portForwardingPort = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "pia_tun_port_forwarding_port",
+			Help: "Current forwarded port number (0 if inactive)",
+		},
 	)
 
 	m.killswitchPacketsDropped = prometheus.NewCounterVec(
@@ -256,7 +261,8 @@ func New() *Metrics {
 		m.connectionUp,
 		m.killswitchActive,
 		m.lastHandshake,
-		m.portForwardingStatus,
+		m.portForwardingActive,
+		m.portForwardingPort,
 		m.killswitchPacketsDropped,
 		m.killswitchBytesDropped,
 	)
@@ -409,19 +415,12 @@ func (m *Metrics) UpdateLastHandshake(iface string, timestamp int64) {
 }
 
 func (m *Metrics) UpdatePortForwarding(active bool, port int) {
-	portStr := strconv.Itoa(port)
-
-	if m.lastForwardedPort != 0 && m.lastForwardedPort != port {
-		m.portForwardingStatus.DeleteLabelValues(strconv.Itoa(m.lastForwardedPort))
-	}
-
-	if active && port > 0 {
-		m.portForwardingStatus.WithLabelValues(portStr).Set(1)
-		m.lastForwardedPort = port
+	if active {
+		m.portForwardingActive.Set(1)
 	} else {
-		m.portForwardingStatus.WithLabelValues("0").Set(0)
-		m.lastForwardedPort = 0
+		m.portForwardingActive.Set(0)
 	}
+	m.portForwardingPort.Set(float64(port))
 }
 
 func (m *Metrics) UpdateKillswitchDrops(packetsIn, bytesIn, packetsOut, bytesOut int64) {
