@@ -111,17 +111,7 @@ func (m *Monitor) checkVPNHealth(timeout time.Duration) (*HealthCheckResult, err
 	return result, result.Error
 }
 
-func (m *Monitor) triggerReconnect(ctx context.Context) {
-	m.mu.Lock()
-	m.reconnectAttempts++
-	m.mu.Unlock()
-
-	m.wan.WaitForUp(ctx)
-
-	if m.metrics != nil {
-		m.metrics.RecordReconnect()
-	}
-
+func (m *Monitor) triggerReconnect() {
 	if m.onReconnect != nil {
 		m.log.Debug("Signaling orchestrator to reconnect")
 		m.onReconnect()

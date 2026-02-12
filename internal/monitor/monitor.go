@@ -13,7 +13,6 @@ import (
 	"github.com/x0lie/pia-tun/internal/config"
 	"github.com/x0lie/pia-tun/internal/log"
 	"github.com/x0lie/pia-tun/internal/metrics"
-	"github.com/x0lie/pia-tun/internal/wan"
 )
 
 // Config holds monitor configuration.
@@ -33,11 +32,10 @@ type State struct {
 
 // Monitor manages VPN health monitoring.
 type Monitor struct {
-	config            Config
-	log               *log.Logger
-	reconnectAttempts int
-	metrics           *metrics.Metrics
-	mu                sync.Mutex
+	config  Config
+	log     *log.Logger
+	metrics *metrics.Metrics
+	mu      sync.Mutex
 
 	// Reconnect callback for orchestrated mode.
 	// When set, triggerReconnect calls this instead of writing to a pipe file.
@@ -49,9 +47,6 @@ type Monitor struct {
 	// Health status for /health endpoint
 	healthy         bool
 	lastHealthCheck time.Time
-
-	// Wan checking
-	wan *wan.Checker
 }
 
 func loadConfig() Config {
@@ -100,7 +95,7 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 			if _, err := os.Stat("/tmp/trigger_reconnect"); err == nil {
 				os.Remove("/tmp/trigger_reconnect")
 				m.log.Debug("External reconnect trigger detected")
-				m.triggerReconnect(ctx)
+				m.triggerReconnect()
 				continue
 			}
 
@@ -206,7 +201,7 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 				if !recovered {
 					fmt.Printf("\n  %s\u2717%s VPN connection lost (down for more than %s)\n",
 						log.ColorRed, log.ColorReset, m.config.FailureWindow)
-					m.triggerReconnect(ctx)
+					m.triggerReconnect()
 				}
 			}
 		}
@@ -233,16 +228,12 @@ func (m *Monitor) updateMetrics(result *HealthCheckResult, healthy bool) {
 // calls it instead of writing to a pipe file when a reconnect is needed.
 // state provides orchestrator pause/reconnect signaling. Pass nil for both
 // in standalone mode.
-func Run(ctx context.Context, onReconnect func(), state *State, wanChecker *wan.Checker, m *metrics.Metrics) error {
+func Run(ctx context.Context, onReconnect func(), state *State, m *metrics.Metrics) error {
 	cfg := loadConfig()
 
 	logger := &log.Logger{
 		Enabled: os.Getenv("_LOG_LEVEL") == "2",
 		Prefix:  "monitor",
-	}
-
-	if m != nil && wanChecker != nil {
-		wanChecker.Metrics = m
 	}
 
 	monitor := &Monitor{
@@ -251,7 +242,6 @@ func Run(ctx context.Context, onReconnect func(), state *State, wanChecker *wan.
 		metrics:     m,
 		onReconnect: onReconnect,
 		state:       state,
-		wan:         wanChecker,
 	}
 
 	// Always start HTTP server for /health endpoint

@@ -113,6 +113,10 @@ func Run(ctx context.Context) error {
 			a.shellFunc(ctx, "show_reconnecting")
 			a.monitorState.Reconnecting.Store(true)
 			a.teardown()
+
+			a.metrics.RecordReconnect()
+			a.wan.WaitForUp(ctx)
+
 			if err := a.connectLoop(ctx); err != nil {
 				return err
 			}
@@ -412,7 +416,7 @@ func (a *App) startMonitor(ctx context.Context, reconnectCh chan<- struct{}) {
 	}
 
 	go func() {
-		if err := monitor.Run(ctx, reconnect, a.monitorState, a.wan, a.metrics); err != nil {
+		if err := monitor.Run(ctx, reconnect, a.monitorState, a.metrics); err != nil {
 			log.Error(fmt.Sprintf("Health monitor error: %v", err))
 		}
 	}()
