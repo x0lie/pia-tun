@@ -17,6 +17,7 @@ import (
 	"github.com/x0lie/pia-tun/internal/monitor"
 	"github.com/x0lie/pia-tun/internal/pia"
 	"github.com/x0lie/pia-tun/internal/portforward"
+	"github.com/x0lie/pia-tun/internal/portsync"
 	"github.com/x0lie/pia-tun/internal/proxy"
 	"github.com/x0lie/pia-tun/internal/vpn"
 	"github.com/x0lie/pia-tun/internal/wan"
@@ -295,9 +296,26 @@ func (a *App) runServices(ctx context.Context, reconnectCh chan struct{}) error 
 		return cacher.Run(gCtx, a.cache)
 	})
 
+	syncCfg := portsync.Config{
+		Client: a.cfg.PSClient,
+		URL:    a.cfg.PSURL,
+		User:   a.cfg.PSUser,
+		Pass:   a.cfg.PSPass,
+		Cmd:    a.cfg.PSCmd,
+	}
+	syncLogger := &log.Logger{
+		Enabled: os.Getenv("_LOG_LEVEL") == "2",
+		Prefix:  "portsync",
+	}
+	syncer := portsync.New(syncCfg, syncLogger)
+	if a.cfg.PSClient != "" || a.cfg.PSCmd != "" {
+		g.Go(func() error {
+			return syncer.Run(gCtx)
+		})
+	}
+
 	// Port forwarding - conditional
 	if a.cfg.PFEnabled {
-		pfReady := make(chan struct{})
 		pfReconnect := func() {
 			svcCancel(ErrReconnect)
 		}
@@ -308,21 +326,7 @@ func (a *App) runServices(ctx context.Context, reconnectCh chan struct{}) error 
 			PFGateway: a.connInfo.PFGateway,
 		}
 		g.Go(func() error {
-			return portforward.Run(gCtx, pfCfg, pfReconnect, pfReady, a.metrics)
-		})
-
-		select {
-		case <-pfReady:
-			a.log.Debug("Port forwarding ready")
-		case <-gCtx.Done():
-		}
-	}
-
-	// Port monitor script (torrent client API sync) - conditional
-	if a.cfg.PSClient != "" || a.cfg.PSCmd != "" {
-		log.Step("Port sync starting...")
-		g.Go(func() error {
-			return a.runScript(gCtx, "/app/scripts/port_monitor.sh")
+			return portforward.Run(gCtx, pfCfg, pfReconnect, a.metrics, syncer, a.fw)
 		})
 	}
 
@@ -436,13 +440,6 @@ func (a *App) cleanup() {
 		log.Warning("Killswitch preserved due to error exit")
 	}
 	log.Success("Cleanup complete")
-}
-
-func (a *App) runScript(ctx context.Context, script string) error {
-	cmd := exec.CommandContext(ctx, "bash", script)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
 
 func (a *App) shellFunc(ctx context.Context, funcCall string) error {

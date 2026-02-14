@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"os"
 	"sync"
-	"syscall"
 	"time"
 
+	"github.com/x0lie/pia-tun/internal/firewall"
 	"github.com/x0lie/pia-tun/internal/log"
 	"github.com/x0lie/pia-tun/internal/metrics"
+	"github.com/x0lie/pia-tun/internal/portsync"
 )
 
 // KeepaliveManager manages port forward state lifecycle.
@@ -21,6 +22,8 @@ type KeepaliveManager struct {
 	mu          sync.Mutex
 	onReconnect func()
 	metrics     *metrics.Metrics
+	syncer      *portsync.Syncer
+	fw          *firewall.Firewall
 }
 
 // State tracks port forwarding state.
@@ -35,7 +38,7 @@ type State struct {
 }
 
 // NewKeepaliveManager creates a new keepalive manager.
-func NewKeepaliveManager(config *Config, client *PIAClient, logger *log.Logger, onReconnect func(), metrics *metrics.Metrics) *KeepaliveManager {
+func NewKeepaliveManager(config *Config, client *PIAClient, logger *log.Logger, onReconnect func(), metrics *metrics.Metrics, syncer *portsync.Syncer, fw *firewall.Firewall) *KeepaliveManager {
 	return &KeepaliveManager{
 		config:      config,
 		client:      client,
@@ -43,17 +46,15 @@ func NewKeepaliveManager(config *Config, client *PIAClient, logger *log.Logger, 
 		state:       &State{},
 		onReconnect: onReconnect,
 		metrics:     metrics,
+		syncer:      syncer,
+		fw:          fw,
 	}
 }
 
 // Run performs initial setup then enters the keepalive loop.
-func (m *KeepaliveManager) Run(ctx context.Context, onReady func()) error {
+func (m *KeepaliveManager) Run(ctx context.Context) error {
 	if err := m.initialSetup(); err != nil {
 		return err
-	}
-
-	if onReady != nil {
-		onReady()
 	}
 	m.log.Debug("Port forwarding setup complete, entering main loop")
 
@@ -118,7 +119,14 @@ func (m *KeepaliveManager) initialSetup() error {
 	}
 
 	m.metrics.UpdatePortForwarding(true, port)
-	m.notifyPortChange(port)
+	if m.syncer != nil {
+		m.syncer.NotifyPort(port)
+	}
+	if m.fw != nil {
+		if err := m.fw.AllowForwardedPort(port); err != nil {
+			log.Warning(fmt.Sprintf("Failed to add firewall rule for port %d: %v", port, err))
+		}
+	}
 
 	log.Success(fmt.Sprintf("Port: %s%s%d%s", log.ColorGreen, log.ColorBold, port, log.ColorReset))
 
@@ -152,6 +160,9 @@ func (m *KeepaliveManager) keepaliveLoop(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			m.metrics.UpdatePortForwarding(false, 0)
+			if m.fw != nil {
+				m.fw.RemoveForwardedPort()
+			}
 			m.log.Debug("Keepalive loop received shutdown signal")
 			return nil
 
@@ -306,7 +317,14 @@ func (m *KeepaliveManager) refreshSignature(ctx context.Context) error {
 		m.log.Debug("Writing new port to %s", m.config.PortFile)
 		os.WriteFile(m.config.PortFile, []byte(fmt.Sprintf("%d", newPort)), 0644)
 		m.metrics.UpdatePortForwarding(true, newPort)
-		m.notifyPortChange(newPort)
+		if m.syncer != nil {
+			m.syncer.NotifyPort(newPort)
+		}
+		if m.fw != nil {
+			if err := m.fw.AllowForwardedPort(newPort); err != nil {
+				log.Warning(fmt.Sprintf("Failed to update firewall rule for port %d: %v", newPort, err))
+			}
+		}
 	} else {
 		m.log.Debug("Port unchanged: %d", newPort)
 	}
@@ -362,22 +380,4 @@ func (m *KeepaliveManager) triggerReconnect() {
 
 	// Legacy standalone mode
 	os.Exit(1)
-}
-
-func (m *KeepaliveManager) notifyPortChange(port int) {
-	pipePath := "/tmp/port_change_pipe"
-
-	go func() {
-		if _, err := os.Stat(pipePath); err == nil {
-			if file, err := os.OpenFile(pipePath, os.O_WRONLY|syscall.O_NONBLOCK, 0644); err == nil {
-				defer file.Close()
-				file.WriteString(fmt.Sprintf("%d\n", port))
-				m.log.Debug("Notified port monitor of new port: %d", port)
-			} else {
-				m.log.Debug("Failed to open port change pipe: %v", err)
-			}
-		} else {
-			m.log.Debug("Port change pipe not found, monitor may not be running yet")
-		}
-	}()
 }
