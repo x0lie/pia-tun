@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strconv"
@@ -18,13 +19,18 @@ type HealthCheckResult struct {
 	Error         error
 }
 
-func (m *Monitor) checkConnectivityPing(ctx context.Context, host string) bool {
-	cmd := exec.CommandContext(ctx, "ping", "-c", "1", "-W", "2", host)
-	return cmd.Run() == nil
+func (m *Monitor) checkConnectivity(ctx context.Context, host string) bool {
+	d := net.Dialer{Timeout: 2 * time.Second}
+	conn, err := d.DialContext(ctx, "tcp", host)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 func (m *Monitor) checkExternalConnectivity(timeout time.Duration) bool {
-	m.log.Debug("Checking external connectivity via ping")
+	m.log.Debug("Checking external connectivity via tcp")
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -37,18 +43,18 @@ func (m *Monitor) checkExternalConnectivity(timeout time.Duration) bool {
 	results := make(chan checkResult, 3)
 
 	go func() {
-		success := m.checkConnectivityPing(ctx, "1.1.1.1")
-		results <- checkResult{"1.1.1.1", success}
+		success := m.checkConnectivity(ctx, "1.1.1.1:443")
+		results <- checkResult{"1.1.1.1:443", success}
 	}()
 
 	go func() {
-		success := m.checkConnectivityPing(ctx, "8.8.8.8")
-		results <- checkResult{"8.8.8.8", success}
+		success := m.checkConnectivity(ctx, "8.8.8.8:443")
+		results <- checkResult{"8.8.8.8:443", success}
 	}()
 
 	go func() {
-		success := m.checkConnectivityPing(ctx, "9.9.9.9")
-		results <- checkResult{"9.9.9.9", success}
+		success := m.checkConnectivity(ctx, "9.9.9.9:443")
+		results <- checkResult{"9.9.9.9:443", success}
 	}()
 
 	for i := 0; i < 3; i++ {
@@ -59,7 +65,7 @@ func (m *Monitor) checkExternalConnectivity(timeout time.Duration) bool {
 		}
 	}
 
-	m.log.Debug("Ping check failed")
+	m.log.Debug("Connectivity check failed")
 	return false
 }
 
