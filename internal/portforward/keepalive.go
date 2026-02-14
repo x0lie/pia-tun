@@ -53,7 +53,7 @@ func NewKeepaliveManager(config *Config, client *PIAClient, logger *log.Logger, 
 
 // Run performs initial setup then enters the keepalive loop.
 func (m *KeepaliveManager) Run(ctx context.Context) error {
-	if err := m.initialSetup(); err != nil {
+	if err := m.initialSetup(ctx); err != nil {
 		return err
 	}
 	m.log.Debug("Port forwarding setup complete, entering main loop")
@@ -61,11 +61,9 @@ func (m *KeepaliveManager) Run(ctx context.Context) error {
 	return m.keepaliveLoop(ctx)
 }
 
-func (m *KeepaliveManager) initialSetup() error {
+func (m *KeepaliveManager) initialSetup(ctx context.Context) error {
 	log.Step("Acquiring port forward signature...")
 	m.log.Debug("Starting initial signature acquisition (max retries: 5)")
-
-	ctx := context.Background()
 
 	resp, err := m.client.GetSignatureWithRetry(ctx, 5*time.Minute)
 	if err != nil {
