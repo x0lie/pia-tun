@@ -146,11 +146,21 @@ func Run(ctx context.Context, cache *vpn.CacheState) error {
 
 		case <-ticker.C:
 			logger.Debug("Starting scheduled cache refresh")
-			if err := refreshAll(ctx, logger, cfg, client, cache); err != nil {
+			var err error
+			for attempt := range 3 {
+				if err = refreshAll(ctx, logger, cfg, client, cache); err == nil {
+					break
+				}
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				log.Warning(fmt.Sprintf("Cache refresh failed: %v", err))
+				if attempt < 2 {
+					logger.Debug("Cache refresh failed, retrying: %v", err)
+					time.Sleep(60 * time.Second)
+				}
+			}
+			if err != nil {
+				log.Warning(fmt.Sprintf("Cache refresh failed after 3 attempts: %v", err))
 			} else {
 				logger.Debug("Cache refreshed")
 			}
