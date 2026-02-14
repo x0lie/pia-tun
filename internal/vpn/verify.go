@@ -47,7 +47,12 @@ func VerifyConnection(ctx context.Context) (string, error) {
 	logger.Debug("Retrieving Public IP")
 	publicIP, err := getPublicIP(ctx, 5*time.Second)
 	if err != nil {
-		return "", err
+		logger.Debug("First IP check failed, retrying: %v", err)
+		time.Sleep(2 * time.Second)
+		publicIP, err = getPublicIP(ctx, 5*time.Second)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	// Show Critical Error if IP hasn't changed
@@ -139,6 +144,11 @@ func getPublicIP(ctx context.Context, timeout time.Duration) (string, error) {
 				return
 			}
 			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				results <- result{err: fmt.Errorf("%s: status %d", url, resp.StatusCode)}
+				return
+			}
 
 			body, err := io.ReadAll(io.LimitReader(resp.Body, 64))
 			if err != nil {
