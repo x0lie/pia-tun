@@ -17,12 +17,14 @@ source /app/scripts/ui.sh
 get_default_gateway() {
     local gateway=$(ip route | grep default | head -1 | awk '{print $3}')
     show_debug "Default gateway: ${gateway:-none}"
+    [ -z "$gateway" ] && { show_error "Cannot determine default gateway"; return 1; }
     echo "$gateway"
 }
 
 get_default_interface() {
     local interface=$(ip route | grep default | head -1 | awk '{print $5}')
     show_debug "Default interface: ${interface:-none}"
+    [ -z "$interface" ] && { show_error "Cannot determine default interface"; return 1; }
     echo "$interface"
 }
 
@@ -32,14 +34,11 @@ get_default_interface() {
 
 setup_bypass_routes() {
     show_debug "Setting up bypass routing table"
-    local gateway=$(get_default_gateway)
-    local interface=$(get_default_interface)
+    local gateway="$1"
+    local iface="$2"
 
-    [ -z "$gateway" ] && { show_error "Cannot determine default gateway"; return 1; }
-    [ -z "$interface" ] && { show_error "Cannot determine default interface"; return 1; }
-
-    show_debug "Adding default route to table 100: $gateway via $interface"
-    ip route add default via "$gateway" dev "$interface" table 100 2>/dev/null || true
+    show_debug "Adding default route to table 100: $gateway via $iface"
+    ip route add default via "$gateway" dev "$iface" table 100 2>/dev/null || true
 
     # Bypass only for new WAN check IPs
     show_debug "Adding bypass rules for WAN check IPs (priority 50)"
@@ -220,10 +219,11 @@ setup_iptables_chain() {
 }
 
 # Insert bypass route rules before DROP position
-# Restricted to: eth0 interface + TCP + port 13 (DAYTIME) only
+# Restricted to: default interface + TCP + port 13 (DAYTIME) only
 insert_bypass_routes() {
     local chain="$1"
     local cmd="$2"
+    local iface="$3"
 
     show_debug "Inserting bypass route rules before DROP (TCP/13 via default gateway)"
 
@@ -237,11 +237,11 @@ insert_bypass_routes() {
 
     # Insert all bypass routes before DROP (in reverse order to maintain correct order)
     # Each insert at same position pushes previous down
-    $cmd -I "$chain" "$drop_pos" -o eth0 -p tcp --dport 13 -d 128.138.140.44 -j ACCEPT -m comment --comment "bypass_routes"
-    $cmd -I "$chain" "$drop_pos" -o eth0 -p tcp --dport 13 -d 132.163.97.1 -j ACCEPT -m comment --comment "bypass_routes"
-    $cmd -I "$chain" "$drop_pos" -o eth0 -p tcp --dport 13 -d 132.163.96.1 -j ACCEPT -m comment --comment "bypass_routes"
-    $cmd -I "$chain" "$drop_pos" -o eth0 -p tcp --dport 13 -d 129.6.15.29 -j ACCEPT -m comment --comment "bypass_routes"
-    $cmd -I "$chain" "$drop_pos" -o eth0 -p tcp --dport 13 -d 129.6.15.28 -j ACCEPT -m comment --comment "bypass_routes"
+    $cmd -I "$chain" "$drop_pos" -o "$iface" -p tcp --dport 13 -d 128.138.140.44 -j ACCEPT -m comment --comment "bypass_routes"
+    $cmd -I "$chain" "$drop_pos" -o "$iface" -p tcp --dport 13 -d 132.163.97.1 -j ACCEPT -m comment --comment "bypass_routes"
+    $cmd -I "$chain" "$drop_pos" -o "$iface" -p tcp --dport 13 -d 132.163.96.1 -j ACCEPT -m comment --comment "bypass_routes"
+    $cmd -I "$chain" "$drop_pos" -o "$iface" -p tcp --dport 13 -d 129.6.15.29 -j ACCEPT -m comment --comment "bypass_routes"
+    $cmd -I "$chain" "$drop_pos" -o "$iface" -p tcp --dport 13 -d 129.6.15.28 -j ACCEPT -m comment --comment "bypass_routes"
 }
 
 # Insert local network rules at position 1 (will be pushed down by loopback and est/rel)
@@ -284,6 +284,8 @@ insert_local_network_rules() {
 }
 
 apply_baseline_killswitch() {
+    local iface="$1"
+
     show_debug "Cleaning up existing iptables configuration"
     cleanup_chains 2>/dev/null || true
 
@@ -296,11 +298,11 @@ apply_baseline_killswitch() {
     $IPT_CMD -A VPN_OUT -j DROP
 
     # Add bypass routes before DROP
-    insert_bypass_routes "VPN_OUT" "$IPT_CMD"
+    insert_bypass_routes "VPN_OUT" "$IPT_CMD" "$iface"
 
     # Build permanent rules in REVERSE order by inserting at position 1
     # Each insert pushes previous rules down, so we insert in reverse order
-    # Final order will be: [Est/Rel, Loopback, Local?, Bypass routes, DROP]
+    # Final order will be: [Est/Rel, Loopback, Local, Bypass routes, DROP]
 
     # Step 1: Insert local networks (if configured)
     insert_local_network_rules "VPN_OUT" "false" "$IPT_CMD"
@@ -440,12 +442,15 @@ setup_baseline_killswitch() {
     show_debug "Cleaning up any orphaned killswitch rules from previous runs"
     cleanup_killswitch 2>/dev/null || true
 
-    setup_bypass_routes || {
+    local gateway=$(get_default_gateway)
+    local iface=$(get_default_interface)
+
+    setup_bypass_routes "$gateway" "$iface" || {
         show_error "Failed to setup bypass routes"
         return 1
     }
 
-    apply_baseline_killswitch || {
+    apply_baseline_killswitch "$iface" || {
         show_error "Failed to apply iptables killswitch"
         return 1
     }
