@@ -79,9 +79,6 @@ func (c *PIAClient) GetSignature() (*SignatureResponse, error) {
 	}
 	c.log.Debug("Executing: GET %s?token=%s", baseURL, tokenPreview)
 
-	// Initial delay (matching bash behavior)
-	time.Sleep(2 * time.Second)
-
 	resp, err := c.httpClient.Get(fullURL)
 	if err != nil {
 		c.log.Debug("ERROR: Request failed: %v", err)
