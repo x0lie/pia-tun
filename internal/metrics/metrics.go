@@ -50,7 +50,6 @@ type Metrics struct {
 	// Prometheus metrics
 	healthChecksTotal      prometheus.Counter
 	healthChecksSuccess    prometheus.Counter
-	healthChecksFailed     prometheus.Counter
 	reconnectsTotal        prometheus.Counter
 	checkDurationHistogram prometheus.Histogram
 	bytesReceivedTotal     *prometheus.CounterVec
@@ -99,11 +98,6 @@ func New() *Metrics {
 	m.healthChecksSuccess = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "pia_tun_health_checks_successful_total",
 		Help: "Total number of successful health checks",
-	})
-
-	m.healthChecksFailed = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "pia_tun_health_checks_failed_total",
-		Help: "Total number of failed health checks",
 	})
 
 	m.reconnectsTotal = prometheus.NewCounter(prometheus.CounterOpts{
@@ -248,7 +242,6 @@ func New() *Metrics {
 	registerer.MustRegister(
 		m.healthChecksTotal,
 		m.healthChecksSuccess,
-		m.healthChecksFailed,
 		m.reconnectsTotal,
 		m.checkDurationHistogram,
 		m.bytesReceivedTotal,
@@ -310,8 +303,6 @@ func (m *Metrics) RecordCheck(success bool, duration time.Duration) {
 	m.healthChecksTotal.Inc()
 	if success {
 		m.healthChecksSuccess.Inc()
-	} else {
-		m.healthChecksFailed.Inc()
 	}
 	m.checkDurationHistogram.Observe(duration.Seconds())
 }
