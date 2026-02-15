@@ -37,6 +37,10 @@ func New() (*Firewall, error) {
 		return nil, fmt.Errorf("init iptables IPv6 (%s): %w", ipt6Name, err)
 	}
 
+	// Export for killswitch.sh
+	os.Setenv("IPT_CMD", ipt4Name)
+	os.Setenv("IP6T_CMD", ipt6Name)
+
 	return &Firewall{ipt4: ipt4, ipt6: ipt6, log: logger, backend: ipt4Name}, nil
 }
 
