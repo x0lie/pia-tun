@@ -79,7 +79,7 @@ See [`docs/docker-compose-examples/`](docs/docker-compose-examples/) for more ty
 - Use `network_mode: "service:pia-tun"` for dependents
 - Use `depends_on: pia-tun` for dependents
 - Use `PS_CLIENT` for easy port updates for dependents
-- Access from LAN requires both `LOCAL_NETWORKS` + `LOCAL_PORTS`
+- Access from LAN requires `LOCAL_NETWORKS`
 - Use Docker secrets for credentials
 
 ## Configuration
@@ -101,7 +101,6 @@ See [`docs/docker-compose-examples/`](docs/docker-compose-examples/) for more ty
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `LOCAL_NETWORKS` | CIDR ranges for LAN access, comma-separated. Supports both IPv4 and IPv6 (e.g., `172.18.0.0/16,fd00::/64`) | None |
-| `LOCAL_PORTS` | Ports accessible from LAN (comma-separated) | None |
 | `DNS` | DNS provider: `pia` (10.0.0.243), or specific IP (e.g., `8.8.8.8`). Routes through VPN tunnel unless the IP is in `LOCAL_NETWORKS` | `pia` |
 | `IPV6_ENABLED` | Enable IPv6 routing to VPN interface. **Note:** PIA does not yet support IPv6. See IPv6 section below. | `false` |
 | `IPT_BACKEND` | iptables backend: `nft` or `legacy`. Auto-detected if not set. | Auto |
@@ -145,20 +144,14 @@ See [`docs/docker-compose-examples/`](docs/docker-compose-examples/) for more ty
 ### Behavior
 
 #### Local Network Access
-- `LOCAL_NETWORKS` + `LOCAL_PORTS`: Bidirectional access on specified ports (expose services to LAN)
-- `LOCAL_NETWORKS` only: Outbound access to LAN services, no listening ports exposed
-- Neither configured: All traffic routed through VPN
-
-**To expose any service to your LAN** (proxy ports, metrics, dependent web UI, etc.)  
-you **must** add both:
-- your LAN subnet(s) to `LOCAL_NETWORKS`
-- the port(s) to `LOCAL_PORTS`  
-- Example: `LOCAL_NETWORKS=192.168.1.0/24` and `LOCAL_PORTS=1080,8888,9090,8080`
+- `LOCAL_NETWORKS`: Allows your LAN to reach internal services (proxy, metrics, dependent web UIs).
+- You can include more than one CIDR range and/or specific IP addresses.
+- Example: `LOCAL_NETWORKS=192.168.1.0/24, 172.17.0.2`
 
 #### IPv6 Notes
 - PIA does not currently support IPv6. IPv6 internet traffic will not work regardless of settings
 - IPV6_ENABLED is simply future-proofing for PIA's eventual integration of IPv6 capability
-- `LOCAL_NETWORKS` accepts IPv6 ranges and addresses regardless of IPV6_ENABLED
+- `LOCAL_NETWORKS` accepts IPv6 ranges and addresses, and functions regardless of IPV6_ENABLED
 
 #### Port-syncing
 - **Auto-detection**: `PS_URL` defaults to "http://localhost:{8080,9091,8112}" when `PS_CLIENT` set to qbittorrent/rtorrent, transmission, or deluge respectively.

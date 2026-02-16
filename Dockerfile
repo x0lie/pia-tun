@@ -98,7 +98,6 @@ ENV TZ=UTC \
     LOG_LEVEL=info \
     IPV6_ENABLED=false \
     LOCAL_NETWORKS="" \
-    LOCAL_PORTS="" \
     DNS="pia" \
     MTU="1420" \
     WG_BACKEND="" \

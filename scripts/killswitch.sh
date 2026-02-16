@@ -87,33 +87,18 @@ setup_input_chain() {
     show_debug "INPUT Rule 2: Allow loopback"
     $IPT_CMD -A VPN_IN -i lo -j ACCEPT
 
-    # 3. Local networks (if configured - allows LAN access to proxy/metrics/dependents on specific ports only)
+    # 3. Local networks (if configured - allows LAN access to proxy/metrics/dependents)
     if [ -n "${LOCAL_NETWORKS:-}" ]; then
-        show_debug "INPUT Rule 3: Allow from local networks to specific ports"
+        show_debug "INPUT Rule 3: Allow from local networks"
 
-        # Build list of allowed ports
-        local allowed_ports=""
-
-        # Add user-specified LOCAL_PORTS (for dependent services like qBittorrent)
-        if [ -n "${LOCAL_PORTS:-}" ]; then
-            # Clean up LOCAL_PORTS (convert spaces to commas, remove duplicate separators)
-            allowed_ports=$(echo "$LOCAL_PORTS" | tr -s ' ,' ',' | sed 's/^,//;s/,$//')
-        fi
-
-        # Only add rules if there are ports to allow
-        if [ -n "$allowed_ports" ]; then
-            show_debug "Allowing LAN access to ports: $allowed_ports (TCP+UDP)"
-            IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORKS"
-            for network in "${NETWORKS[@]}"; do
-                network=$(echo "$network" | xargs)
-                if [[ "$network" != *":"* ]]; then
-                    $IPT_CMD -A VPN_IN -s "$network" -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
-                    $IPT_CMD -A VPN_IN -s "$network" -p udp -m multiport --dports "$allowed_ports" -j ACCEPT
-                fi
-            done
-        else
-            show_debug "No LOCAL_PORTS configured, skipping LAN port rules"
-        fi
+        # Add IPv4 LOCAL_NETWORKS to VPN_IN chain
+        IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORKS"
+        for network in "${NETWORKS[@]}"; do
+            network=$(echo "$network" | xargs)
+            if [[ "$network" != *":"* ]]; then
+                $IPT_CMD -A VPN_IN -s "$network" -j ACCEPT
+            fi
+        done
     else
         show_debug "INPUT Rule 3: Skipped (no local networks)"
     fi
@@ -149,25 +134,15 @@ setup_ipv6_protection() {
         $IP6T_CMD -A VPN_IN6 -p ipv6-icmp -j ACCEPT
     fi
 
-    # Build list of allowed ports for IPv6
+    # Add IPv6 LOCAL_NETWORKS to VPN_IN6 chain
     if [ -n "${LOCAL_NETWORKS:-}" ]; then
-        local allowed_ports=""
-
-        # Add user-specified LOCAL_PORTS
-        if [ -n "${LOCAL_PORTS:-}" ]; then
-            allowed_ports=$(echo "$LOCAL_PORTS" | tr -s ' ,' ',' | sed 's/^,//;s/,$//')
-        fi
-
-        if [ -n "$allowed_ports" ]; then
-            IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORKS"
-            for network in "${NETWORKS[@]}"; do
-                network=$(echo "$network" | xargs)
-                if [[ "$network" == *":"* ]]; then
-                    $IP6T_CMD -A VPN_IN6 -s "$network" -p tcp -m multiport --dports "$allowed_ports" -j ACCEPT
-                    $IP6T_CMD -A VPN_IN6 -s "$network" -p udp -m multiport --dports "$allowed_ports" -j ACCEPT
-                fi
-            done
-        fi
+        IFS=',' read -ra NETWORKS <<< "$LOCAL_NETWORKS"
+        for network in "${NETWORKS[@]}"; do
+            network=$(echo "$network" | xargs)
+            if [[ "$network" == *":"* ]]; then
+                $IP6T_CMD -A VPN_IN6 -s "$network" -j ACCEPT
+            fi
+        done
     fi
 
     $IP6T_CMD -A VPN_IN6 -j DROP
@@ -264,19 +239,8 @@ insert_local_network_rules() {
                 $cmd -I "$chain" 1 -d "$network" -j ACCEPT
             fi
         done
-
-        # Show success message with port information (only for IPv4 VPN_OUT chain)
         if [ "$chain" = "VPN_OUT" ] && [ "$is_ipv6" != "true" ]; then
-            # Build port information
-            local port_info=""
-            if [ -n "${LOCAL_PORTS:-}" ]; then
-                # Clean up and format ports
-                local ports=$(echo "$LOCAL_PORTS" | tr -s ' ,' ',' | sed 's/^,//;s/,$//')
-                port_info="(ports: $ports)"
-            else
-                port_info="(outbound only, no listening ports)"
-            fi
-            show_success "Local network: $LOCAL_NETWORKS $port_info"
+            show_success "Local networks: $LOCAL_NETWORKS"
         fi
     else
         [ "$chain" = "VPN_OUT" ] && show_success "Local network: Disabled (all traffic through VPN)"
