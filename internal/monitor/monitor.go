@@ -113,7 +113,7 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 
 			// Start server latency ping in parallel
 			var serverLatencyChan chan float64
-			if m.metrics != nil {
+			if m.config.MetricsEnabled {
 				serverLatencyChan = make(chan float64, 1)
 				go func() {
 					serverIP := m.getServerEndpoint()
@@ -133,7 +133,7 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 			m.setHealthStatus(err == nil)
 			m.updateMetrics(result, err == nil)
 
-			if m.metrics != nil {
+			if m.config.MetricsEnabled {
 				m.metrics.RecordCheck(err == nil, result.CheckDuration)
 
 				if serverLatencyChan != nil {
@@ -209,7 +209,7 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 }
 
 func (m *Monitor) updateMetrics(result *HealthCheckResult, healthy bool) {
-	if m.metrics != nil {
+	if m.config.MetricsEnabled {
 		const iface = "pia0"
 		rx, tx, _ := m.getTransferBytes()
 

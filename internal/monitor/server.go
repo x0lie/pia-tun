@@ -24,7 +24,7 @@ func startHTTPServer(m *Monitor) {
 	}))
 
 	mux.Handle("/metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if m.metrics == nil {
+		if !m.config.MetricsEnabled {
 			http.Error(w, "Metrics not enabled", http.StatusNotFound)
 			return
 		}
