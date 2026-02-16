@@ -81,10 +81,10 @@ func Run(ctx context.Context) error {
 	reconnectCh := make(chan struct{}, 1)
 
 	// Permanent services (persist across reconnects, use parent ctx)
+	a.startMonitor(ctx, reconnectCh)
 	if a.cfg.ProxyEnabled {
 		a.startProxy(ctx)
 	}
-	a.startMonitor(ctx, reconnectCh)
 
 	for {
 		err := a.runServices(ctx, reconnectCh)
