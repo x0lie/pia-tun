@@ -62,7 +62,7 @@ func LoadConfig() Config {
 		IPv6Enabled:    getEnvBool("IPV6_ENABLED", false),
 		PFEnabled:      getEnvBool("PF_ENABLED", false),
 		ProxyEnabled:   getEnvBool("PROXY_ENABLED", false),
-		MetricsEnabled: getEnvBool("METRICS", true),
+		MetricsEnabled: getEnvBool("METRICS_ENABLED", true),
 
 		LocalNetworks: getEnv("LOCAL_NETWORKS", ""),
 		LocalPorts:    getEnv("LOCAL_PORTS", ""),

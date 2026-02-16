@@ -54,7 +54,7 @@ func loadConfig() Config {
 		CheckInterval:  config.GetEnvDuration("HC_INTERVAL", 10),
 		FailureWindow:  config.GetEnvDuration("HC_FAILURE_WINDOW", 30),
 		DebugMode:      config.IsDebugMode(),
-		MetricsEnabled: config.GetEnvBool("METRICS"),
+		MetricsEnabled: config.GetEnvBool("METRICS_ENABLED"),
 	}
 }
 

@@ -545,7 +545,7 @@ func (a *App) logConfig() {
 	a.log.Debug("  HC_INTERVAL=%s", a.cfg.HealthCheckInterval)
 	a.log.Debug("  HC_FAILURE_WINDOW=%s", a.cfg.HealthFailureWindow)
 	a.log.Debug("  PROXY_ENABLED=%v", a.cfg.ProxyEnabled)
-	a.log.Debug("  METRICS=%v", a.cfg.MetricsEnabled)
+	a.log.Debug("  METRICS_ENABLED=%v", a.cfg.MetricsEnabled)
 	a.log.Debug("  LOG_LEVEL=%s", a.cfg.LogLevel)
 }
 

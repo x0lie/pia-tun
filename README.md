@@ -139,7 +139,7 @@ See [`docs/docker-compose-examples/`](docs/docker-compose-examples/) for more ty
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `METRICS` | Enable Prometheus metrics endpoint (listen on localhost only by default) | `true` |
+| `METRICS_ENABLED` | Enable Prometheus metrics endpoint (listen on localhost only by default) | `true` |
 | `METRICS_PORT` | Metrics server port | `9090` |
 
 ### Behavior
