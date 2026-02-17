@@ -162,17 +162,16 @@ func (a *App) initialize(ctx context.Context) error {
 		return fmt.Errorf("killswitch setup failed: %w", err)
 	}
 
-	// Set up local network bypass routes (once, not on reconnect)
-	if a.cfg.LocalNetworks != "" {
-		networks := parseNetworkList(a.cfg.LocalNetworks)
-		if err := a.fw.SetupLocalNetworkRoutes(networks); err != nil {
-			log.Error("Failed to setup local network routes")
-			return fmt.Errorf("local network routes: %w", err)
-		}
-		a.log.Debug("Local network routes configured for %d networks", len(networks))
+	// Set up RFC1918/ULA bypass routes so LOCAL_NETWORKS traffic uses default gateway, not pia0
+	if err := a.fw.SetupPrivateRoutes(); err != nil {
+		log.Error("Failed to setup private network routes")
+		return fmt.Errorf("private network routes: %w", err)
 	}
 
 	// Configure DNS once after killswitch is up
+	if err := a.fw.AddPIADNSRoutes(a.cfg.DNS); err != nil {
+		log.Warning(fmt.Sprintf("Failed to add PIA DNS routes: %v", err))
+	}
 	a.writeDNS()
 
 	a.metrics = metrics.New()
@@ -198,15 +197,18 @@ func (a *App) connect(ctx context.Context) error {
 		WGBackend:  a.cfg.WGBackend,
 	}
 
+	// Connect - Setup VPN
 	connInfo, err := vpn.Setup(ctx, cfg, a.fw, a.cache, a.resolver)
 	if err != nil {
 		return err // Error type (AuthError/ConnectivityError) preserved for connectLoop
 	}
 	a.connInfo = connInfo
-	a.metrics.RecordNewConnection("pia0", connInfo.ServerCN, connInfo.ServerIP)
-
 	a.log.Debug("Connected to %s (%s) in %s, latency %dms",
 		connInfo.ServerCN, connInfo.ServerIP, connInfo.Location, connInfo.Latency.Milliseconds())
+	a.metrics.RecordNewConnection("pia0", connInfo.ServerCN, connInfo.ServerIP)
+	if err := a.fw.AddPFRoute(a.cfg.PFEnabled, a.connInfo.PFGateway); err != nil {
+		log.Warning(fmt.Sprintf("Failed to add PF gateway route: %v", err))
+	}
 
 	// Verify connection (non-fatal)
 	log.Step("Verifying connection...")
@@ -416,6 +418,7 @@ func (a *App) teardown() {
 	// Remove VPN from killswitch first to prevent leak window
 	a.fw.RemoveVPN()
 	wg.Down(context.Background(), a.log)
+	a.fw.RemovePFRoute(a.connInfo.PFGateway)
 	a.connInfo = nil
 }
 
@@ -433,7 +436,8 @@ func (a *App) cleanup() {
 	bgCtx := context.Background()
 	a.fw.RemoveVPN()
 	wg.Down(bgCtx, a.log)
-	a.fw.CleanupLocalNetworkRoutes()
+	a.fw.CleanupPrivateRoutes()
+	a.fw.RemovePIADNSRoutes()
 	if a.exitedCleanly {
 		a.shellFunc(bgCtx, "cleanup_killswitch")
 	} else {
@@ -541,22 +545,9 @@ func (a *App) logConfig() {
 	a.log.Debug("  IPV6_ENABLED=%v", a.cfg.IPv6Enabled)
 	a.log.Debug("  DNS=%s", a.cfg.DNS)
 	a.log.Debug("  LOCAL_NETWORKS=%s", a.cfg.LocalNetworks)
-	a.log.Debug("  LOCAL_PORTS=%s", a.cfg.LocalPorts)
 	a.log.Debug("  HC_INTERVAL=%s", a.cfg.HealthCheckInterval)
 	a.log.Debug("  HC_FAILURE_WINDOW=%s", a.cfg.HealthFailureWindow)
 	a.log.Debug("  PROXY_ENABLED=%v", a.cfg.ProxyEnabled)
 	a.log.Debug("  METRICS_ENABLED=%v", a.cfg.MetricsEnabled)
 	a.log.Debug("  LOG_LEVEL=%s", a.cfg.LogLevel)
-}
-
-// parseNetworkList splits a comma-separated list of networks into a slice.
-func parseNetworkList(networks string) []string {
-	var result []string
-	for _, net := range strings.Split(networks, ",") {
-		net = strings.TrimSpace(net)
-		if net != "" {
-			result = append(result, net)
-		}
-	}
-	return result
 }
