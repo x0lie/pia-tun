@@ -65,7 +65,6 @@ func LoadConfig() Config {
 		MetricsEnabled: getEnvBool("METRICS_ENABLED", true),
 
 		LocalNetworks: getEnv("LOCAL_NETWORKS", ""),
-		LocalPorts:    getEnv("LOCAL_PORTS", ""),
 		DNS:           getEnv("DNS", "pia"),
 
 		MTU: getEnvInt("MTU", 1420),

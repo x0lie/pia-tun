@@ -34,8 +34,8 @@ docker logs pia-tun
 - Review logs for API communication errors
 
 **Cannot access metrics/proxy from LAN:**
-- Ensure the port is explicitly added to `LOCAL_PORTS` (e.g., `LOCAL_PORTS=9090` for metrics, `LOCAL_PORTS=1080,8888` for proxies)
-- Services are localhost-only by default for security
+- Services are localhost and container network only by default for security
+- Use `LOCAL_NETWORKS=auto,192.168.1.0/24` or whatever networks necessary and be sure to publish the relevant ports to pia-tun service in docker-compose.yml.
 
 ## Kernel Module Issues
 
@@ -113,7 +113,7 @@ Then apply: `sudo sysctl --system`
 ### Solutions
 
 **If nftables is not an option:**
-The container will test for nftables capability and fallback to iptables-legacy (x_tables) if it fails. If your host has both nftables and iptables, it will prefer iptables for reliability if docker writes its rules to iptables.
+The container will test for nftables capability and fallback to iptables-legacy (x_tables) if it fails. If your host has both nftables and iptables, it will prefer iptables (for reliability) if docker writes its rules to iptables.
 
 ```yaml
 cap_add:
@@ -126,7 +126,7 @@ cap_drop:
 **To force a specific IPT backend:**
 ```yaml
 environment:
-  - IPT_BACKEND=nftables  # Force nf_tables (iptables-nft)
+  - IPT_BACKEND=nft       # Force nf_tables (iptables-nft)
   - IPT_BACKEND=legacy    # Force x_tables (iptables-legacy)
 ```
 

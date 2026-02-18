@@ -26,12 +26,8 @@ services:
     cap_drop:
       - all
     environment:
-      - TZ=America/New_York
       - PIA_LOCATION=ca_ontario,ca_toronto
       - PS_CLIENT=qbittorrent
-      - PS_URL=http://localhost:8080
-      - LOCAL_NETWORKS=192.168.1.0/24,172.18.0.0/16
-      - LOCAL_PORTS=8080
     secrets:
       - pia_user
       - pia_pass

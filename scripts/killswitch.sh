@@ -13,6 +13,43 @@ set -euo pipefail
 
 source /app/scripts/ui.sh
 
+# Resolve LOCAL_NETWORKS special values into actual CIDRs.
+resolve_local_networks() {
+    local input="${LOCAL_NETWORKS:-auto}"
+
+    if [ "$input" = "none" ]; then
+        LOCAL_NETWORKS=""
+        show_debug "LOCAL_NETWORKS=none, no local networks configured"
+        return
+    fi
+
+    local resolved=""
+    IFS=',' read -ra PARTS <<< "$input"
+    for part in "${PARTS[@]}"; do
+        part=$(echo "$part" | xargs)
+        case "$part" in
+            auto)
+                # Detect connected subnets from interfaces
+                local v4_subnets=$(ip -4 route show proto kernel 2>/dev/null | awk '{print $1}' | grep '/')
+                local v6_subnets=$(ip -6 route show proto kernel 2>/dev/null | awk '{print $1}' | grep '/' | grep -v '^fe80')
+                for subnet in $v4_subnets $v6_subnets; do
+                    resolved="${resolved:+$resolved,}$subnet"
+                done
+                show_debug "LOCAL_NETWORKS auto-detected: $v4_subnets $v6_subnets"
+                ;;
+            all)
+                resolved="${resolved:+$resolved,}10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
+                show_debug "LOCAL_NETWORKS=all, using all RFC1918 + ULA"
+                ;;
+            *)
+                resolved="${resolved:+$resolved,}$part"
+                ;;
+        esac
+    done
+
+    LOCAL_NETWORKS="$resolved"
+}
+
 # Get default gateway and interface
 get_default_gateway() {
     local gateway=$(ip route | grep default | head -1 | awk '{print $3}')
@@ -100,7 +137,7 @@ setup_input_chain() {
             fi
         done
     else
-        show_debug "INPUT Rule 3: Skipped (no local networks)"
+        show_debug "INPUT Rule 3: Skipped (LOCAL_NETWORKS=none)"
     fi
 
     # Port forwarding rules are inserted before DROP by Go (internal/firewall/portforward.go)
@@ -243,7 +280,7 @@ insert_local_network_rules() {
             show_success "Local networks: $LOCAL_NETWORKS"
         fi
     else
-        [ "$chain" = "VPN_OUT" ] && show_success "Local network: Disabled (all traffic through VPN)"
+        [ "$chain" = "VPN_OUT" ] && show_success "Local networks: none"
     fi
 }
 
@@ -395,6 +432,9 @@ setup_baseline_killswitch() {
 
     # Remove any stale flag file
     rm -f /tmp/killswitch_up
+
+    # Resolve LOCAL_NETWORKS keywords (auto, all, none) into CIDRs
+    resolve_local_networks
 
     # Log which backend was detected at script load
     show_debug "Using firewall backend: $IPT_CMD"

@@ -46,11 +46,8 @@ spec:
               tag: latest
               pullPolicy: Always
             env:
-              TZ: ${TIMEZONE}
               LOCAL_NETWORKS: "10.69.0.0/16,10.96.0.0/16"
-              LOCAL_PORTS: 8080
               PS_CLIENT: "qbittorrent"
-              PS_URL: "http://localhost:8080"
             envFrom:
               - secretRef:
                   name: pia-secret

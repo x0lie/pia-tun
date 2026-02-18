@@ -6,7 +6,7 @@ This container implements a strict firewall using iptables-nft or -legacy to pre
 - **Auto-detection**: Automatically selects iptables backend by testing for conflicts (override with `IPT_BACKEND`)
 - **Default-deny**: All traffic blocked except loopback and VPN interface
 - **Firewall persistence**: Rules remain active during reconnections
-- **Local network control**: LAN access requires explicit `LOCAL_NETWORKS` configuration
+- **Local network control**: LAN access usually requires additional `LOCAL_NETWORKS` configuration
 - **Bypass routing**: WAN health checks use policy routing (no firewall exemptions) to NIST Time servers on port 13
 
 **Container Lifecycle:**
@@ -19,7 +19,7 @@ This container implements a strict firewall using iptables-nft or -legacy to pre
 
 For containers sharing the network namespace (`network_mode: "service:pia-tun"`), use Docker Compose healthchecks to ensure the kill-switch is active before dependent services start. See the [Coordinating with Dependent Services](#coordinating-with-dependent-services) section for detailed examples and best practices.
 
-**Important:** As long as you use `depends_on` with the killswitch healthcheck, you will never have a leak occur during startup.
+**Important:** As long as you use `depends_on` with the killswitch healthcheck, you will never have a leak occur during startup. Startup ordering and waiting is not possible with this method in k8s. Containers in pods in k8s will always race.
 
 **For the Paranoid:** You can use depends_on: with this healthcheck and condition: service_healthy for dependents to wait until killswitch is up:
 
@@ -47,6 +47,13 @@ secrets:
   pia_pass:
     file: ./secrets/pia_pass
 ```
+
+**Routing**
+- All internet traffic is routed through the VPN or dropped
+- All LAN routing is routed to LAN or dropped if not enabled with LOCAL_NETWORKS
+- PIA 'local' addresses are exemptions; if PF_ENABLED, an exemption on the relevant 10.x.x.x address will be made and routed through the tunnel regardless of `LOCAL_NETWORKS` overlap. The same is true for when DNS=pia.
+- You can check out routing with `ip rule list`.
+- Some home DNS setups grab anything on port 53 and resolve it themselves. For this reason it is possible to leak your DNS to the internet if `DNS` and `LOCAL_NETWORKS` misconfigured.
 
 **DNS chicken and egg:**
 - The container needs to resolve DNS to connect to PIA (their ips rotate - cannot hardcode ips)
