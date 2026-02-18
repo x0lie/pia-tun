@@ -49,8 +49,6 @@ type App struct {
 // It manages the full lifecycle: initialization, connection, service management,
 // reconnection, and cleanup.
 func Run(ctx context.Context) error {
-	setupAutoEnable()
-	setupLogLevel(os.Getenv("LOG_LEVEL"))
 	cfg := LoadConfig()
 
 	logger := &log.Logger{
@@ -65,8 +63,8 @@ func Run(ctx context.Context) error {
 		cache:        &vpn.CacheState{},
 	}
 
-	a.shellFunc(ctx, "print_banner")
 	a.logConfig()
+	a.shellFunc(ctx, "print_banner")
 
 	if err := a.initialize(ctx); err != nil {
 		return fmt.Errorf("initialization failed: %w", err)
@@ -519,47 +517,4 @@ func checkCapNetAdmin() error {
 	}
 
 	return fmt.Errorf("CapEff not found in /proc/self/status")
-}
-
-func setupLogLevel(level string) {
-	switch strings.ToLower(level) {
-	case "debug", "2":
-		os.Setenv("_LOG_LEVEL", "2")
-	case "error", "0":
-		os.Setenv("_LOG_LEVEL", "0")
-	default:
-		os.Setenv("_LOG_LEVEL", "1")
-	}
-}
-
-func setupAutoEnable() {
-	if os.Getenv("PS_CLIENT") != "" || os.Getenv("PS_CMD") != "" {
-		os.Setenv("PS_ENABLED", "true")
-		os.Setenv("PF_ENABLED", "true")
-	}
-}
-
-func (a *App) logConfig() {
-	a.log.Debug("Environment configuration:")
-	a.log.Debug("  PIA_LOCATION=%s", a.cfg.PIALocation)
-	a.log.Debug("  LOG_LEVEL=%s", a.cfg.LogLevel)
-	a.log.Debug("  IPV6_ENABLED=%v", a.cfg.IPv6Enabled)
-	a.log.Debug("  LOCAL_NETWORKS=%s", a.cfg.LocalNetworks)
-	a.log.Debug("  DNS=%s", a.cfg.DNS)
-	a.log.Debug("  MTU=%d", a.cfg.MTU)
-	a.log.Debug("  WG_BACKEND=%s", a.cfg.WGBackend)
-	a.log.Debug("  IPT_BACKEND=%s", a.cfg.IPTBackend)
-	a.log.Debug("  PF_ENABLED=%v", a.cfg.PFEnabled)
-	a.log.Debug("  PORT_FILE=%s", a.cfg.PortFile)
-	a.log.Debug("  PS_CLIENT=%s", a.cfg.PSClient)
-	a.log.Debug("  PS_URL=%s", a.cfg.PSURL)
-	a.log.Debug("  PS_CMD=%s", a.cfg.PSCmd)
-	a.log.Debug("  PROXY_ENABLED=%v", a.cfg.ProxyEnabled)
-	a.log.Debug("  SOCKS5_PORT=%d", a.cfg.Socks5Port)
-	a.log.Debug("  HTTP_PROXY_PORT=%v", a.cfg.HTTPProxyPort)
-	a.log.Debug("  METRICS_ENABLED=%v", a.cfg.MetricsEnabled)
-	a.log.Debug("  METRICS_PORT=%d", a.cfg.MetricsPort)
-	a.log.Debug("  INSTANCE_NAME=%s", a.cfg.InstanceName)
-	a.log.Debug("  HC_INTERVAL=%s", a.cfg.HealthCheckInterval)
-	a.log.Debug("  HC_FAILURE_WINDOW=%s", a.cfg.HealthFailureWindow)
 }
