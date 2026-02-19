@@ -33,34 +33,32 @@ const shellPreamble = "set -euo pipefail; source /app/scripts/ui.sh; source /app
 
 // App holds the application state and configuration.
 type App struct {
-	cfg           Config
-	log           *log.Logger
+	// Config (set once, read-only)
+	cfg Config
+
+	// Runtime state
 	monitorState  *monitor.State
 	cache         *vpn.CacheState
 	fw            *firewall.Firewall
-	resolver      *pia.Resolver
 	connInfo      *vpn.ConnectionInfo
 	exitedCleanly bool
-	wan           *wan.Checker
 	metrics       *metrics.Metrics
+
+	// Infrastructure
+	log      *log.Logger
+	resolver *pia.Resolver
+	wan      *wan.Checker
 }
 
 // Run is the main entry point for the orchestrated VPN client.
 // It manages the full lifecycle: initialization, connection, service management,
 // reconnection, and cleanup.
 func Run(ctx context.Context) error {
-	cfg := LoadConfig()
-
-	logger := &log.Logger{
-		Enabled: os.Getenv("_LOG_LEVEL") == "2",
-		Prefix:  "app",
-	}
-
 	a := &App{
-		cfg:          cfg,
-		log:          logger,
+		cfg:          LoadConfig(),
 		monitorState: &monitor.State{},
 		cache:        &vpn.CacheState{},
+		log:          log.New("app"),
 	}
 
 	a.logConfig()
@@ -80,7 +78,7 @@ func Run(ctx context.Context) error {
 
 	// Permanent services (persist across reconnects, use parent ctx)
 	a.startMonitor(ctx, reconnectCh)
-	if a.cfg.ProxyEnabled {
+	if a.cfg.Proxy.Enabled {
 		a.startProxy(ctx)
 	}
 
@@ -117,12 +115,12 @@ func Run(ctx context.Context) error {
 // initialize validates config, clears stale state, sets up the killswitch, and configures DNS.
 func (a *App) initialize(ctx context.Context) error {
 	// Validate required credentials early
-	if a.cfg.PIAUser == "" || a.cfg.PIAPass == "" {
+	if a.cfg.PIA.User == "" || a.cfg.PIA.Pass == "" {
 		log.Error("PIA credentials not configured")
 		log.Error("Set PIA_USER and PIA_PASS environment variables, or use Docker secrets at /run/secrets/pia_user and /run/secrets/pia_pass")
 		return fmt.Errorf("PIA credentials not configured")
 	}
-	if a.cfg.PIALocation == "" && a.cfg.PIACN == "" {
+	if a.cfg.PIA.Location == "" && a.cfg.PIA.CN == "" {
 		log.Error("PIA_LOCATION not configured")
 		log.Error("Set PIA_LOCATION to a region ID (e.g., 'us_california', 'uk_london')")
 		return fmt.Errorf("PIA_LOCATION not configured")
@@ -146,7 +144,7 @@ func (a *App) initialize(ctx context.Context) error {
 	a.log.Debug("CAP_NET_ADMIN check passed")
 
 	// Initialize firewall
-	fw, err := firewall.New()
+	fw, err := firewall.New(a.cfg.FW.Backend)
 	if err != nil {
 		log.Error("Failed to initialize firewall")
 		return fmt.Errorf("firewall init: %w", err)
@@ -167,12 +165,12 @@ func (a *App) initialize(ctx context.Context) error {
 	}
 
 	// Configure DNS once after killswitch is up
-	if err := a.fw.AddPIADNSRoutes(a.cfg.DNS); err != nil {
+	if err := a.fw.AddPIADNSRoutes(a.cfg.FW.DNS); err != nil {
 		log.Warning(fmt.Sprintf("Failed to add PIA DNS routes: %v", err))
 	}
 	a.writeDNS()
 
-	a.metrics = metrics.New()
+	a.metrics = metrics.New(a.cfg.Metrics, a.cfg.Version)
 	a.wan = &wan.Checker{}
 
 	// Non-fatal: capture pre-VPN IP for leak detection
@@ -183,16 +181,16 @@ func (a *App) initialize(ctx context.Context) error {
 
 // connect runs a single connection attempt using the Go VPN orchestrator.
 func (a *App) connect(ctx context.Context) error {
-	cfg := vpn.SetupConfig{
-		PIAUser:    a.cfg.PIAUser,
-		PIAPass:    a.cfg.PIAPass,
-		Location:   a.cfg.PIALocation,
-		PFRequired: a.cfg.PFEnabled,
-		ManualCN:   a.cfg.PIACN,
-		ManualIP:   a.cfg.PIAIP,
-		MTU:        a.cfg.MTU,
-		IPv6:       a.cfg.IPv6Enabled,
-		WGBackend:  a.cfg.WGBackend,
+	cfg := vpn.Config{
+		PIAUser:    a.cfg.PIA.User,
+		PIAPass:    a.cfg.PIA.Pass,
+		Location:   a.cfg.PIA.Location,
+		PFRequired: a.cfg.PF.Enabled,
+		ManualCN:   a.cfg.PIA.CN,
+		ManualIP:   a.cfg.PIA.IP,
+		MTU:        a.cfg.VPN.MTU,
+		IPv6:       a.cfg.VPN.IPv6Enabled,
+		WGBackend:  a.cfg.VPN.Backend,
 	}
 
 	// Connect - Setup VPN
@@ -204,7 +202,7 @@ func (a *App) connect(ctx context.Context) error {
 	a.log.Debug("Connected to %s (%s) in %s, latency %dms",
 		connInfo.ServerCN, connInfo.ServerIP, connInfo.Location, connInfo.Latency.Milliseconds())
 	a.metrics.RecordNewConnection("pia0", connInfo.ServerCN, connInfo.ServerIP)
-	if err := a.fw.AddPFRoute(a.cfg.PFEnabled, a.connInfo.PFGateway); err != nil {
+	if err := a.fw.AddPFRoute(a.cfg.PF.Enabled, a.connInfo.PFGateway); err != nil {
 		log.Warning(fmt.Sprintf("Failed to add PF gateway route: %v", err))
 	}
 
@@ -293,40 +291,29 @@ func (a *App) runServices(ctx context.Context, reconnectCh chan struct{}) error 
 
 	// Cacher - always runs (refreshes PIA login token and server list)
 	g.Go(func() error {
-		return cacher.Run(gCtx, a.cache)
+		return cacher.Run(gCtx, a.cache, a.cfg.PIA.User, a.cfg.PIA.Pass)
 	})
 
-	syncCfg := portsync.Config{
-		Client: a.cfg.PSClient,
-		URL:    a.cfg.PSURL,
-		User:   a.cfg.PSUser,
-		Pass:   a.cfg.PSPass,
-		Cmd:    a.cfg.PSCmd,
-	}
-	syncLogger := &log.Logger{
-		Enabled: os.Getenv("_LOG_LEVEL") == "2",
-		Prefix:  "portsync",
-	}
-	syncer := portsync.New(syncCfg, syncLogger)
-	if a.cfg.PSClient != "" || a.cfg.PSCmd != "" {
+	syncer := portsync.New(a.cfg.PS)
+	if a.cfg.PS.Client != "" || a.cfg.PS.Cmd != "" {
 		g.Go(func() error {
 			return syncer.Run(gCtx)
 		})
 	}
 
 	// Port forwarding - conditional
-	if a.cfg.PFEnabled {
+	if a.cfg.PF.Enabled {
 		pfReconnect := func() {
 			svcCancel(ErrReconnect)
 		}
-		pfCfg := portforward.ConnectionConfig{
+		connCfg := portforward.ConnectionConfig{
 			Token:     a.connInfo.Token,
 			ClientIP:  a.connInfo.ClientIP,
 			ServerCN:  a.connInfo.ServerCN,
 			PFGateway: a.connInfo.PFGateway,
 		}
 		g.Go(func() error {
-			return portforward.Run(gCtx, pfCfg, pfReconnect, a.metrics, syncer, a.fw)
+			return portforward.Run(gCtx, &a.cfg.PF, &connCfg, pfReconnect, a.metrics, syncer, a.fw)
 		})
 	}
 
@@ -352,11 +339,11 @@ func (a *App) runServices(ctx context.Context, reconnectCh chan struct{}) error 
 
 func (a *App) showStatus() {
 	log.Success(fmt.Sprintf("Check interval: %ds, Failure window: %ds",
-		int(a.cfg.HealthCheckInterval.Seconds()),
-		int(a.cfg.HealthFailureWindow.Seconds())))
+		int(a.cfg.Monitor.Interval.Seconds()),
+		int(a.cfg.Monitor.FailureWindow.Seconds())))
 
-	port := a.cfg.MetricsPort
-	if a.cfg.MetricsEnabled {
+	port := a.cfg.Metrics.Port
+	if a.cfg.Metrics.Enabled {
 		log.Success(fmt.Sprintf("Metrics available on port %d", port))
 		log.Info(fmt.Sprintf("    Prometheus:  http://<container-ip>:%d/metrics", port))
 		log.Info(fmt.Sprintf("    JSON:        http://<container-ip>:%d/metrics?format=json", port))
@@ -372,18 +359,18 @@ func (a *App) showStatus() {
 func (a *App) startProxy(ctx context.Context) {
 	log.Step("Starting proxy servers...")
 
-	if a.cfg.ProxyUser != "" && a.cfg.ProxyPass != "" {
+	if a.cfg.Proxy.User != "" && a.cfg.Proxy.Pass != "" {
 		log.Success("Proxy servers ready (authenticated):")
-		log.Info(fmt.Sprintf("    SOCKS5: socks5://%s:****@<container-ip>:%d", a.cfg.ProxyUser, a.cfg.Socks5Port))
-		log.Info(fmt.Sprintf("    HTTP:   http://%s:****@<container-ip>:%d", a.cfg.ProxyUser, a.cfg.HTTPProxyPort))
+		log.Info(fmt.Sprintf("    SOCKS5: socks5://%s:****@<container-ip>:%d", a.cfg.Proxy.User, a.cfg.Proxy.Socks5Port))
+		log.Info(fmt.Sprintf("    HTTP:   http://%s:****@<container-ip>:%d", a.cfg.Proxy.User, a.cfg.Proxy.HTTPPort))
 	} else {
 		log.Success("Proxy servers ready:")
-		log.Info(fmt.Sprintf("    SOCKS5: socks5://<container-ip>:%d", a.cfg.Socks5Port))
-		log.Info(fmt.Sprintf("    HTTP:   http://<container-ip>:%d", a.cfg.HTTPProxyPort))
+		log.Info(fmt.Sprintf("    SOCKS5: socks5://<container-ip>:%d", a.cfg.Proxy.Socks5Port))
+		log.Info(fmt.Sprintf("    HTTP:   http://<container-ip>:%d", a.cfg.Proxy.HTTPPort))
 	}
 
 	go func() {
-		if err := proxy.Run(ctx); err != nil {
+		if err := proxy.Run(ctx, a.cfg.Proxy); err != nil {
 			log.Error(fmt.Sprintf("Proxy server error: %v", err))
 		}
 	}()
@@ -403,7 +390,7 @@ func (a *App) startMonitor(ctx context.Context, reconnectCh chan<- struct{}) {
 	}
 
 	go func() {
-		if err := monitor.Run(ctx, reconnect, a.monitorState, a.metrics); err != nil {
+		if err := monitor.Run(ctx, &a.cfg.Monitor, reconnect, a.monitorState, a.metrics, a.fw); err != nil {
 			log.Error(fmt.Sprintf("Health monitor error: %v", err))
 		}
 	}()
@@ -456,7 +443,7 @@ var piaDNSServers = []string{"10.0.0.243", "10.0.0.242"}
 
 // writeDNS writes /etc/resolv.conf based on the DNS configuration.
 func (a *App) writeDNS() {
-	dns := a.cfg.DNS
+	dns := a.cfg.FW.DNS
 	if dns == "none" {
 		a.log.Debug("DNS disabled (DNS=none)")
 		return

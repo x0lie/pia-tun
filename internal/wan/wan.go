@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/log"
@@ -17,11 +16,8 @@ type Checker struct {
 }
 
 func (c *Checker) Check(ctx context.Context) bool {
-	logger := &log.Logger{
-		Enabled: os.Getenv("_LOG_LEVEL") == "2",
-		Prefix:  "wan",
-	}
-	logger.Debug("Checking WAN connectivity (bypass routes, parallel)")
+	logger := log.New("wan")
+	logger.Trace("Checking WAN connectivity (bypass routes, parallel)")
 
 	targets := []string{
 		"129.6.15.28:13",
@@ -54,12 +50,12 @@ func (c *Checker) Check(ctx context.Context) bool {
 	for i := 0; i < len(targets); i++ {
 		res := <-results
 		if res.success {
-			logger.Debug("WAN check successful (%s)", res.target)
+			logger.Trace("WAN check successful (%s)", res.target)
 			return true
 		}
 	}
 
-	logger.Debug("All WAN checks failed")
+	logger.Trace("All WAN checks failed")
 	return false
 
 }

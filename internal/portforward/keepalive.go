@@ -170,10 +170,10 @@ func (m *KeepaliveManager) keepaliveLoop(ctx context.Context) error {
 			timeSinceSignature := currentTime.Sub(m.state.LastSignatureTime)
 			secondsUntilExpiry := int(time.Until(m.state.ExpiresAt).Seconds())
 
-			m.log.Debug("====== Keep-alive cycle #%d ======", m.state.BindCount+1)
-			m.log.Debug("Current time: %s", currentTime.Format("2006-01-02 15:04:05"))
-			m.log.Debug("Time since last signature: %v (%d days)", timeSinceSignature, int(timeSinceSignature.Hours()/24))
-			m.log.Debug("Seconds until expiry: %d (%d days)", secondsUntilExpiry, secondsUntilExpiry/86400)
+			m.log.Trace("====== Keep-alive cycle #%d ======", m.state.BindCount+1)
+			m.log.Trace("Current time: %s", currentTime.Format("2006-01-02 15:04:05"))
+			m.log.Trace("Time since last signature: %v (%d days)", timeSinceSignature, int(timeSinceSignature.Hours()/24))
+			m.log.Trace("Seconds until expiry: %d (%d days)", secondsUntilExpiry, secondsUntilExpiry/86400)
 
 			needNewSignature := false
 			reason := ""
@@ -213,7 +213,7 @@ func (m *KeepaliveManager) keepaliveLoop(ctx context.Context) error {
 				m.mu.Lock()
 			} else {
 				m.state.BindCount++
-				m.log.Debug("Performing regular keep-alive bind #%d...", m.state.BindCount)
+				m.log.Trace("Performing regular keep-alive bind #%d...", m.state.BindCount)
 
 				payload := m.state.Payload
 				signature := m.state.Signature
@@ -264,11 +264,11 @@ func (m *KeepaliveManager) keepaliveLoop(ctx context.Context) error {
 					}
 				} else {
 					m.mu.Lock()
-					m.log.Debug("Keep-alive bind #%d successful", m.state.BindCount)
+					m.log.Trace("Keep-alive bind #%d successful", m.state.BindCount)
 				}
 			}
 
-			m.log.Debug("====== End of cycle #%d ======", m.state.BindCount+m.state.SignatureRefreshCount)
+			m.log.Trace("====== End of cycle #%d ======", m.state.BindCount+m.state.SignatureRefreshCount)
 			m.mu.Unlock()
 		}
 	}
@@ -310,7 +310,8 @@ func (m *KeepaliveManager) refreshSignature(ctx context.Context) error {
 		m.log.Debug("Port changed: %d -> %d", oldPort, newPort)
 
 		currentTime := time.Now()
-		fmt.Printf("\n  %s\u21bb%s [%s] New Signature with Port: %s%d%s\n", log.ColorBlue, log.ColorReset, currentTime.Format("2006-01-02 15:04:05"), log.ColorGreen, newPort, log.ColorReset)
+		log.Info("")
+		log.Info(fmt.Sprintf("%s\u21bb%s [%s] New Signature with Port: %s%d%s", log.ColorBlue, log.ColorReset, currentTime.Format("01-02 15:04"), log.ColorGreen, newPort, log.ColorReset))
 
 		m.log.Debug("Writing new port to %s", m.config.PortFile)
 		os.WriteFile(m.config.PortFile, []byte(fmt.Sprintf("%d", newPort)), 0644)
@@ -358,7 +359,7 @@ func (m *KeepaliveManager) refreshSignature(ctx context.Context) error {
 }
 
 func (m *KeepaliveManager) handleRefreshFailure(err error) {
-	log.Blank()
+	log.Info("")
 	log.Error(fmt.Sprintf("Signature refresh failed: %v", err))
 	log.Error("Reconnecting...")
 	m.log.Debug("Signature refresh failed, triggering VPN reconnection")

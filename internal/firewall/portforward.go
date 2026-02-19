@@ -40,5 +40,5 @@ func (fw *Firewall) AllowForwardedPort(port int) error {
 
 // RemoveForwardedPort removes all port forwarding rules from VPN_IN.
 func (fw *Firewall) RemoveForwardedPort() {
-	fw.removeVPNRulesByComment(fw.backend, chainIn, portForwardComments)
+	fw.removeVPNRulesByComment(fw.Ipt4Cmd, chainIn, portForwardComments)
 }

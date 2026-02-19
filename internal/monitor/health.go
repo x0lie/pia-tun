@@ -30,7 +30,7 @@ func (m *Monitor) checkConnectivity(ctx context.Context, host string) bool {
 }
 
 func (m *Monitor) checkExternalConnectivity(timeout time.Duration) bool {
-	m.log.Debug("Checking external connectivity via tcp")
+	m.log.Trace("Checking external connectivity via tcp")
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -60,7 +60,7 @@ func (m *Monitor) checkExternalConnectivity(timeout time.Duration) bool {
 	for i := 0; i < 3; i++ {
 		result := <-results
 		if result.success {
-			m.log.Debug("Connectivity check passed: %s responded", result.name)
+			m.log.Trace("Connectivity check passed: %s responded", result.name)
 			return true
 		}
 	}
@@ -184,14 +184,8 @@ func (m *Monitor) isKillswitchActive() bool {
 }
 
 func (m *Monitor) getKillswitchDropStats() (packetsIn, bytesIn, packetsOut, bytesOut int64) {
-	iptables := "iptables"
-	if path := os.Getenv("IPT_CMD"); path != "" {
-		iptables = path
-	}
-	ip6tables := "ip6tables"
-	if path := os.Getenv("IP6T_CMD"); path != "" {
-		ip6tables = path
-	}
+	iptables := m.firewall.Ipt4Cmd
+	ip6tables := m.firewall.Ipt6Cmd
 
 	parseChain := func(iptCmd, chain string) (packets, bytes int64) {
 		cmd := exec.Command(iptCmd, "-L", chain, "-v", "-n", "-x")

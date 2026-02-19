@@ -17,6 +17,7 @@ import (
 // PIAClient handles PIA port forwarding API requests.
 type PIAClient struct {
 	config     *Config
+	connConfig *ConnectionConfig
 	log        *log.Logger
 	httpClient *http.Client
 }
@@ -56,24 +57,25 @@ func (e *APIError) Error() string {
 }
 
 // NewPIAClient creates a new PIA port forwarding client bound to the pia0 interface.
-func NewPIAClient(config *Config, logger *log.Logger) *PIAClient {
+func NewPIAClient(config *Config, connConfig *ConnectionConfig, logger *log.Logger) *PIAClient {
 	return &PIAClient{
 		config:     config,
+		connConfig: connConfig,
 		log:        logger,
 		httpClient: pia.NewBoundClient(10*time.Second, 10*time.Second),
 	}
 }
 
 func (c *PIAClient) GetSignature() (*SignatureResponse, error) {
-	c.log.Debug("Requesting signature from %s", c.config.PFGateway)
+	c.log.Debug("Requesting signature from %s", c.connConfig.PFGateway)
 
-	token := c.config.Token
-	baseURL := fmt.Sprintf("https://%s:19999/getSignature", c.config.PFGateway)
+	token := c.connConfig.Token
+	baseURL := fmt.Sprintf("https://%s:19999/getSignature", c.connConfig.PFGateway)
 	params := url.Values{}
 	params.Add("token", token)
 	fullURL := baseURL + "?" + params.Encode()
 
-	tokenPreview := c.config.Token
+	tokenPreview := c.connConfig.Token
 	if len(tokenPreview) > 8 {
 		tokenPreview = tokenPreview[:8] + "..."
 	}
@@ -173,17 +175,17 @@ func (c *PIAClient) GetSignatureWithRetry(ctx context.Context, retryDuration tim
 }
 
 func (c *PIAClient) BindPort(payload, signature string) error {
-	c.log.Debug("Calling bindPort")
-	c.log.Debug("  Payload length: %d bytes", len(payload))
-	c.log.Debug("  Signature length: %d bytes", len(signature))
+	c.log.Trace("Calling bindPort")
+	c.log.Trace("  Payload length: %d bytes", len(payload))
+	c.log.Trace("  Signature length: %d bytes", len(signature))
 
-	baseURL := fmt.Sprintf("https://%s:19999/bindPort", c.config.PFGateway)
+	baseURL := fmt.Sprintf("https://%s:19999/bindPort", c.connConfig.PFGateway)
 	params := url.Values{}
 	params.Add("payload", payload)
 	params.Add("signature", signature)
 	fullURL := baseURL + "?" + params.Encode()
 
-	c.log.Debug("Executing: GET %s", baseURL)
+	c.log.Trace("Executing: GET %s", baseURL)
 
 	resp, err := c.httpClient.Get(fullURL)
 	if err != nil {
@@ -198,7 +200,7 @@ func (c *PIAClient) BindPort(payload, signature string) error {
 		return fmt.Errorf("failed to read response: %w", err)
 	}
 
-	c.log.Debug("Bind response size: %d bytes", len(body))
+	c.log.Trace("Bind response size: %d bytes", len(body))
 
 	if len(body) == 0 {
 		c.log.Debug("ERROR: Empty response from bindPort")
@@ -211,7 +213,7 @@ func (c *PIAClient) BindPort(payload, signature string) error {
 		return fmt.Errorf("invalid JSON: %w", err)
 	}
 
-	c.log.Debug("bindPort response - status: '%s', message: '%s'", bindResp.Status, bindResp.Message)
+	c.log.Trace("bindPort response - status: '%s', message: '%s'", bindResp.Status, bindResp.Message)
 
 	if bindResp.Status != "OK" {
 		return &APIError{
@@ -221,7 +223,7 @@ func (c *PIAClient) BindPort(payload, signature string) error {
 		}
 	}
 
-	c.log.Debug("bindPort successful")
+	c.log.Trace("bindPort successful")
 	return nil
 }
 
@@ -246,7 +248,7 @@ func (c *PIAClient) BindPortWithRetry(ctx context.Context, payload, signature st
 			return fmt.Errorf("failed after %v: %w", retryDuration, lastErr)
 		}
 
-		c.log.Debug("Bind attempt %d (elapsed: %v)", attempt, time.Since(startTime).Round(time.Second))
+		c.log.Trace("Bind attempt %d (elapsed: %v)", attempt, time.Since(startTime).Round(time.Second))
 
 		if attempt > 1 {
 			c.log.Debug("Waiting %v before retry...", backoff)

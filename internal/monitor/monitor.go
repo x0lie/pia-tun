@@ -4,23 +4,19 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/x0lie/pia-tun/internal/config"
+	"github.com/x0lie/pia-tun/internal/firewall"
 	"github.com/x0lie/pia-tun/internal/log"
 	"github.com/x0lie/pia-tun/internal/metrics"
 )
 
 // Config holds monitor configuration.
 type Config struct {
-	CheckInterval  time.Duration
-	FailureWindow  time.Duration
-	DebugMode      bool
-	MetricsEnabled bool
+	Interval      time.Duration
+	FailureWindow time.Duration
 }
 
 // State allows the orchestrator to communicate with the monitor
@@ -32,10 +28,11 @@ type State struct {
 
 // Monitor manages VPN health monitoring.
 type Monitor struct {
-	config  Config
-	log     *log.Logger
-	metrics *metrics.Metrics
-	mu      sync.Mutex
+	config   *Config
+	log      *log.Logger
+	metrics  *metrics.Metrics
+	firewall *firewall.Firewall
+	mu       sync.Mutex
 
 	// Reconnect callback for orchestrated mode.
 	// When set, triggerReconnect calls this instead of writing to a pipe file.
@@ -49,15 +46,6 @@ type Monitor struct {
 	lastHealthCheck time.Time
 }
 
-func loadConfig() Config {
-	return Config{
-		CheckInterval:  config.GetEnvDuration("HC_INTERVAL", 10),
-		FailureWindow:  config.GetEnvDuration("HC_FAILURE_WINDOW", 30),
-		DebugMode:      config.IsDebugMode(),
-		MetricsEnabled: config.GetEnvBool("METRICS_ENABLED"),
-	}
-}
-
 func (m *Monitor) setHealthStatus(healthy bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -69,7 +57,7 @@ func (m *Monitor) isHealthy() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	staleThreshold := m.config.CheckInterval * 2
+	staleThreshold := m.config.Interval * 2
 	if time.Since(m.lastHealthCheck) > staleThreshold && m.lastHealthCheck.Unix() > 0 {
 		return false
 	}
@@ -78,7 +66,7 @@ func (m *Monitor) isHealthy() bool {
 }
 
 func (m *Monitor) monitorLoop(ctx context.Context) {
-	ticker := time.NewTicker(m.config.CheckInterval)
+	ticker := time.NewTicker(m.config.Interval)
 	defer ticker.Stop()
 
 	const normalTimeout = 5 * time.Second
@@ -101,19 +89,19 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 
 			// Skip checks during active reconnection to avoid races
 			if m.state != nil && m.state.Reconnecting.Load() {
-				m.log.Debug("Skipping health check during active reconnection")
+				m.log.Trace("Skipping health check during active reconnection")
 				continue
 			}
 
 			// Skip checks during startup/reconnection
 			if m.state != nil && m.state.Paused.Load() {
-				m.log.Debug("Skipping health check during startup")
+				m.log.Trace("Skipping health check during startup")
 				continue
 			}
 
 			// Start server latency ping in parallel
 			var serverLatencyChan chan float64
-			if m.config.MetricsEnabled {
+			if m.metrics.Enabled() {
 				serverLatencyChan = make(chan float64, 1)
 				go func() {
 					serverIP := m.getServerEndpoint()
@@ -133,7 +121,7 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 			m.setHealthStatus(err == nil)
 			m.updateMetrics(result, err == nil)
 
-			if m.config.MetricsEnabled {
+			if m.metrics.Enabled() {
 				m.metrics.RecordCheck(err == nil, result.CheckDuration)
 
 				if serverLatencyChan != nil {
@@ -147,21 +135,6 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 			// If check failed, enter rapid check mode
 			if err != nil {
 				m.log.Debug("Entering rapid check mode (failure window: %s)", m.config.FailureWindow)
-
-				if m.config.DebugMode {
-					fmt.Printf("  %s\u2139%s Debug info:\n", log.ColorYellow, log.ColorReset)
-					cmd := exec.Command("wg", "show", "pia0")
-					output, wgErr := cmd.Output()
-					if wgErr == nil {
-						lines := strings.Split(string(output), "\n")
-						for i, line := range lines {
-							if i >= 5 {
-								break
-							}
-							fmt.Printf("    %s\n", line)
-						}
-					}
-				}
 
 				failureStart := time.Now()
 				recovered := false
@@ -199,8 +172,8 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 				}
 
 				if !recovered {
-					fmt.Printf("\n  %s\u2717%s VPN connection lost (down for more than %s)\n",
-						log.ColorRed, log.ColorReset, m.config.FailureWindow)
+					log.Info("")
+					log.Error(fmt.Sprintf("VPN connection lost (down for more than %s)", m.config.FailureWindow))
 					m.triggerReconnect()
 				}
 			}
@@ -209,7 +182,7 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 }
 
 func (m *Monitor) updateMetrics(result *HealthCheckResult, healthy bool) {
-	if m.config.MetricsEnabled {
+	if m.metrics.Enabled() {
 		const iface = "pia0"
 		rx, tx, _ := m.getTransferBytes()
 
@@ -228,24 +201,19 @@ func (m *Monitor) updateMetrics(result *HealthCheckResult, healthy bool) {
 // calls it instead of writing to a pipe file when a reconnect is needed.
 // state provides orchestrator pause/reconnect signaling. Pass nil for both
 // in standalone mode.
-func Run(ctx context.Context, onReconnect func(), state *State, m *metrics.Metrics) error {
-	cfg := loadConfig()
-
-	logger := &log.Logger{
-		Enabled: os.Getenv("_LOG_LEVEL") == "2",
-		Prefix:  "monitor",
-	}
+func Run(ctx context.Context, cfg *Config, onReconnect func(), state *State, m *metrics.Metrics, fw *firewall.Firewall) error {
 
 	monitor := &Monitor{
 		config:      cfg,
-		log:         logger,
+		log:         log.New("monitor"),
 		metrics:     m,
 		onReconnect: onReconnect,
 		state:       state,
+		firewall:    fw,
 	}
 
 	// Always start HTTP server for /health endpoint
-	go startHTTPServer(monitor)
+	go startHTTPServer(monitor, monitor.metrics.Config.Port)
 
 	monitor.monitorLoop(ctx)
 	return nil

@@ -12,48 +12,46 @@ import (
 
 // Firewall manages iptables rules for VPN killswitch and temporary exemptions.
 type Firewall struct {
+	Ipt4Cmd string
+	Ipt6Cmd string
 	ipt4    *iptables.IPTables
 	ipt6    *iptables.IPTables
 	log     *log.Logger
-	backend string
 }
 
 // New creates a Firewall with auto-detected or manually specified iptables backend.
 // Respects the IPT_BACKEND environment variable ("legacy" or "nft").
-func New() (*Firewall, error) {
-	logger := &log.Logger{
-		Enabled: os.Getenv("_LOG_LEVEL") == "2",
-		Prefix:  "firewall",
-	}
-	ipt4Name, ipt6Name := detectBackend(logger)
+func New(backend string) (*Firewall, error) {
+	logger := log.New("firewall")
+	ipt4Cmd, ipt6Cmd := detectBackend(backend, logger)
 
-	ipt4, err := iptables.New(iptables.IPFamily(iptables.ProtocolIPv4), iptables.Path(ipt4Name))
+	ipt4, err := iptables.New(iptables.IPFamily(iptables.ProtocolIPv4), iptables.Path(ipt4Cmd))
 	if err != nil {
-		return nil, fmt.Errorf("init iptables IPv4 (%s): %w", ipt4Name, err)
+		return nil, fmt.Errorf("init iptables IPv4 (%s): %w", ipt4Cmd, err)
 	}
 
-	ipt6, err := iptables.New(iptables.IPFamily(iptables.ProtocolIPv6), iptables.Path(ipt6Name))
+	ipt6, err := iptables.New(iptables.IPFamily(iptables.ProtocolIPv6), iptables.Path(ipt6Cmd))
 	if err != nil {
-		return nil, fmt.Errorf("init iptables IPv6 (%s): %w", ipt6Name, err)
+		return nil, fmt.Errorf("init iptables IPv6 (%s): %w", ipt6Cmd, err)
 	}
 
 	// Export for killswitch.sh
-	os.Setenv("IPT_CMD", ipt4Name)
-	os.Setenv("IP6T_CMD", ipt6Name)
+	os.Setenv("IPT_CMD", ipt4Cmd)
+	os.Setenv("IP6T_CMD", ipt6Cmd)
 
-	return &Firewall{ipt4: ipt4, ipt6: ipt6, log: logger, backend: ipt4Name}, nil
+	return &Firewall{ipt4: ipt4, ipt6: ipt6, log: logger, Ipt4Cmd: ipt4Cmd, Ipt6Cmd: ipt6Cmd}, nil
 }
 
 // Backend returns the detected backend name (e.g. "iptables-nft" or "iptables-legacy").
 func (fw *Firewall) Backend() string {
-	return fw.backend
+	return fw.Ipt4Cmd
 }
 
 // detectBackend determines the iptables backend to use. It checks IPT_BACKEND
 // first, then auto-detects by trying iptables-nft and checking for warnings
 // that indicate legacy tables are present (e.g. from Docker or the host).
-func detectBackend(logger *log.Logger) (ipt4, ipt6 string) {
-	switch os.Getenv("IPT_BACKEND") {
+func detectBackend(backend string, logger *log.Logger) (ipt4, ipt6 string) {
+	switch backend {
 	case "legacy":
 		logger.Debug("IPT_BACKEND=legacy, using iptables-legacy")
 		return "iptables-legacy", "ip6tables-legacy"

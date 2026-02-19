@@ -18,10 +18,7 @@ import (
 
 // VerifyConnection confirms traffic routes through the VPN.
 func VerifyConnection(ctx context.Context) (string, error) {
-	logger := &log.Logger{
-		Enabled: os.Getenv("_LOG_LEVEL") == "2",
-		Prefix:  "verify",
-	}
+	logger := log.New("verify")
 	start := time.Now()
 
 	// Trigger handshake by sending packets in background

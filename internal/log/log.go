@@ -2,7 +2,6 @@ package log
 
 import (
 	"fmt"
-	"os"
 	"time"
 )
 
@@ -15,48 +14,66 @@ const (
 	ColorBold   = "\033[1m"
 )
 
-// Logger provides debug logging with a component prefix.
+// Level controls global log verbosity.
+// Set once at startup, read by all logging functions.
+var Level int = 1
+
+// Logger provides prefixed diagnostic logging for a component.
 type Logger struct {
-	Enabled bool
-	Prefix  string // e.g. "cacher", "monitor"
+	Prefix string
 }
 
-// Debug logs a debug message to stderr with timestamp and optional prefix.
-func (l *Logger) Debug(format string, args ...interface{}) {
-	if !l.Enabled {
+func New(prefix string) *Logger {
+	return &Logger{Prefix: prefix}
+}
+
+func (l *Logger) Debug(format string, args ...any) {
+	if Level < 2 {
 		return
 	}
 	timestamp := time.Now().Format("15:04:05")
 	msg := fmt.Sprintf(format, args...)
-	if l.Prefix != "" {
-		fmt.Fprintf(os.Stderr, "    %s[DEBUG]%s %s - %s: %s\n", ColorBlue, ColorReset, timestamp, l.Prefix, msg)
-	} else {
-		fmt.Fprintf(os.Stderr, "    %s[DEBUG]%s %s - %s\n", ColorBlue, ColorReset, timestamp, msg)
-	}
+	fmt.Printf("    %s[DEBUG]%s %s - %-12s %s\n", ColorBlue, ColorReset, timestamp, l.Prefix+":", msg)
 }
 
+func (l *Logger) Trace(format string, args ...any) {
+	if Level < 3 {
+		return
+	}
+	timestamp := time.Now().Format("15:04:05")
+	msg := fmt.Sprintf(format, args...)
+	fmt.Printf("    %s[TRACE]%s %s - %-12s %s\n", ColorYellow, ColorReset, timestamp, l.Prefix+":", msg)
+}
+
+// UI output — shown at info level (1) and above
 func Success(msg string) {
+	if Level < 1 {
+		return
+	}
 	fmt.Printf("  %s\u2713%s %s\n", ColorGreen, ColorReset, msg)
 }
 
+func Step(msg string) {
+	if Level < 1 {
+		return
+	}
+	fmt.Printf("\n%s\u25b6%s %s\n", ColorBlue, ColorReset, msg)
+}
+
+func Info(msg string) {
+	if Level < 1 {
+		return
+	}
+	fmt.Printf("  %s\n", msg)
+}
+
+// Always shown (level 0+)
 func Error(msg string) {
 	fmt.Printf("  %s\u2717%s %s\n", ColorRed, ColorReset, msg)
 }
 
 func Warning(msg string) {
 	fmt.Printf("  %s\u26a0%s %s\n", ColorYellow, ColorReset, msg)
-}
-
-func Step(msg string) {
-	fmt.Printf("\n%s\u25b6%s %s\n", ColorBlue, ColorReset, msg)
-}
-
-func Info(msg string) {
-	fmt.Printf("  %s\n", msg)
-}
-
-func Blank() {
-	fmt.Println()
 }
 
 // FormatDuration formats a duration into a human-readable string.

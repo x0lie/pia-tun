@@ -24,6 +24,7 @@ case "${LOG_LEVEL,,}" in
     error|0) _LOG_LEVEL=0 ;;
     info|1)  _LOG_LEVEL=1 ;;
     debug|2) _LOG_LEVEL=2 ;;
+    trace|3) _LOG_LEVEL=3 ;;
     *)       _LOG_LEVEL=1 ;; # default to info
 esac
 
@@ -36,7 +37,7 @@ export LOG_LEVEL _LOG_LEVEL
 
 # log_error: Always shown (even at error level)
 log_error() {
-    [[ $_LOG_LEVEL -ge 0 ]] && echo "$@" >&2 || true
+    [[ $_LOG_LEVEL -ge 0 ]] && echo "$@" || true
 }
 
 # log_info: Shown at info and debug levels
@@ -46,7 +47,7 @@ log_info() {
 
 # log_debug: Only shown at debug level
 log_debug() {
-    [[ $_LOG_LEVEL -ge 2 ]] && echo "$@" >&2 || true
+    [[ $_LOG_LEVEL -ge 2 ]] && echo "$@" || true
 }
 
 # silence output
@@ -142,28 +143,28 @@ print_banner() {
 
 # Status indicators - info level
 show_step() {
-    log_info "\n${blu}▶${nc} $1" >&2
+    log_info "\n${blu}▶${nc} $1"
 }
 
 show_success() {
-    log_info "  ${grn}✓${nc} $1" >&2
+    log_info "  ${grn}✓${nc} $1"
 }
 
 show_warning() {
-    log_info "  ${ylw}⚠${nc} $1" >&2
+    log_info "  ${ylw}⚠${nc} $1"
 }
 
 show_info() {
-    log_info "${1:-}" >&2
+    log_info "${1:-}"
 }
 
 show_error() {
-    log_error "  ${red}✗${nc} $1" >&2
+    log_error "  ${red}✗${nc} $1"
 }
 
 # Debug indicator - debug level only
 show_debug() {
-    log_debug "    ${blu}[DEBUG]${nc} $1" >&2
+    log_debug "    ${blu}[DEBUG]${nc} killswitch: $1" >&2
 }
 
 # ============================================================================
@@ -201,33 +202,4 @@ ${ylw}╔═══════════════════════�
 ${ylw}║${nc}               ${ylw}↻${nc} ${bold}Reconnecting VPN${nc}               ${ylw}║${nc}
 ${ylw}╚════════════════════════════════════════════════╝${nc}
 EOF
-}
-
-# ============================================================================
-# NETWORK UTILITIES
-# ============================================================================
-
-# Get external IP address with fallback to multiple services
-get_external_ip() {
-    local services=(
-        "http://ifconfig.me"
-        "http://icanhazip.com"
-        "http://api.ipify.org"
-    )
-    
-    for service in "${services[@]}"; do
-        show_debug "Trying service: $service"
-        local ip=$(timeout 8 curl -s "$service" 2>/dev/null)
-        
-        # Valid IP found (and not a curl error message)
-        if [[ -n "$ip" && "$ip" != "curl: "* ]]; then
-            echo "$ip"
-            return 0
-        fi
-        show_debug "Failed to get IP from $service"
-    done
-
-    # All services failed
-    show_debug "All external IP services failed"
-    return 1
 }

@@ -9,8 +9,6 @@ import (
 	"syscall"
 
 	"github.com/x0lie/pia-tun/internal/app"
-	"github.com/x0lie/pia-tun/internal/cacher"
-	"github.com/x0lie/pia-tun/internal/proxy"
 )
 
 func main() {
@@ -37,10 +35,6 @@ func main() {
 	switch cmd {
 	case "":
 		err = app.Run(ctx)
-	case "cacher":
-		err = cacher.Run(ctx, nil)
-	case "proxy":
-		err = proxy.Run(ctx)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
 		fmt.Fprintf(os.Stderr, "Usage: %s [cacher|proxy]\n", os.Args[0])

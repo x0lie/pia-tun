@@ -6,40 +6,35 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/x0lie/pia-tun/internal/config"
+	"github.com/x0lie/pia-tun/internal/log"
 )
 
 // Proxy holds the proxy server configuration and state.
-type Proxy struct {
-	user      string
-	pass      string
-	httpPort  string
-	socksPort string
+type Config struct {
+	Enabled    bool
+	User       string
+	Pass       string
+	Socks5Port int
+	HTTPPort   int
 }
 
 // Run starts the HTTP and SOCKS5 proxy servers.
 // This is the main entry point called by the dispatcher.
-func Run(ctx context.Context) error {
-	p := &Proxy{
-		user:      config.GetSecret("PROXY_USER", "/run/secrets/proxy_user"),
-		pass:      config.GetSecret("PROXY_PASS", "/run/secrets/proxy_pass"),
-		httpPort:  config.GetEnvOrDefault("HTTP_PROXY_PORT", "8888"),
-		socksPort: config.GetEnvOrDefault("SOCKS5_PORT", "1080"),
-	}
+func Run(ctx context.Context, cfg Config) error {
+	c := &cfg
 
 	// Start SOCKS5 proxy in goroutine
-	go p.startSOCKS5()
+	go c.startSOCKS5()
 
 	// Start HTTP proxy (blocks until context is done or error)
 	server := &http.Server{
-		Addr:         ":" + p.httpPort,
-		Handler:      p,
+		Addr:         fmt.Sprintf(":%d", c.HTTPPort),
+		Handler:      c,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -61,10 +56,10 @@ func Run(ctx context.Context) error {
 }
 
 // ServeHTTP implements the HTTP proxy handler.
-func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if p.user != "" && p.pass != "" {
+func (c *Config) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if c.User != "" && c.Pass != "" {
 		auth := r.Header.Get("Proxy-Authorization")
-		if !p.checkAuth(auth) {
+		if !c.checkAuth(auth) {
 			w.Header().Set("Proxy-Authenticate", `Basic realm="Proxy"`)
 			http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
 			return
@@ -72,14 +67,14 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodConnect {
-		p.handleTunneling(w, r)
+		c.handleTunneling(w, r)
 		return
 	}
 
-	p.handleHTTP(w, r)
+	c.handleHTTP(w, r)
 }
 
-func (p *Proxy) checkAuth(auth string) bool {
+func (c *Config) checkAuth(auth string) bool {
 	if !strings.HasPrefix(auth, "Basic ") {
 		return false
 	}
@@ -94,13 +89,13 @@ func (p *Proxy) checkAuth(auth string) bool {
 		return false
 	}
 
-	userMatch := subtle.ConstantTimeCompare([]byte(pair[0]), []byte(p.user))
-	passMatch := subtle.ConstantTimeCompare([]byte(pair[1]), []byte(p.pass))
+	userMatch := subtle.ConstantTimeCompare([]byte(pair[0]), []byte(c.User))
+	passMatch := subtle.ConstantTimeCompare([]byte(pair[1]), []byte(c.Pass))
 
 	return userMatch == 1 && passMatch == 1
 }
 
-func (p *Proxy) handleTunneling(w http.ResponseWriter, r *http.Request) {
+func (c *Config) handleTunneling(w http.ResponseWriter, r *http.Request) {
 	destConn, err := net.DialTimeout("tcp", r.Host, 10*time.Second)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -131,7 +126,7 @@ func transfer(dst io.Writer, src io.Reader) {
 	io.Copy(dst, src)
 }
 
-func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
+func (c *Config) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Header.Del("Proxy-Authorization")
 	r.Header.Del("Proxy-Connection")
 
@@ -152,24 +147,24 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, resp.Body)
 }
 
-func (p *Proxy) startSOCKS5() {
-	listener, err := net.Listen("tcp", ":"+p.socksPort)
+func (c *Config) startSOCKS5() {
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", c.Socks5Port))
 	if err != nil {
-		log.Fatalf("Failed to start SOCKS5 proxy: %v", err)
+		log.Error(fmt.Sprintf("Failed to start SOCKS5 proxy: %v", err))
 	}
 	defer listener.Close()
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Printf("SOCKS5 accept error: %v", err)
+			log.Error(fmt.Sprintf("SOCKS5 accept error: %v", err))
 			continue
 		}
-		go p.handleSOCKS5(conn)
+		go c.handleSOCKS5(conn)
 	}
 }
 
-func (p *Proxy) handleSOCKS5(conn net.Conn) {
+func (c *Config) handleSOCKS5(conn net.Conn) {
 	defer conn.Close()
 
 	buf := make([]byte, 256)
@@ -182,7 +177,7 @@ func (p *Proxy) handleSOCKS5(conn net.Conn) {
 		return
 	}
 
-	authRequired := p.user != "" && p.pass != ""
+	authRequired := c.User != "" && c.Pass != ""
 
 	if authRequired {
 		conn.Write([]byte{0x05, 0x02})
@@ -203,7 +198,7 @@ func (p *Proxy) handleSOCKS5(conn net.Conn) {
 		}
 		pass := string(buf[2+userLen+1 : 2+userLen+1+passLen])
 
-		if user != p.user || pass != p.pass {
+		if user != c.User || pass != c.Pass {
 			conn.Write([]byte{0x01, 0x01})
 			return
 		}

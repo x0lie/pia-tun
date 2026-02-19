@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
-	"github.com/x0lie/pia-tun/internal/config"
 	"github.com/x0lie/pia-tun/internal/log"
 	"github.com/x0lie/pia-tun/internal/pia"
 	"github.com/x0lie/pia-tun/internal/vpn"
@@ -25,28 +23,6 @@ type cacherConfig struct {
 	piaUser         string
 	piaPass         string
 	refreshInterval time.Duration
-	debugMode       bool
-}
-
-func loadConfig() (*cacherConfig, error) {
-	piaUser := strings.TrimSpace(config.GetSecret("PIA_USER", "/run/secrets/pia_user"))
-	piaPass := strings.TrimSpace(config.GetSecret("PIA_PASS", "/run/secrets/pia_pass"))
-
-	if piaUser == "" || piaPass == "" {
-		return nil, fmt.Errorf("PIA credentials not found (set PIA_USER/PIA_PASS or use Docker secrets)")
-	}
-
-	refreshHours := config.GetEnvInt("CACHE_REFRESH_HOURS", 6)
-	if refreshHours <= 0 {
-		refreshHours = 6
-	}
-
-	return &cacherConfig{
-		piaUser:         piaUser,
-		piaPass:         piaPass,
-		refreshInterval: time.Duration(refreshHours) * time.Hour,
-		debugMode:       config.IsDebugMode(),
-	}, nil
 }
 
 func refreshAll(ctx context.Context, logger *log.Logger, cfg *cacherConfig, client *http.Client, cache *vpn.CacheState) error {
@@ -57,13 +33,13 @@ func refreshAll(ctx context.Context, logger *log.Logger, cfg *cacherConfig, clie
 	var lastErr error
 
 	// 1. Refresh login token
-	logger.Debug("Refreshing login token...")
+	logger.Trace("Refreshing login token...")
 	authIPs, err := resolveIPv4(ctx, piaAuthHost)
 	if err != nil {
 		logger.Debug("Failed to resolve %s: %v", piaAuthHost, err)
 		lastErr = err
 	} else {
-		logger.Debug("Resolved %s to %v", piaAuthHost, authIPs)
+		logger.Trace("Resolved %s to %v", piaAuthHost, authIPs)
 		cache.AuthIPs = mergeIPs(cache.AuthIPs, authIPs, maxCachedIPs)
 
 		token, err := pia.GenerateToken(ctx, client, piaAuthHost, cfg.piaUser, cfg.piaPass)
@@ -72,7 +48,7 @@ func refreshAll(ctx context.Context, logger *log.Logger, cfg *cacherConfig, clie
 			lastErr = err
 		} else {
 			cache.SetToken(token)
-			logger.Debug("Token refreshed (length: %d)", len(token))
+			logger.Trace("Token refreshed (length: %d)", len(token))
 		}
 	}
 
@@ -81,13 +57,13 @@ func refreshAll(ctx context.Context, logger *log.Logger, cfg *cacherConfig, clie
 	}
 
 	// 2. Refresh server list
-	logger.Debug("Refreshing server list...")
+	logger.Trace("Refreshing server list...")
 	slIPs, err := resolveIPv4(ctx, piaServerlistHost)
 	if err != nil {
 		logger.Debug("Failed to resolve %s: %v", piaServerlistHost, err)
 		lastErr = err
 	} else {
-		logger.Debug("Resolved %s to %v", piaServerlistHost, slIPs)
+		logger.Trace("Resolved %s to %v", piaServerlistHost, slIPs)
 		cache.ServerListIPs = mergeIPs(cache.ServerListIPs, slIPs, maxCachedIPs)
 
 		regions, err := pia.FetchServerList(ctx, client, piaServerlistHost)
@@ -97,7 +73,7 @@ func refreshAll(ctx context.Context, logger *log.Logger, cfg *cacherConfig, clie
 		} else {
 			servers := pia.FlattenRegions(regions)
 			cache.Servers = mergeServers(cache.Servers, servers)
-			logger.Debug("Server cache updated with %d servers", len(cache.Servers))
+			logger.Trace("Server cache updated with %d servers", len(cache.Servers))
 		}
 	}
 
@@ -106,21 +82,18 @@ func refreshAll(ctx context.Context, logger *log.Logger, cfg *cacherConfig, clie
 
 // Run starts the cacher service. cache may be nil for standalone mode,
 // in which case a local CacheState is used.
-func Run(ctx context.Context, cache *vpn.CacheState) error {
+func Run(ctx context.Context, cache *vpn.CacheState, piaUser string, piaPass string) error {
 	if cache == nil {
 		cache = &vpn.CacheState{}
 	}
 
-	cfg, err := loadConfig()
-	if err != nil {
-		log.Error(fmt.Sprintf("Cacher failed to start: %v", err))
-		return err
+	cfg := &cacherConfig{
+		piaUser:         piaUser,
+		piaPass:         piaPass,
+		refreshInterval: 6 * time.Hour,
 	}
 
-	logger := &log.Logger{
-		Enabled: cfg.debugMode,
-		Prefix:  "cacher",
-	}
+	logger := log.New("cacher")
 
 	logger.Debug("Cacher starting with refresh interval: %v", cfg.refreshInterval)
 
@@ -162,7 +135,7 @@ func Run(ctx context.Context, cache *vpn.CacheState) error {
 			if err != nil {
 				log.Warning(fmt.Sprintf("Cache refresh failed after 3 attempts: %v", err))
 			} else {
-				logger.Debug("Cache refreshed")
+				logger.Trace("Cache refreshed")
 			}
 		}
 	}

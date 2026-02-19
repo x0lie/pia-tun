@@ -2,7 +2,6 @@ package metrics
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"sync"
 	"time"
@@ -13,18 +12,16 @@ import (
 	"github.com/x0lie/pia-tun/internal/log"
 )
 
-func getInstanceName() string {
-	if name := os.Getenv("INSTANCE_NAME"); name != "" {
-		return name
-	}
-	if hostname, err := os.Hostname(); err == nil && hostname != "" {
-		return hostname
-	}
-	return "pia-tun"
+type Config struct {
+	Enabled bool
+	Port    int
+	Name    string
 }
 
 // Metrics tracks VPN health metrics and exposes them via Prometheus.
 type Metrics struct {
+	Config *Config
+
 	// Internal state tracking (for JSON endpoint)
 	TotalChecks       int64
 	FailedChecks      int64
@@ -85,8 +82,9 @@ type Metrics struct {
 }
 
 // NewMetrics creates and registers all Prometheus metrics.
-func New() *Metrics {
+func New(cfg Config, version string) *Metrics {
 	m := &Metrics{
+		Config:      &cfg,
 		UptimeStart: time.Now(),
 	}
 
@@ -235,7 +233,7 @@ func New() *Metrics {
 	))
 
 	registerer := prometheus.WrapRegistererWith(
-		prometheus.Labels{"name": getInstanceName()},
+		prometheus.Labels{"name": cfg.Name},
 		m.registry,
 	)
 
@@ -265,10 +263,6 @@ func New() *Metrics {
 	m.killswitchBytesDropped.WithLabelValues("in")
 	m.killswitchBytesDropped.WithLabelValues("out")
 
-	version := os.Getenv("VERSION")
-	if version == "" {
-		version = "local"
-	}
 	m.buildInfo.WithLabelValues(version).Set(1)
 
 	m.wanUp.Set(1)
@@ -285,6 +279,8 @@ func New() *Metrics {
 
 	return m
 }
+
+func (m *Metrics) Enabled() bool { return m.Config.Enabled }
 
 func (m *Metrics) RecordCheck(success bool, duration time.Duration) {
 	m.mu.Lock()

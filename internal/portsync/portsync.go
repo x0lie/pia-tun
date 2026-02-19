@@ -28,10 +28,10 @@ type Syncer struct {
 	portCh chan int
 }
 
-func New(cfg Config, logger *log.Logger) *Syncer {
+func New(cfg Config) *Syncer {
 	s := &Syncer{
 		cmd:    cfg.Cmd,
-		log:    logger,
+		log:    log.New("portsync"),
 		portCh: make(chan int, 1),
 	}
 
@@ -43,11 +43,11 @@ func New(cfg Config, logger *log.Logger) *Syncer {
 	// Create the appropriate client implementation
 	switch normalizeClient(cfg.Client) {
 	case "qbittorrent":
-		s.client = newQBittorrent(cfg.URL, cfg.User, cfg.Pass, logger)
+		s.client = newQBittorrent(cfg.URL, cfg.User, cfg.Pass, s.log)
 	case "transmission":
-		s.client = newTransmission(cfg.URL, cfg.User, cfg.Pass, logger)
+		s.client = newTransmission(cfg.URL, cfg.User, cfg.Pass, s.log)
 	case "deluge":
-		s.client = newDeluge(cfg.URL, cfg.Pass, logger)
+		s.client = newDeluge(cfg.URL, cfg.Pass, s.log)
 	}
 
 	return s
@@ -122,8 +122,7 @@ func (s *Syncer) trySync(ctx context.Context, port int, clientOK, cmdOK bool) (b
 		if err := s.client.SyncPort(ctx, port); err != nil {
 			s.log.Debug("%s sync failed: %v", s.client.Name(), err)
 		} else {
-			log.Success(fmt.Sprintf("[%s] %s port updated",
-				time.Now().Format("2006-01-02 15:04:05"), s.client.Name()))
+			log.Success(fmt.Sprintf("%s port updated", s.client.Name()))
 			clientOK = true
 		}
 	}

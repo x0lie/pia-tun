@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/firewall"
@@ -19,8 +18,8 @@ const (
 	latencyTestTimeout = 1 * time.Second
 )
 
-// SetupConfig holds configuration for VPN setup.
-type SetupConfig struct {
+// Config holds configuration for VPN setup.
+type Config struct {
 	PIAUser    string
 	PIAPass    string
 	Location   string
@@ -35,11 +34,8 @@ type SetupConfig struct {
 // Setup establishes a VPN connection and returns connection info.
 // Returns *pia.AuthError for credential failures (fatal).
 // Returns *pia.ConnectivityError for network failures (retry with WAN check).
-func Setup(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *CacheState, resolver *pia.Resolver) (*ConnectionInfo, error) {
-	logger := &log.Logger{
-		Enabled: os.Getenv("_LOG_LEVEL") == "2",
-		Prefix:  "vpn",
-	}
+func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *CacheState, resolver *pia.Resolver) (*ConnectionInfo, error) {
+	logger := log.New("vpn")
 
 	// Step 1: Select server and authenticate
 	var serverIP, serverCN, region string
@@ -150,7 +146,7 @@ func Setup(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *C
 
 // selectServer fetches the server list, merges with cache, and selects by latency.
 // Flow: fetch fresh (cached IP or DNS) → merge with cache → filter → latency test
-func selectServer(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *CacheState, resolver *pia.Resolver, logger *log.Logger) (pia.CachedServer, time.Duration, error) {
+func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *CacheState, resolver *pia.Resolver, logger *log.Logger) (pia.CachedServer, time.Duration, error) {
 	// Fetch fresh server list (uses cached serverlist IPs, falls back to DNS)
 	log.Step(fmt.Sprintf("Selecting server across %s...", cfg.Location))
 	freshServers, err := fetchServerList(ctx, cache, resolver, fw, logger)
@@ -227,7 +223,7 @@ func fetchServerList(ctx context.Context, cache *CacheState, resolver *pia.Resol
 }
 
 // getToken returns a valid authentication token, using cache if fresh.
-func getToken(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *CacheState, resolver *pia.Resolver, logger *log.Logger) (string, error) {
+func getToken(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *CacheState, resolver *pia.Resolver, logger *log.Logger) (string, error) {
 	log.Step("Authenticating with PIA...")
 	// Use cached token if fresh
 	if cache.TokenFresh(tokenMaxAge) {
@@ -247,7 +243,7 @@ func getToken(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache
 }
 
 // authenticate obtains a new token from PIA.
-func authenticate(ctx context.Context, cfg SetupConfig, fw *firewall.Firewall, cache *CacheState, resolver *pia.Resolver, logger *log.Logger) (string, error) {
+func authenticate(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *CacheState, resolver *pia.Resolver, logger *log.Logger) (string, error) {
 	client := pia.NewDirectClient(apiTimeout)
 
 	// Try cached auth IPs first

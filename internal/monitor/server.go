@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/x0lie/pia-tun/internal/log"
 )
 
-func startHTTPServer(m *Monitor) {
+func startHTTPServer(m *Monitor, metricsPort int) {
 	mux := http.NewServeMux()
 
 	mux.Handle("/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -24,7 +24,7 @@ func startHTTPServer(m *Monitor) {
 	}))
 
 	mux.Handle("/metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !m.config.MetricsEnabled {
+		if !m.metrics.Enabled() {
 			http.Error(w, "Metrics not enabled", http.StatusNotFound)
 			return
 		}
@@ -39,19 +39,14 @@ func startHTTPServer(m *Monitor) {
 		promhttp.HandlerFor(m.metrics.Registry(), promhttp.HandlerOpts{}).ServeHTTP(w, r)
 	}))
 
-	port := os.Getenv("METRICS_PORT")
-	if port == "" {
-		port = "9090"
-	}
-
 	server := &http.Server{
-		Addr:         ":" + port,
+		Addr:         fmt.Sprintf(":%d", metricsPort),
 		Handler:      mux,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
 
 	if err := server.ListenAndServe(); err != nil {
-		fmt.Fprintf(os.Stderr, "HTTP server error: %v\n", err)
+		log.Error(fmt.Sprintf("HTTP server error: %v", err))
 	}
 }
