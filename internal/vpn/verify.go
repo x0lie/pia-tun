@@ -122,7 +122,7 @@ func getPublicIP(ctx context.Context, timeout time.Duration) (string, error) {
 	results := make(chan result, len(services))
 	var wg sync.WaitGroup
 
-	client := &http.Client{Timeout: timeout}
+	client := &http.Client{Timeout: timeout, Transport: &http.Transport{}}
 
 	for _, svc := range services {
 		wg.Add(1)
