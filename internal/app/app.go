@@ -56,7 +56,7 @@ type App struct {
 func Run(ctx context.Context) error {
 	a := &App{
 		cfg:          LoadConfig(),
-		monitorState: &monitor.State{},
+		monitorState: monitor.NewState(),
 		cache:        &vpn.CacheState{},
 		log:          log.New("app"),
 	}
@@ -83,6 +83,7 @@ func Run(ctx context.Context) error {
 	}
 
 	for {
+		a.monitorState.Resume()
 		err := a.runServices(ctx, reconnectCh)
 		if ctx.Err() != nil {
 			a.exitedCleanly = true
@@ -92,11 +93,8 @@ func Run(ctx context.Context) error {
 		if errors.Is(err, ErrReconnect) {
 			a.log.Debug("Services requested reconnect")
 
-			// Pause health monitor immediately, before teardown begins
-			a.monitorState.Paused.Store(true)
-
+			a.monitorState.Pause()
 			a.shellFunc(ctx, "show_reconnecting")
-			a.monitorState.Reconnecting.Store(true)
 			a.teardown()
 
 			a.metrics.RecordReconnect()
@@ -225,13 +223,9 @@ func (a *App) connectLoop(ctx context.Context) error {
 	delay := 5 * time.Second
 	const maxDelay = 60 * time.Second
 
-	a.monitorState.Paused.Store(true)
-	defer a.monitorState.Paused.Store(false)
-
 	for {
 		err := a.connect(ctx)
 		if err == nil {
-			a.monitorState.Reconnecting.Store(false)
 			return nil
 		}
 

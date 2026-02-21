@@ -120,6 +120,9 @@ func (m *Monitor) checkVPNHealth(timeout time.Duration) (*HealthCheckResult, err
 func (m *Monitor) triggerReconnect() {
 	if m.onReconnect != nil {
 		m.log.Debug("Signaling orchestrator to reconnect")
+		if m.state != nil {
+			m.state.Pause()
+		}
 		m.onReconnect()
 	}
 }
