@@ -18,7 +18,7 @@ RUN cd cmd/pia-tun && \
     chmod +x /build/pia-tun
 
 # Build wireguard-go for userspace fallback (pre-5.6 kernels without WireGuard module)
-RUN git clone --depth 1 https://git.zx2c4.com/wireguard-go /build/wireguard-go-src && \
+RUN git clone --depth 1 https://github.com/WireGuard/wireguard-go /build/wireguard-go-src && \
     cd /build/wireguard-go-src && \
     CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
     -ldflags="-w -s" \
