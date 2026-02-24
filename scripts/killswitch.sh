@@ -321,24 +321,25 @@ apply_baseline_killswitch() {
     $IPT_CMD -I OUTPUT 1 -j VPN_OUT
 }
 
-# Verify baseline killswitch is actually active
+# Verify baseline killswitch is actually active (retries for slow kernels)
 verify_baseline_killswitch() {
     show_debug "Verifying baseline killswitch is active"
 
-    # Check that VPN_OUT chain exists and has DROP rule (-n flag avoids slow DNS lookups)
-    if ! $IPT_CMD -L VPN_OUT -n 2>/dev/null | grep -q "DROP"; then
-        show_error "Killswitch verification failed: No DROP rule found in iptables"
-        return 1
-    fi
+    local attempt
+    for attempt in 1 2 3; do
+        # Check that chains exist with DROP rules and are wired into OUTPUT (-n avoids slow DNS lookups)
+        if $IPT_CMD -L VPN_OUT -n 2>/dev/null | grep -q "DROP" \
+        && $IPT_CMD -L OUTPUT -n 2>/dev/null | grep -q "VPN_OUT" \
+        && $IP6T_CMD -L VPN_OUT6 -n 2>/dev/null | grep -q "DROP" \
+        && $IP6T_CMD -L OUTPUT -n 2>/dev/null | grep -q "VPN_OUT6"; then
+            show_debug "Baseline killswitch verification passed"
+            return 0
+        fi
+        [ "$attempt" -lt 3 ] && sleep 0.3
+    done
 
-    # Check that VPN_OUT is actually in OUTPUT chain
-    if ! $IPT_CMD -L OUTPUT -n 2>/dev/null | grep -q "VPN_OUT"; then
-        show_error "Killswitch verification failed: VPN_OUT not in OUTPUT chain"
-        return 1
-    fi
-
-    show_debug "Baseline killswitch verification passed"
-    return 0
+    show_error "Killswitch verification failed - this is a critical security issue"
+    return 1
 }
 
 cleanup_chains() {
@@ -458,13 +459,9 @@ setup_baseline_killswitch() {
         show_error "Failed to apply iptables killswitch"
         return 1
     }
-    sleep 0.5
 
     # CRITICAL: Verify killswitch is actually active before proceeding
-    verify_baseline_killswitch || {
-        show_error "Killswitch verification failed - this is a critical security issue"
-        return 1
-    }
+    verify_baseline_killswitch
 
     # Enable MSS clamping to prevent fragmentation issues in VPN tunnel
     setup_mss_clamping
