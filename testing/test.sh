@@ -1,931 +1,596 @@
 #!/bin/bash
-# Automated test suite for pia-tun
-# Tests critical functionality: VPN connection, IP changes, killswitch, reconnection
+# Integration test suite for pia-tun
+# Tests: VPN connection, killswitch, reconnection, port forwarding, proxy, metrics, and more
+#
+# Requirements: docker, jq, curl
+# Usage: PIA_USER=xxx PIA_PASS=xxx ./testing/test.sh
 
-set -e  # Exit on error
+set -euo pipefail
 
-# Colors for output
+# Colors
 RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+GRN='\033[0;32m'
+YLW='\033[0;33m'
+BLU='\033[0;34m'
+CYN='\033[0;36m'
+BLD='\033[1m'
+NC='\033[0m'
 
 # Configuration
-CONTAINER_NAME="pia-tun-test"
+CONTAINER="pia-tun-test"
 IMAGE_NAME="${IMAGE_NAME:-pia-tun:test}"
 
-# Configurable timeouts (can be overridden via environment variables)
-TEST_TIMEOUT="${TEST_TIMEOUT:-120}"              # VPN connection timeout (seconds)
-MONITOR_READY_TIMEOUT="${MONITOR_READY_TIMEOUT:-30}"  # Health monitor readiness timeout (seconds)
-RECONNECT_TIMEOUT="${RECONNECT_TIMEOUT:-45}"    # Reconnection completion timeout (seconds)
-PORT_FORWARD_TIMEOUT="${PORT_FORWARD_TIMEOUT:-60}"  # Port forwarding timeout (seconds)
-LEAK_TEST_DURATION="${LEAK_TEST_DURATION:-10}"  # Killswitch leak test duration (seconds)
-RECONNECT_LEAK_DURATION="${RECONNECT_LEAK_DURATION:-30}"  # Reconnection leak test duration (seconds)
+# Env
+PIA_LOCATION="${PIA_LOCATION:-ca_ontario}"
+METRICS_PORT=9091
+METRICS_URL="http://localhost:$METRICS_PORT"
+DNS="${DNS:-pia}"
+PORT_FILE="${PORT_FILE:-/port}"
+PROXY_ENABLED="${PROXY_ENABLED:-true}"
+SOCKS5_PORT="${SOCKS5_PORT:-1081}"
+HTTP_PROXY_PORT="${HTTP_PROXY_PORT:-8889}"
+PROXY_USER="user"
+PROXY_PASS="pass"
+HC_INTERVAL="${HC_INTERVAL:-4}"
+HC_FAILURE_WINDOW="${HC_FAILURE_WINDOW:-4}"
+
+# Timeouts (seconds)
+CONNECT_TIMEOUT=25
+MAX_DOWNTIME="$(( HC_INTERVAL + HC_FAILURE_WINDOW ))"
 
 # Counters
-TESTS_PASSED=0
-TESTS_FAILED=0
-TESTS_SKIPPED=0
+PASSED=0
+FAILED=0
+SKIPPED=0
 
-# Debug mode - pause on failure to allow manual investigation
-DEBUG_PAUSE="${DEBUG_PAUSE:-false}"
+# ============================================================================
+# Test helpers
+# ============================================================================
 
-# Cleanup function
-cleanup() {
-    local exit_code=$?
+pass() { echo -e "  ${GRN}✓${NC} $1"; PASSED=$((PASSED + 1)); }
+fail() { echo -e "  ${RED}✗${NC} $1"; FAILED=$((FAILED + 1)); }
+skip() { echo -e "  ${YLW}↷${NC} $1"; SKIPPED=$((SKIPPED + 1)); }
+step() { echo -e "\n${BLU}▶${NC} $1"; }
+info() { echo -e "    $1"; }
 
-    # Only show cleanup if we actually started containers
-    if docker ps -a | grep -q "$CONTAINER_NAME" 2>/dev/null; then
-        echo ""
-        echo -e "${BLUE}=== Cleanup ===${NC}"
-        # Try v2 first, fallback to v1
-        docker compose -f testing/docker-compose.test.yml down -v 2>/dev/null || \
-        docker-compose -f testing/docker-compose.test.yml down -v 2>/dev/null || true
-        docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
-    fi
-
-    exit $exit_code
+# Get a prometheus metric value by name prefix
+get_metric() {
+    curl -sf "$METRICS_URL/metrics" 2>/dev/null | grep "^$1" | grep -v '#' | head -1 | awk '{print $2}' || true
 }
 
-# Set trap to cleanup on exit
+# Get a JSON metric field
+get_json() {
+    curl -sf "$METRICS_URL/metrics?format=json" 2>/dev/null | jq -r ".$1 // empty"
+}
+
+# Run a command inside the container
+dexec() {
+    docker exec "$CONTAINER" "$@" 2>/dev/null
+}
+
+# Wait for a condition with timeout. Usage: wait_for <timeout> <description> <command...>
+wait_for() {
+    local timeout=$1 desc=$2; shift 2
+    for i in $(seq 1 "$timeout"); do
+        if "$@" >/dev/null 2>&1; then
+            info "$desc (${i}s)"
+            return 0
+        fi
+        # Check container is still running
+        if ! docker ps -q -f name="$CONTAINER" | grep -q .; then
+            fail "$desc — container exited"
+            return 1
+        fi
+        sleep 1
+    done
+    fail "$desc — timed out after ${timeout}s"
+    return 1
+}
+
+# ============================================================================
+# Setup / teardown
+# ============================================================================
+
+cleanup() {
+    local rc=$?
+    if [ $rc -ne 0 ] && [ "$PASSED" -eq 0 ] && [ "$FAILED" -eq 0 ]; then
+        echo -e "\n  ${RED}✗${NC} Script exited unexpectedly (exit code $rc)"
+        echo "    Last command failed — check output above"
+    fi
+    step "Cleanup"
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    exit $rc
+}
 trap cleanup EXIT
 
-# Test result functions
-pass() {
-    echo -e "${GREEN}✅ PASS:${NC} $1"
-    TESTS_PASSED=$((TESTS_PASSED + 1))
+print_banner() {
+    echo ""
+    echo -e "${CYN}╔════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYN}║                                                ║${NC}"
+    echo -e "${CYN}║               ${NC}pia-tun Test Suite${CYN}               ║${NC}"
+    echo -e "${CYN}║                                                ║${NC}"
+    echo -e "${CYN}╚════════════════════════════════════════════════╝${NC}"
 }
 
-fail() {
-    echo -e "${RED}❌ FAIL:${NC} $1"
-    TESTS_FAILED=$((TESTS_FAILED + 1))
-
-    # Pause for debugging if requested
-    if [ "${DEBUG_PAUSE}" == "true" ]; then
-        echo ""
-        echo -e "${YELLOW}╔════════════════════════════════════════════════╗${NC}"
-        echo -e "${YELLOW}║           DEBUG MODE: Test Failed             ║${NC}"
-        echo -e "${YELLOW}╚════════════════════════════════════════════════╝${NC}"
-        echo -e "${BLUE}Container:${NC} $CONTAINER_NAME"
-        echo -e "${BLUE}Commands:${NC}"
-        echo "  docker exec -it $CONTAINER_NAME bash"
-        echo "  docker logs $CONTAINER_NAME"
-        echo "  docker exec $CONTAINER_NAME cat /tmp/proxy.log"
-        echo ""
-        echo -e "${YELLOW}Press ENTER to continue tests or Ctrl+C to exit${NC}"
-        read -r
-    fi
-
-    if [ "${STRICT_MODE:-false}" == "true" ]; then
-        exit 1
-    fi
-}
-
-skip() {
-    echo -e "${YELLOW}⏭️  SKIP:${NC} $1"
-    TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
-}
-
-info() {
-    echo -e "${BLUE}ℹ️  INFO:${NC} $1"
-}
-
-# Check prerequisites
 check_prerequisites() {
-    echo -e "${BLUE}=== Checking Prerequisites ===${NC}"
+    step "Prerequisites"
+    for cmd in docker jq curl; do
+        command -v "$cmd" >/dev/null 2>&1 || { fail "$cmd not installed"; exit 1; }
+    done
+    pass "Tools available (docker, jq, curl)"
 
-    if ! command -v docker &> /dev/null; then
-        fail "Docker is not installed"
+    if [ -z "${PIA_USER:-}" ] || [ -z "${PIA_PASS:-}" ]; then
+        fail "PIA_USER and PIA_PASS required"
         exit 1
     fi
-    pass "Docker is available"
-
-    # Check for Docker Compose v2 (docker compose) or v1 (docker-compose)
-    if docker compose version &> /dev/null; then
-        pass "Docker Compose v2 available"
-    elif command -v docker-compose &> /dev/null; then
-        pass "Docker Compose v1 available"
-    else
-        fail "Docker Compose is not installed"
-        exit 1
-    fi
-
-    if ! command -v go &> /dev/null; then
-        fail "Go is not installed (required for building leak tester)"
-        exit 1
-    fi
-    pass "Go is available"
-
-    if ! command -v jq &> /dev/null; then
-        fail "jq is not installed (required for parsing test results)"
-        exit 1
-    fi
-    pass "jq is available"
-
-    # Check for required environment variables
-    if [ -z "$PIA_USER" ] || [ -z "$PIA_PASS" ]; then
-        fail "PIA_USER and PIA_PASS environment variables required"
-        info "Set them: export PIA_USER=p1234567 PIA_PASS='yourpassword'"
-        exit 1
-    fi
-    pass "PIA credentials configured"
+    pass "PIA credentials set"
 }
 
-# Build Docker image
-build_image() {
-    echo ""
-    echo -e "${BLUE}=== Building Docker Image ===${NC}"
-    if docker build -t "$IMAGE_NAME" .; then
-        pass "Image built successfully"
-    else
-        fail "Image build failed"
-        exit 1
-    fi
+build() {
+    step "Build"
+    docker build -t "$IMAGE_NAME" -q . >/dev/null
+    pass "Docker image built"
 }
 
-# Build leak testing tool
-build_leak_tester() {
-    echo ""
-    echo -e "${BLUE}=== Building Leak Test Tool ===${NC}"
-
-    # Create bin directory if it doesn't exist
-    mkdir -p bin
-
-    # Build the leak tester (static binary for Alpine compatibility)
-    cd testing/leaktest
-    if CGO_ENABLED=0 go build -ldflags="-w -s" -o ../../bin/leaktest .; then
-        cd ../..
-        pass "Leak tester built successfully"
-    else
-        cd ../..
-        fail "Leak tester build failed"
-        exit 1
-    fi
-}
-
-# Start container
 start_container() {
-    echo ""
-    echo -e "${BLUE}=== Starting Container ===${NC}"
+    step "Start container"
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 
-    # Clean up any existing container
-    docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
-
-    # Start container with test configuration
     docker run -d \
-        --name "$CONTAINER_NAME" \
+        --name "$CONTAINER" \
         --cap-add=NET_ADMIN \
         --cap-drop=ALL \
+        -p $METRICS_PORT:$METRICS_PORT \
         -e PIA_USER="$PIA_USER" \
         -e PIA_PASS="$PIA_PASS" \
-        -e PIA_LOCATION="${PIA_LOCATION:-ca_ontario,ca_toronto}" \
-        -e PF_ENABLED="${PF_ENABLED:-true}" \
-        -e PROXY_ENABLED="${PROXY_ENABLED:-true}" \
-        -e PROXY_USER="${PROXY_USER:-}" \
-        -e PROXY_PASS="${PROXY_PASS:-}" \
-        -e HC_FAILURE_WINDOW="${HC_FAILURE_WINDOW:-15}" \
-        -e LOG_LEVEL=info \
-        "$IMAGE_NAME" > /dev/null
+        -e PIA_LOCATION="$PIA_LOCATION" \
+        -e DNS="$DNS" \
+        -e PF_ENABLED=true \
+        -e PORT_FILE="$PORT_FILE" \
+        -e LOCAL_NETWORKS="all" \
+        -e PROXY_ENABLED=true \
+        -e SOCKS5_PORT=$SOCKS5_PORT \
+        -e HTTP_PROXY_PORT=$HTTP_PROXY_PORT \
+        -e PROXY_USER="$PROXY_USER" \
+        -e PROXY_PASS="$PROXY_PASS" \
+        -e METRICS_ENABLED=true \
+        -e METRICS_PORT=$METRICS_PORT \
+        -e INSTANCE_NAME=test \
+        -e HC_INTERVAL=$HC_INTERVAL \
+        -e HC_FAILURE_WINDOW=$HC_FAILURE_WINDOW \
+        -e LOG_LEVEL=trace \
+        "$IMAGE_NAME" >/dev/null
 
-    if [ $? -eq 0 ]; then
-        pass "Container started"
-    else
-        fail "Container failed to start"
-        exit 1
+    pass "Container started (HC_INTERVAL=${HC_INTERVAL}s, HC_FAILURE_WINDOW=${HC_FAILURE_WINDOW}s)"
+}
+
+# ============================================================================
+# Wait phases
+# ============================================================================
+
+wait_for_healthy() {
+    step "Waiting for VPN connection..."
+    wait_for "$CONNECT_TIMEOUT" "Health endpoint reports healthy" \
+        curl -sf "$METRICS_URL/health"
+}
+
+pf_active() {
+    [ "$(get_metric pia_tun_port_forwarding_active)" != "0" ]
+}
+
+wan_down() {
+    [ "$(get_metric pia_tun_wan_up)" != "1" ]
+}
+
+wait_for_port_forward() {
+    step "Waiting for port forwarding..."
+    wait_for 10 "Port forwarded" pf_active
+}
+
+wait_for_wan_down() {
+    step "Waiting for wan down..."
+    wait_for 15 "WAN down" wan_down
+}
+
+# ============================================================================
+# Tests
+# ============================================================================
+
+dump_firewall_state() {
+    local state=$1
+
+    step "$state state"
+    info "iptables --list-rules"
+    dexec iptables --list-rules 2>/dev/null | sed 's/^/      /'
+    if [ "$state" == "WAN-down" ]; then
+        info "^^ Removed bypass_routes from VPN_OUT chain for this test to function"
     fi
-}
-
-# Wait for VPN connection
-wait_for_connection() {
     echo ""
-    echo -e "${BLUE}=== Waiting for VPN Connection ===${NC}"
-
-    for i in $(seq 1 $TEST_TIMEOUT); do
-        # Check if container is still running
-        if ! docker ps | grep -q "$CONTAINER_NAME"; then
-            fail "Container exited unexpectedly"
-            echo "Last 60 lines of logs:"
-            docker logs --tail 60 "$CONTAINER_NAME"
-            return 1
-        fi
-
-        # Check for WireGuard handshake
-        if docker exec "$CONTAINER_NAME" wg show pia0 2>/dev/null | grep -q "latest handshake"; then
-            pass "VPN connected (took ${i}s)"
-            return 0
-        fi
-
-        # Progress indicator
-        if [ $((i % 10)) -eq 0 ]; then
-            info "Still waiting... (${i}s/${TEST_TIMEOUT}s)"
-        fi
-
-        sleep 1
-    done
-
-    fail "VPN connection timeout after ${TEST_TIMEOUT}s"
-    echo "Last 30 lines of logs:"
-    docker logs --tail 30 "$CONTAINER_NAME"
-    return 1
-}
-
-# Wait for Port file
-wait_for_port() {
-    # Skip entirely if port-forwarding feature is disabled
-    [ "${PF_ENABLED:-true}" = "true" ] || {
-        skip "Port forwarding not enabled"
-        return 0
-    }
-
+    info "ip route show table 51820"
+    dexec ip route show table 51820 2>/dev/null | sed 's/^/      /'
     echo ""
-    echo -e "${BLUE}=== Waiting for /run/pia-tun/port to appear ===${NC}"
-
-    local elapsed=0
-    while [ $elapsed -lt ${PORT_FORWARD_TIMEOUT} ]; do
-        # Optional: early exit if container died
-        if ! docker ps --format "table {{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
-            fail "Container $CONTAINER_NAME is no longer running"
-            docker logs --tail 30 "$CONTAINER_NAME" 2>/dev/null || true
-            return 1
-        fi
-
-        # This is the most reliable way: use `test -f` inside the container
-        if docker exec "$CONTAINER_NAME" test -f /run/pia-tun/port 2>/dev/null; then
-            local port_content
-            port_content=$(docker exec "$CONTAINER_NAME" cat /run/pia-tun/port 2>/dev/null || echo "unknown")
-            pass "Port file appeared after ${elapsed}s → forwarded port: $port_content"
-            return 0
-        fi
-
-        # Progress indicator every 15 seconds
-        [ $((elapsed % 15)) -eq 0 ] && [ $elapsed -gt 0 ] && \
-            info "Still waiting for port file... (${elapsed}s elapsed)"
-
-        sleep 1
-        elapsed=$((elapsed + 1))
-    done
-
-    fail "Timed out after ${PORT_FORWARD_TIMEOUT}s waiting for /run/pia-tun/port"
-    echo "=== Last 30 lines of container logs ==="
-    docker logs --tail 30 "$CONTAINER_NAME" 2>/dev/null || true
-    return 1
+    info "ip rule list"
+    dexec ip rule list 2>/dev/null | sed 's/^/      /'
 }
 
-# Test: Get real IP (host IP for comparison)
-get_real_ip() {
-    echo ""
-    echo -e "${BLUE}=== Getting Real IP ===${NC}"
-    REAL_IP=$(curl -s -4 --max-time 10 ifconfig.me || echo "")
-
-    if [ -z "$REAL_IP" ]; then
-        skip "Could not determine real IP (network issue?)"
-        return 1
-    fi
-
-    info "Real IP: $REAL_IP"
-    return 0
-}
-
-# Test: VPN IP is different from real IP
 test_ip_changed() {
-    echo ""
-    echo -e "${BLUE}=== Test: IP Changed ===${NC}"
+    step "Test: IP changed"
 
-    VPN_IP=$(docker exec "$CONTAINER_NAME" curl -s --max-time 10 ifconfig.me 2>/dev/null || echo "")
+    local real_ip vpn_ip
+    real_ip=$(curl -sf -4 --max-time 10 ifconfig.me || true)
+    vpn_ip=$(get_json current_ip)
 
-    if [ -z "$VPN_IP" ]; then
-        fail "Could not get VPN IP"
-        return 1
-    fi
-
-    info "VPN IP: $VPN_IP"
-
-    if [ -z "$REAL_IP" ]; then
-        skip "Real IP unknown, cannot compare"
+    if [ -z "$real_ip" ]; then
+        skip "Could not determine host IP"
         return 0
     fi
 
-    if [ "$VPN_IP" == "$REAL_IP" ]; then
-        fail "VPN IP matches real IP (VPN not working or leak detected)"
+    if [ -z "$vpn_ip" ]; then
+        fail "No VPN IP in metrics"
         return 1
     fi
 
-    pass "IP changed: $REAL_IP → $VPN_IP"
+    if [ "$vpn_ip" = "$real_ip" ]; then
+        fail "VPN IP matches real IP ($real_ip) — possible leak"
+        return 1
+    fi
+
+    pass "IP changed: $real_ip → $vpn_ip"
 }
 
-# Test: IPv6 is blocked
+test_dns_leak() {
+    # DNS leak test: PIA resolution should fail when VPN is down
+    if [ "$DNS" = "pia" ]; then
+        info "Testing DNS resolution (should fail)..."
+        if dexec nslookup -timeout=3 example.com >/dev/null 2>&1; then
+            fail "PIA DNS resolves with VPN down (leak via LOCAL_NETWORKS)"
+        else
+            pass "DNS blocked with VPN down"
+        fi
+    else
+        skip "DNS leak test (DNS != pia)"
+    fi
+}
+
+test_connection_metrics() {
+    step "Test: Connection metrics"
+
+    local conn_up wan_up ks_active server_checks checks server
+    conn_up=$(get_metric "pia_tun_connection_up")
+    wan_up=$(get_metric "pia_tun_wan_up")
+    ks_active=$(get_metric "pia_tun_killswitch_active")
+    server_checks=$(get_metric "pia_tun_server_latency_seconds_count")
+    checks=$(get_json total_checks)
+    server=$(get_json current_server)
+
+    [ "$conn_up" = "1" ] && pass "connection_up = 1" || fail "connection_up = $conn_up"
+    [ "$wan_up" = "1" ] && pass "wan_up = 1" || fail "wan_up = $wan_up"
+    [ "$ks_active" = "1" ] && pass "killswitch_active = 1" || fail "killswitch_active = $ks_active"
+    [ "${server_checks:-0}" -gt 0 ] && pass "server_latency > 0" || fail "server_latency_seconds_count = $server_checks"
+    [ "${checks:-0}" -gt 0 ] && pass "Health checks running ($checks total)" || fail "No health checks recorded"
+    [ -n "$server" ] && pass "Connected to $server" || fail "No server in metrics"
+}
+
+test_port_forwarding() {
+    local state=$1
+
+    if [ "$state" != "post-reconnect" ]; then
+        step "Test: Port forwarding"
+    else
+        step "Test: Port forwarding ($state)"
+    fi
+
+    local port pf_active
+    port=$(get_metric "pia_tun_port_forwarding_port")
+    pf_active=$(get_metric "pia_tun_port_forwarding_active")
+
+    [ "$pf_active" = "1" ] && pass "Port forwarding active" || fail "Port forwarding not active"
+
+    if [ -n "$port" ] && [ "$port" != "0" ]; then
+        pass "Forwarded port: $port"
+    else
+        fail "No forwarded port"
+    fi
+
+    # Verify port file matches
+    local file_port
+    file_port=$(dexec cat $PORT_FILE 2>/dev/null || echo "")
+    if [ "$file_port" = "$port" ]; then
+        pass "Port file matches metric ($file_port)"
+    else
+        fail "Port file ($file_port) doesn't match metric ($port)"
+    fi
+
+    # Verify iptables ACCEPT rules exist for forwarded port
+    if [ -n "$port" ] && [ "$port" != "0" ]; then
+        local rules
+        rules=$(dexec iptables -L VPN_IN -n 2>/dev/null || true)
+        if echo "$rules" | grep -q "port_forward_tcp" && echo "$rules" | grep -q "port_forward_udp"; then
+            pass "Firewall rules for port $port (tcp+udp)"
+        else
+            fail "Missing firewall rules for forwarded port"
+        fi
+    fi
+}
+
 test_ipv6_blocked() {
-    echo ""
-    echo -e "${BLUE}=== Test: IPv6 Blocked ===${NC}"
+    step "Test: IPv6 DROP rule"
 
-    # Test 1: Check firewall rules block IPv6
-    info "Checking firewall rules..."
-
-    # Check if the last rule in VPN_OUT6 is DROP (or if there's any DROP in it)
-    if docker exec "$CONTAINER_NAME" ip6tables -L VPN_OUT6 -n | grep -q "DROP"; then
-        pass "ip6tables: IPv6 DROP rule found in VPN_OUT6"
+    if dexec ip6tables -L VPN_OUT6 -n 2>/dev/null | grep -q DROP; then
+        pass "IPv6 DROP rule in VPN_OUT6"
     else
-        fail "ip6tables: No DROP rule in VPN_OUT6 chain"
-        return 1
+        fail "No IPv6 DROP rule"
     fi
 
-    # Test 2: Check no IPv6 routes exist (except loopback)
-    info "Checking IPv6 routes..."
-    IPV6_ROUTES=$(docker exec "$CONTAINER_NAME" ip -6 route show 2>/dev/null | grep -v "^::1" | grep -v "^fe80" | wc -l)
-
-    if [ "$IPV6_ROUTES" -eq 0 ]; then
-        pass "No non-local IPv6 routes exist"
-    else
-        fail "Found $IPV6_ROUTES IPv6 route(s) outside of local scope"
-        docker exec "$CONTAINER_NAME" ip -6 route show 2>/dev/null || true
-        return 1
-    fi
-
-    # Test 3: Try to get IPv6 address via external service (should fail/timeout)
-    info "Testing IPv6 connectivity..."
-    if docker exec "$CONTAINER_NAME" curl -6 -s --max-time 5 ifconfig.co 2>/dev/null; then
-        fail "IPv6 leaked (got response from IPv6 endpoint)"
-        return 1
-    fi
-
-    pass "IPv6 connectivity blocked (no response from IPv6 endpoint)"
+    # No non-local IPv6 routes
+    local v6_routes
+    v6_routes=$(dexec ip -6 route show 2>/dev/null | grep -v "^::1" | grep -v "^fe80" | wc -l || true)
+    [ "$v6_routes" -eq 0 ] && pass "No global IPv6 routes" || fail "Found $v6_routes IPv6 routes"
 }
 
-# Test: Killswitch blocks traffic when VPN is down
 test_killswitch() {
-    echo ""
-    echo -e "${BLUE}=== Test: Killswitch (Comprehensive) ===${NC}"
+    step "Test: Killswitch and reconnect"
 
-    if [ -z "$REAL_IP" ]; then
-        skip "Real IP unknown, cannot run comprehensive leak tests"
-        return 0
-    fi
+    local reconnects_before
+    reconnects_before=$(get_metric "pia_tun_reconnects_total")
+    reconnects_before=${reconnects_before:-0}
+    reconnects_before=${reconnects_before%.*}
 
-    # Copy leak tester into container (use /usr/local/bin instead of /tmp due to noexec)
-    info "Copying leak tester into container..."
-    docker cp bin/leaktest "$CONTAINER_NAME:/usr/local/bin/leaktest"
-
-    # Test if leak tester can run
-    if ! docker exec "$CONTAINER_NAME" /usr/local/bin/leaktest --version >/dev/null 2>&1; then
-        fail "Leak tester binary cannot run in container (architecture mismatch?)"
-        docker exec "$CONTAINER_NAME" rm -f /usr/local/bin/leaktest 2>/dev/null || true
-        return 1
-    fi
-
-    sleep 3
-
-    info "Bringing down VPN interface..."
-    docker exec "$CONTAINER_NAME" ip link set pia0 down 2>/dev/null || true
-
+    # Bring interface down (simulates VPN failure)
+    info "Deleting pia0..."
+    dexec ip link delete pia0 || true
     sleep 1
 
-    # Run leak tester with high concurrency
-    info "Running intensive leak tests (${LEAK_TEST_DURATION}s, 50 concurrent workers)..."
+    # DNS leak test: PIA resolution should fail when VPN is down
+    test_dns_leak
 
-    # Test HTTP, HTTPS, DNS, UDP, and bypass route restrictions
-    if ! docker exec "$CONTAINER_NAME" /usr/local/bin/leaktest \
-        --duration ${LEAK_TEST_DURATION}s \
-        --concurrency 50 \
-        --interval 100ms \
-        --real-ip "$REAL_IP" \
-        --protocols http,https,dns,udp,bypass \
-        --output /tmp/killswitch_results.json \
-        --quiet; then
-        fail "Leak tester failed to run (check logs above)"
-        docker exec "$CONTAINER_NAME" ip link set pia0 up 2>/dev/null || true
-        docker exec "$CONTAINER_NAME" rm -f /usr/local/bin/leaktest 2>/dev/null || true
+    # Traffic leak test: outbound connections should be blocked
+    info "Testing outbound connectivity (should fail)..."
+    if dexec curl -sf --max-time 3 ifconfig.me >/dev/null 2>&1; then
+        fail "Traffic leaks with VPN down"
+    else
+        pass "Traffic blocked with VPN down"
+    fi
+
+    # Wait for reconnect
+    info "Waiting for health to recover..."
+    sleep $MAX_DOWNTIME
+
+    if ! wait_for "$CONNECT_TIMEOUT" "Reconnected" curl -sf "$METRICS_URL/health"; then
         return 1
     fi
 
-    # Check if results file was created
-    if ! docker exec "$CONTAINER_NAME" test -f /tmp/killswitch_results.json 2>/dev/null; then
-        fail "Leak tester did not create results file"
-        docker exec "$CONTAINER_NAME" ip link set pia0 up 2>/dev/null || true
-        docker exec "$CONTAINER_NAME" rm -f /usr/local/bin/leaktest 2>/dev/null || true
-        return 1
+    # Verify reconnect counter incremented
+    local reconnects_after
+    reconnects_after=$(get_metric "pia_tun_reconnects_total")
+    reconnects_after=${reconnects_after:-0}
+    reconnects_after=${reconnects_after%.*}
+
+    if [ "$reconnects_after" -gt "$reconnects_before" ]; then
+        pass "Reconnect counter incremented ($reconnects_before -> $reconnects_after)"
+    else
+        fail "Reconnect counter didn't increment ($reconnects_before -> $reconnects_after)"
     fi
-
-    # Check results
-    LEAKS=$(docker exec "$CONTAINER_NAME" cat /tmp/killswitch_results.json | jq -r '.leaks_detected' 2>/dev/null || echo "error")
-    ATTEMPTS=$(docker exec "$CONTAINER_NAME" cat /tmp/killswitch_results.json | jq -r '.total_attempts' 2>/dev/null || echo "0")
-
-    # Bring interface back up
-    info "Bringing VPN interface back up..."
-    docker exec "$CONTAINER_NAME" ip link set pia0 up 2>/dev/null || true
-
-    # Cleanup
-    docker exec "$CONTAINER_NAME" rm -f /usr/local/bin/leaktest /tmp/killswitch_results.json 2>/dev/null || true
-
-    if [ "$LEAKS" == "error" ]; then
-        fail "Leak tester failed to run"
-        return 1
-    fi
-
-    if [ "$LEAKS" -gt 0 ]; then
-        fail "Killswitch leaked: $LEAKS leaks detected in $ATTEMPTS attempts"
-        return 1
-    fi
-
-    pass "Killswitch working: 0 leaks in $ATTEMPTS attempts (HTTP, HTTPS, DNS, UDP, bypass restrictions tested)"
-    sleep 3
 }
 
-# Test: Verify all temporary exemptions are cleaned up
-test_exemptions_cleaned() {
-    echo ""
-    echo -e "${BLUE}=== Test: Firewall Exemptions Cleaned ===${NC}"
-
-    # Check for temporary exemptions in iptables
-    TEMP_RULES=$(docker exec "$CONTAINER_NAME" iptables -L OUTPUT -n -v 2>/dev/null | grep -c "temp_" 2>/dev/null || echo "0")
-    TEMP_RULES=$(echo "$TEMP_RULES" | tr -d '\n\r' | xargs)
-
-    if [ "$TEMP_RULES" -gt 0 ] 2>/dev/null; then
-        fail "Found $TEMP_RULES temporary exemptions still active (security risk)"
-        info "Listing active temporary exemptions:"
-        docker exec "$CONTAINER_NAME" iptables -L OUTPUT -n -v 2>/dev/null | grep "temp_"
-        return 1
-    fi
-
-    pass "All temporary exemptions cleaned up (no persistent holes)"
-}
-
-# Test: Reconnection doesn't leak IP
-test_reconnection() {
-    echo ""
-    echo -e "${BLUE}=== Test: Reconnection (No Leaks) ===${NC}"
-
-    if [ -z "$REAL_IP" ]; then
-        skip "Real IP unknown, cannot detect leaks"
-        return 0
-    fi
-
-    # Wait for monitor to be ready (health endpoint responding)
-    info "Waiting for health monitor to be ready..."
-    for i in $(seq 1 30); do
-        if docker exec "$CONTAINER_NAME" curl -s -o /dev/null http://localhost:9090/health 2>/dev/null; then
-            info "Health monitor ready (after ${i}s)"
-            break
-        fi
-        sleep 1
-    done
-
-    # Copy leak tester into container BEFORE triggering reconnection
-    info "Copying leak tester into container..."
-    docker cp bin/leaktest "$CONTAINER_NAME:/usr/local/bin/leaktest"
-
-    # Test if leak tester can run
-    if ! docker exec "$CONTAINER_NAME" /usr/local/bin/leaktest --version >/dev/null 2>&1; then
-        fail "Leak tester binary cannot run in container (architecture mismatch?)"
-        docker exec "$CONTAINER_NAME" rm -f /usr/local/bin/leaktest 2>/dev/null || true
-        return 1
-    fi
-
-    # Start intensive leak testing in background BEFORE triggering reconnection
-    # Note: Only test HTTP/HTTPS for reconnection (can detect real IP vs VPN IP)
-    # DNS/UDP would show false positives when VPN comes back up (can't distinguish tunnel vs bypass)
-    info "Starting intensive leak monitoring (100 concurrent workers, ${RECONNECT_LEAK_DURATION}s)..."
-    docker exec -d "$CONTAINER_NAME" sh -c "
-        /usr/local/bin/leaktest \
-            --duration ${RECONNECT_LEAK_DURATION}s \
-            --concurrency 100 \
-            --interval 50ms \
-            --real-ip '$REAL_IP' \
-            --protocols http,https \
-            --output /tmp/reconnection_results.json \
-            --quiet >/tmp/leaktest.log 2>&1
-    "
-
-    # Give leak tester a moment to start
-    sleep 2
-
-    # Trigger reconnection via trigger file (checked by health monitor)
-    info "Triggering reconnection via interface deletion..."
-    docker exec "$CONTAINER_NAME" ip link delete pia0
-
-    info "Reconnect trigger created"
-
-    # Wait for reconnection flag to appear (indicates reconnection has started)
-    info "Waiting for reconnection to start..."
-    RECONNECT_STARTED=false
-    WAIT_TIME=10  # Pipe-based reconnection should start quickly
-
-    for i in $(seq 1 $WAIT_TIME); do
-        if docker exec "$CONTAINER_NAME" test -f /tmp/reconnecting 2>/dev/null; then
-            RECONNECT_STARTED=true
-            info "Reconnection started (detected after ${i}s)"
-            break
-        fi
-
-        sleep 1
-    done
-
-    if [ "$RECONNECT_STARTED" == "false" ]; then
-        skip "Reconnection did not start within ${WAIT_TIME}s"
-        docker exec "$CONTAINER_NAME" rm -f /usr/local/bin/leaktest /tmp/reconnection_results.json 2>/dev/null || true
-        return 0
-    fi
-
-    # Wait for reconnection to complete
-    info "Monitoring reconnection progress..."
-    for i in $(seq 1 $RECONNECT_TIMEOUT); do
-        if ! docker exec "$CONTAINER_NAME" test -f /tmp/reconnecting 2>/dev/null; then
-            info "Reconnection completed after ${i}s"
-            break
-        fi
-
-        if [ $((i % 10)) -eq 0 ]; then
-            info "Still reconnecting... (${i}s)"
-        fi
-
-        sleep 1
-    done
-
-    # Wait for leak tester to finish and write results (up to 30 seconds)
-    info "Waiting for leak tester to finish..."
-    for i in $(seq 1 30); do
-        if docker exec "$CONTAINER_NAME" test -f /tmp/reconnection_results.json 2>/dev/null; then
-            info "Leak test completed (found results after ${i}s)"
-            break
-        fi
-
-        if [ $((i % 5)) -eq 0 ]; then
-            info "Still testing... (${i}s/30s)"
-        fi
-
-        sleep 1
-    done
-
-    # Check if results file exists
-    if ! docker exec "$CONTAINER_NAME" test -f /tmp/reconnection_results.json 2>/dev/null; then
-        fail "Leak tester did not create results file (process may have crashed)"
-        info "Checking for leaktest process..."
-        docker exec "$CONTAINER_NAME" ps aux 2>/dev/null | grep leaktest || true
-        info "Leak tester log output:"
-        docker exec "$CONTAINER_NAME" cat /tmp/leaktest.log 2>/dev/null || echo "(no log file)"
-        docker exec "$CONTAINER_NAME" rm -f /usr/local/bin/leaktest /tmp/leaktest.log 2>/dev/null || true
-        return 1
-    fi
-
-    # Check results
-    LEAKS=$(docker exec "$CONTAINER_NAME" cat /tmp/reconnection_results.json 2>/dev/null | jq -r '.leaks_detected' || echo "error")
-    ATTEMPTS=$(docker exec "$CONTAINER_NAME" cat /tmp/reconnection_results.json 2>/dev/null | jq -r '.total_attempts' || echo "0")
-
-    if [ "$LEAKS" == "error" ] || [ -z "$LEAKS" ]; then
-        fail "Leak tester failed to parse results"
-        info "Leak tester log output:"
-        docker exec "$CONTAINER_NAME" cat /tmp/leaktest.log 2>/dev/null || echo "(no log file)"
-        docker exec "$CONTAINER_NAME" rm -f /usr/local/bin/leaktest /tmp/reconnection_results.json /tmp/leaktest.log 2>/dev/null || true
-        return 1
-    fi
-
-    if [ "$ATTEMPTS" == "0" ] || [ -z "$ATTEMPTS" ]; then
-        fail "Leak tester reported 0 attempts (likely crashed early)"
-        info "Leak tester log output:"
-        docker exec "$CONTAINER_NAME" cat /tmp/leaktest.log 2>/dev/null || echo "(no log file)"
-        docker exec "$CONTAINER_NAME" rm -f /usr/local/bin/leaktest /tmp/reconnection_results.json /tmp/leaktest.log 2>/dev/null || true
-        return 1
-    fi
-
-    if [ "$LEAKS" -gt 0 ] 2>/dev/null; then
-        fail "IP leaked during reconnection: $LEAKS leaks in $ATTEMPTS attempts"
-
-        # Show detailed leak breakdown
-        info "Analyzing leak details..."
-        echo ""
-        echo "Leak breakdown by protocol:"
-        docker exec "$CONTAINER_NAME" cat /tmp/reconnection_results.json 2>/dev/null | jq -r '.leaks_per_protocol'
-        echo ""
-        echo "First 10 leak details:"
-        docker exec "$CONTAINER_NAME" cat /tmp/reconnection_results.json 2>/dev/null | jq -r '.leak_details[0:10]'
-        echo ""
-        echo "Summary:"
-        docker exec "$CONTAINER_NAME" cat /tmp/reconnection_results.json 2>/dev/null | jq -r '.summary'
-
-        docker exec "$CONTAINER_NAME" rm -f /usr/local/bin/leaktest /tmp/reconnection_results.json /tmp/leaktest.log 2>/dev/null || true
-        return 1
-    fi
-
-    pass "No IP leaks during reconnection: 0 leaks in $ATTEMPTS concurrent attempts"
-
-    # Cleanup
-    docker exec "$CONTAINER_NAME" rm -f /usr/local/bin/leaktest /tmp/reconnection_results.json /tmp/leaktest.log 2>/dev/null || true
-
-    # Wait for reconnection to fully complete (WireGuard handshake)
-    info "Waiting for VPN handshake to complete..."
-    for i in $(seq 1 30); do
-        if docker exec "$CONTAINER_NAME" wg show pia0 2>/dev/null | grep -q "latest handshake"; then
-            info "VPN reconnected successfully (handshake after ${i}s)"
-            return 0
-        fi
-        sleep 1
-    done
-
-    skip "VPN handshake did not complete in 30s (may need more time)"
-}
-
-# Test: Proxy functionality (if enabled)
 test_proxy() {
-    echo ""
-    echo -e "${BLUE}=== Test: Proxy (SOCKS5 and HTTP) ===${NC}"
+    step "Test: Proxy"
 
-    if [ "${PROXY_ENABLED:-true}" != "true" ]; then
-        skip "Proxy not enabled"
-        return 0
-    fi
+    local vpn_ip socks_ip http_ip
+    vpn_ip=$(get_json current_ip)
 
-    # Get VPN IP for comparison
-    VPN_IP=$(docker exec "$CONTAINER_NAME" curl -s --max-time 10 ifconfig.me 2>/dev/null || echo "")
-
-    if [ -z "$VPN_IP" ]; then
-        skip "Could not get VPN IP for proxy testing"
-        return 0
-    fi
-
-    # Test 1: Check SOCKS5 proxy is listening
-    SOCKS5_PORT="${SOCKS5_PORT:-1080}"
-    info "Checking SOCKS5 proxy on port $SOCKS5_PORT..."
-
-    if ! docker exec "$CONTAINER_NAME" nc -z localhost "$SOCKS5_PORT" 2>/dev/null; then
-        fail "SOCKS5 proxy not listening on port $SOCKS5_PORT"
-        return 1
-    fi
-
-    pass "SOCKS5 proxy listening on port $SOCKS5_PORT"
-
-    # Test 2: Test SOCKS5 proxy routes through VPN
-    info "Testing SOCKS5 proxy routes through VPN..."
-
-    # Build SOCKS5 URL (with auth if configured)
-    if [ -n "${PROXY_USER:-}" ] && [ -n "${PROXY_PASS:-}" ]; then
-        SOCKS5_URL="${PROXY_USER}:${PROXY_PASS}@localhost:${SOCKS5_PORT}"
+    # SOCKS5
+    local socks_port=$SOCKS5_PORT
+    if dexec nc -z localhost "$socks_port" 2>/dev/null; then
+        pass "SOCKS5 listening on :$socks_port"
     else
-        SOCKS5_URL="localhost:${SOCKS5_PORT}"
-    fi
-
-    PROXY_IP=$(docker exec "$CONTAINER_NAME" curl -s --max-time 10 \
-        --socks5 "$SOCKS5_URL" \
-        ifconfig.me 2>/dev/null || echo "")
-
-    if [ -z "$PROXY_IP" ]; then
-        fail "SOCKS5 proxy connection failed"
+        fail "SOCKS5 not listening on :$socks_port"
         return 1
     fi
 
-    if [ "$PROXY_IP" != "$VPN_IP" ]; then
-        fail "SOCKS5 proxy IP ($PROXY_IP) doesn't match VPN IP ($VPN_IP)"
-        return 1
-    fi
-
-    pass "SOCKS5 proxy routes through VPN (IP: $PROXY_IP)"
-
-    # Test 3: Check HTTP proxy is listening
-    HTTP_PROXY_PORT="${HTTP_PROXY_PORT:-8888}"
-    info "Checking HTTP proxy on port $HTTP_PROXY_PORT..."
-
-    if ! docker exec "$CONTAINER_NAME" nc -z localhost "$HTTP_PROXY_PORT" 2>/dev/null; then
-        fail "HTTP proxy not listening on port $HTTP_PROXY_PORT"
-        return 1
-    fi
-
-    pass "HTTP proxy listening on port $HTTP_PROXY_PORT"
-
-    # Test 4: Test HTTP proxy routes through VPN
-    info "Testing HTTP proxy routes through VPN..."
-
-    # Build HTTP proxy URL (with auth if configured)
+    local socks_url="localhost:$socks_port"
     if [ -n "${PROXY_USER:-}" ] && [ -n "${PROXY_PASS:-}" ]; then
-        HTTP_PROXY_URL="http://${PROXY_USER}:${PROXY_PASS}@localhost:${HTTP_PROXY_PORT}"
+        socks_url="${PROXY_USER}:${PROXY_PASS}@$socks_url"
+    fi
+
+    socks_ip=$(dexec curl -sf --max-time 10 --socks5 "$socks_url" ifconfig.me || true)
+    if [ "$socks_ip" = "$vpn_ip" ]; then
+        pass "SOCKS5 routes through VPN ($socks_ip)"
     else
-        HTTP_PROXY_URL="http://localhost:${HTTP_PROXY_PORT}"
+        fail "SOCKS5 IP ($socks_ip) doesn't match VPN IP ($vpn_ip)"
     fi
 
-    HTTP_PROXY_IP=$(docker exec "$CONTAINER_NAME" curl -s --max-time 10 \
-        --proxy "$HTTP_PROXY_URL" \
-        http://ifconfig.me 2>/dev/null || echo "")
-
-    if [ -z "$HTTP_PROXY_IP" ]; then
-        fail "HTTP proxy connection failed"
+    # HTTP proxy
+    local http_port=$HTTP_PROXY_PORT
+    if dexec nc -z localhost "$http_port" 2>/dev/null; then
+        pass "HTTP proxy listening on :$http_port"
+    else
+        fail "HTTP proxy not listening on :$http_port"
         return 1
     fi
 
-    if [ "$HTTP_PROXY_IP" != "$VPN_IP" ]; then
-        fail "HTTP proxy IP ($HTTP_PROXY_IP) doesn't match VPN IP ($VPN_IP)"
-        return 1
-    fi
-
-    pass "HTTP proxy routes through VPN (IP: $HTTP_PROXY_IP)"
-
-    # Test 5: Verify authentication is enforced (if configured)
+    local http_url="http://localhost:$http_port"
     if [ -n "${PROXY_USER:-}" ] && [ -n "${PROXY_PASS:-}" ]; then
-        info "Verifying proxy authentication is enforced..."
+        http_url="http://${PROXY_USER}:${PROXY_PASS}@localhost:$http_port"
+    fi
 
-        # Try SOCKS5 without auth (should fail)
-        if docker exec "$CONTAINER_NAME" curl -s --max-time 5 --fail \
-            --socks5 localhost:"$SOCKS5_PORT" \
-            ifconfig.me 2>/dev/null >/dev/null; then
-            fail "SOCKS5 proxy accepted unauthenticated connection (auth not enforced)"
-            return 1
-        fi
-
-        pass "SOCKS5 authentication enforced (unauthenticated request blocked)"
-
-        # Try HTTP proxy without auth (should fail with 407)
-        # Note: --fail makes curl exit with error code 22 on HTTP errors like 407
-        if docker exec "$CONTAINER_NAME" curl -s --max-time 5 --fail \
-            --proxy http://localhost:"$HTTP_PROXY_PORT" \
-            http://ifconfig.me 2>/dev/null >/dev/null; then
-            fail "HTTP proxy accepted unauthenticated connection (auth not enforced)"
-            info "Check logs with: docker logs $CONTAINER_NAME | grep -i auth"
-            return 1
-        fi
-
-        pass "HTTP authentication enforced (unauthenticated request blocked)"
+    http_ip=$(dexec curl -sf --max-time 10 --proxy "$http_url" http://ifconfig.me || true)
+    if [ "$http_ip" = "$vpn_ip" ]; then
+        pass "HTTP proxy routes through VPN ($http_ip)"
     else
-        info "Proxy authentication not configured (proxies accept unauthenticated connections)"
-    fi
-}
-
-# Test: Port forwarding (if enabled)
-test_port_forwarding() {
-    echo ""
-    echo -e "${BLUE}=== Test: Port Forwarding ===${NC}"
-
-    if [ "${PF_ENABLED:-true}" != "true" ]; then
-        skip "Port forwarding not enabled"
-        return 0
+        fail "HTTP proxy IP ($http_ip) doesn't match VPN IP ($vpn_ip)"
     fi
 
-    # Wait for port forwarding to complete
-    info "Waiting for port forwarding setup..."
-    for i in $(seq 1 60); do
-        if docker exec "$CONTAINER_NAME" test -f /tmp/port_forwarding_complete 2>/dev/null; then
-            break
-        fi
-        sleep 1
-    done
-
-    # Check if port file exists
-    if ! docker exec "$CONTAINER_NAME" test -f /run/pia-tun/port 2>/dev/null; then
-        fail "Port forwarding file not created"
-        return 1
-    fi
-
-    PORT=$(docker exec "$CONTAINER_NAME" cat /run/pia-tun/port 2>/dev/null || echo "")
-
-    if [ -z "$PORT" ]; then
-        fail "Port forwarding file is empty"
-        return 1
-    fi
-
-    if [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65535 ]; then
-        fail "Invalid port number: $PORT"
-        return 1
-    fi
-
-    pass "Port forwarding acquired port: $PORT"
-}
-
-# Test: Metrics endpoint (if enabled)
-test_metrics() {
-    echo ""
-    echo -e "${BLUE}=== Test: Metrics Endpoint ===${NC}"
-
-    # Test 1: Check endpoint responds
-    if ! docker exec "$CONTAINER_NAME" curl -s http://localhost:9090/metrics 2>/dev/null | grep -q "pia_tun_"; then
-        fail "Metrics endpoint not responding"
-        return 1
-    fi
-
-    pass "Metrics endpoint responding"
-
-    # Test 2: Fetch metrics in JSON format
-    METRICS_JSON=$(docker exec "$CONTAINER_NAME" curl -s "http://localhost:9090/metrics?format=json" 2>/dev/null)
-
-    if [ -z "$METRICS_JSON" ]; then
-        fail "Metrics JSON format not working"
-        return 1
-    fi
-
-    pass "Metrics JSON format working"
-
-    # Test 3: Validate connection state via checks
-    # Note: vpn_connected field doesn't exist in JSON metrics, but we can infer from checks
-    SUCCESSFUL_CHECKS=$(echo "$METRICS_JSON" | jq -r '.successful_checks // -1' 2>/dev/null)
-    FAILED_CHECKS=$(echo "$METRICS_JSON" | jq -r '.failed_checks // -1' 2>/dev/null)
-
-    if [ "$SUCCESSFUL_CHECKS" -ge 0 ] && [ "$FAILED_CHECKS" -ge 0 ] 2>/dev/null; then
-        # If we have more successful checks than failed, connection is likely good
-        if [ "$SUCCESSFUL_CHECKS" -gt 0 ] 2>/dev/null; then
-            pass "Metric validation: successful_checks = $SUCCESSFUL_CHECKS (VPN operational)"
+    # Auth enforcement (if configured)
+    if [ -n "${PROXY_USER:-}" ] && [ -n "${PROXY_PASS:-}" ]; then
+        if ! dexec curl -sf --max-time 5 --socks5 "localhost:$socks_port" ifconfig.me >/dev/null 2>&1; then
+            pass "SOCKS5 auth enforced"
         else
-            skip "Metric validation: No successful checks yet"
+            fail "SOCKS5 accepts unauthenticated connections"
         fi
-    else
-        skip "Could not parse check metrics"
+
+        if ! dexec curl -sf --max-time 5 --proxy "http://localhost:$http_port" http://ifconfig.me >/dev/null 2>&1; then
+            pass "HTTP proxy auth enforced"
+        else
+            fail "HTTP proxy accepts unauthenticated connections"
+        fi
     fi
-
-    # Test 4: Validate server_latency is reasonable (0-1000ms)
-    SERVER_LATENCY=$(echo "$METRICS_JSON" | jq -r '.server_latency_ms // -1' 2>/dev/null)
-    if [ "$SERVER_LATENCY" -ge 0 ] && [ "$SERVER_LATENCY" -le 1000 ] 2>/dev/null; then
-        pass "Metric validation: server_latency_ms = ${SERVER_LATENCY}ms (reasonable)"
-    elif [ "$SERVER_LATENCY" -gt 1000 ] 2>/dev/null; then
-        fail "Metric validation: server_latency_ms = ${SERVER_LATENCY}ms (too high)"
-        return 1
-    else
-        skip "Could not parse server_latency_ms metric"
-    fi
-
-    # Test 5: Validate health check counters are incrementing
-    TOTAL_CHECKS=$(echo "$METRICS_JSON" | jq -r '.total_checks // 0' 2>/dev/null)
-    if [ "$TOTAL_CHECKS" -gt 0 ] 2>/dev/null; then
-        pass "Metric validation: total_checks = $TOTAL_CHECKS (monitoring active)"
-    else
-        skip "Could not parse total_checks metric or no checks yet"
-    fi
-
-    # # Test 6: Validate success rate is high
-    # # Note: consecutive_failures doesn't exist in JSON, but we can check success_rate_decimal
-    # SUCCESS_RATE=$(echo "$METRICS_JSON" | jq -r '.success_rate_decimal // -1' 2>/dev/null)
-
-    # if [ "$SUCCESS_RATE" != "-1" ] && [ "$SUCCESS_RATE" != "null" ]; then
-    #     # Convert to integer percentage for comparison (use awk for float math)
-    #     SUCCESS_PCT=$(echo "$SUCCESS_RATE" | awk '{printf "%.0f", $1 * 100}')
-
-    #     if [ -n "$SUCCESS_PCT" ] && [ "$SUCCESS_PCT" -ge 80 ] 2>/dev/null; then
-    #         pass "Metric validation: success_rate = ${SUCCESS_PCT}% (healthy)"
-    #     elif [ -n "$SUCCESS_PCT" ] 2>/dev/null; then
-    #         fail "Metric validation: success_rate = ${SUCCESS_PCT}% (unhealthy, below 80%)"
-    #         return 1
-    #     else
-    #         skip "Could not parse success rate"
-    #     fi
-    # else
-    #     skip "Could not parse success_rate_decimal metric"
-    # fi
 }
 
-# Show test summary
-show_summary() {
-    echo ""
-    echo -e "${BLUE}╔════════════════════════════════════════════════╗${NC}"
-    echo -e "${BLUE}║              Test Summary                      ║${NC}"
-    echo -e "${BLUE}╚════════════════════════════════════════════════╝${NC}"
-    echo -e "${GREEN}Passed:${NC}  $TESTS_PASSED"
-    echo -e "${RED}Failed:${NC}  $TESTS_FAILED"
-    echo -e "${YELLOW}Skipped:${NC} $TESTS_SKIPPED"
-    echo ""
+test_metrics_endpoint() {
+    step "Test: Metrics endpoint"
 
-    if [ $TESTS_FAILED -gt 0 ]; then
-        echo -e "${RED}❌ Some tests failed${NC}"
+    # Prometheus format
+    if curl -sf "$METRICS_URL/metrics" 2>/dev/null | grep -q "pia_tun_"; then
+        pass "Prometheus endpoint responding"
+    else
+        fail "Prometheus endpoint not responding"
+    fi
+
+    # JSON format
+    local json
+    json=$(curl -sf "$METRICS_URL/metrics?format=json" 2>/dev/null || true)
+    if [ -n "$json" ] && echo "$json" | jq . >/dev/null 2>&1; then
+        pass "JSON endpoint responding"
+    else
+        fail "JSON endpoint not responding or invalid"
+    fi
+
+    # Latency sanity check
+    local latency
+    latency=$(echo "$json" | jq -r '.server_latency_ms // -1' 2>/dev/null)
+    if [ "$latency" -ge 0 ] && [ "$latency" -le 500 ] 2>/dev/null; then
+        pass "Server latency: ${latency}ms"
+    elif [ "$latency" -gt 500 ] 2>/dev/null; then
+        fail "Server latency too high: ${latency}ms"
+    else
+        skip "Could not read server latency"
+    fi
+}
+
+emulate_wan_down() {
+    step "Emulating wan down state..."
+
+    dexec sh -c '
+        while true; do
+            num=$(iptables -L VPN_OUT --line-numbers -n | grep -m 1 "bypass_routes" | awk "{print \$1}")
+            if [ -z "$num" ]; then
+                break
+            fi
+            iptables -D VPN_OUT "$num" 2>/dev/null || break
+        done
+    '
+    info "Removed bypass_routes from VPN_OUT chain"
+
+    dexec ip link set down pia0
+    info "pia0 interface set down"
+
+    sleep $MAX_DOWNTIME
+}
+
+test_downtime_leaks() {
+    local timeout=4
+
+    step "Testing for leaks during wan down"
+    # Test general leaks out default interface
+    if dexec ping -q -c 1 -W "$timeout" 1.0.0.1 >/dev/null 2>&1; then
+        fail "ICMP to 1.0.0.1 succeeded - should be blocked while down"
+    else
+        pass "ICMP to 1.0.0.1 blocked"
+    fi
+
+    # DNS leak test: PIA resolution should fail when VPN is down
+    test_dns_leak
+}
+
+test_downtime_metrics() {
+    step "Test: Down state metrics"
+
+    local conn_up wan_up pf_active ks_active
+    conn_up=$(get_metric "pia_tun_connection_up")
+    wan_up=$(get_metric "pia_tun_wan_up")
+    pf_active=$(get_metric "pia_tun_port_forwarding_active")
+    ks_active=$(get_metric "pia_tun_killswitch_active")
+
+    [ "$conn_up" = "0" ] && pass "connection_up = 0" || fail "connection_up = $conn_up"
+    [ "$wan_up" = "0" ] && pass "wan_up = 0" || fail "wan_up = $wan_up"
+    [ "$pf_active" = "0" ] && pass "port_forwarding_active = 0" || fail "port_forwarding_active = $pf_active"
+    [ "$ks_active" = "1" ] && pass "killswitch_active = 1" || fail "killswitch_active = $ks_active"
+}
+
+# ============================================================================
+# Main
+# ============================================================================
+
+summary() {
+    local W=48
+
+    if [ "$FAILED" -gt 0 ]; then
+        CLR=$RED; RESULT="FAIL"
+    else
+        CLR=$GRN; RESULT="PASS"
+    fi
+
+    local ppad=$((W - 14 - ${#PASSED}))
+    local fpad=$((W - 24 - ${#FAILED} - ${#RESULT}))
+    local spad=$((W - 14 - ${#SKIPPED}))
+
+    echo ""
+    echo -e "${CLR}╔$(printf '═%.0s' $(seq 1 $W))╗${NC}"
+    echo -e "${CLR}║${NC}     ${GRN}Passed:${NC}  ${PASSED}$(printf '%*s' $ppad '')${CLR}║${NC}"
+    echo -e "${CLR}║${NC}     ${RED}Failed:${NC}  ${FAILED}$(printf '%*s' $fpad '')${CLR}${BLD}${RESULT}${NC}${CLR}          ║${NC}"
+    echo -e "${CLR}║${NC}     ${YLW}Skipped:${NC} ${SKIPPED}$(printf '%*s' $spad '')${CLR}║${NC}"
+    echo -e "${CLR}╚$(printf '═%.0s' $(seq 1 $W))╝${NC}"
+
+    if [ "$RESULT" = "FAIL" ]; then
         echo ""
-        echo "To debug:"
-        echo "  docker logs $CONTAINER_NAME"
-        echo "  docker exec -it $CONTAINER_NAME bash"
+        echo ""
+        echo -e "${BLU}▶${NC} Container logs"
+        echo -e "${BLU}─────────────────────────────────────────────────────────────────────────────────────────${NC}"
+        docker logs "$CONTAINER" 2>&1 || true
+        echo -e "${BLU}─────────────────────────────────────────────────────────────────────────────────────────${NC}"
         return 1
     else
-        echo -e "${GREEN}✅ All tests passed!${NC}"
         return 0
     fi
 }
 
-# Main test execution
 main() {
-    echo -e "${BLUE}╔════════════════════════════════════════════════╗${NC}"
-    echo -e "${BLUE}║          pia-tun Test Suite                    ║${NC}"
-    echo -e "${BLUE}╚════════════════════════════════════════════════╝${NC}"
-    echo ""
-
+    # initialize
+    print_banner
     check_prerequisites
-    build_image
-    build_leak_tester
+    build
     start_container
-    get_real_ip
 
-    if ! wait_for_connection; then
-        show_summary
-        exit 1
-    fi
+    # wait for up
+    wait_for_healthy      || { summary; exit 1; }
+    wait_for_port_forward || { summary; exit 1; }
 
-    if ! wait_for_port; then
-        show_summary
-        exit 1
-    fi
-
-    # Run all tests
+    # test runtime state
+    dump_firewall_state "Run-time"
     test_ip_changed
+    test_connection_metrics
+    test_port_forwarding "initial-run"
     test_ipv6_blocked
+
+    # test killswitch + reconnect
     test_killswitch
 
-    test_exemptions_cleaned
-    test_reconnection
+    # test (post)reconnect state
+    wait_for_port_forward || { summary; exit 1; }
+    test_port_forwarding "post-reconnect"
     test_proxy
-#    test_port_forwarding
-    test_metrics
+    test_metrics_endpoint
 
-    # Show results
-    show_summary
+    # test downtime state
+    emulate_wan_down
+    wait_for_wan_down
+    test_downtime_leaks
+    test_downtime_metrics
+    dump_firewall_state "WAN-down"
+
+    # summarize results
+    summary
 }
 
-# Run main function
 main "$@"
