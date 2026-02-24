@@ -260,8 +260,8 @@ test_connection_metrics() {
     wan_up=$(get_metric "pia_tun_wan_up")
     ks_active=$(get_metric "pia_tun_killswitch_active")
     server_checks=$(get_metric "pia_tun_server_latency_seconds_count")
-    checks=$(get_json total_checks)
-    server=$(get_json current_server)
+    checks=$(get_json "health_checks_total")
+    server=$(get_json "current_server")
 
     [ "$conn_up" = "1" ] && pass "connection_up = 1" || fail "connection_up = $conn_up"
     [ "$wan_up" = "1" ] && pass "wan_up = 1" || fail "wan_up = $wan_up"

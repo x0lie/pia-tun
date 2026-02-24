@@ -38,9 +38,14 @@ type Metrics struct {
 	BytesTransmitted int64
 	ConnectedAt      time.Time
 
-	// Server performance tracking
-	ServerLatency int64
-	ServerUptime  time.Duration
+	// Status tracking (for JSON endpoint)
+	ServerLatency        int64
+	Version              string
+	ConnectionUp         bool
+	WANUp                bool
+	KillswitchActive     bool
+	PortForwardingActive bool
+	PortForwardingPort   int
 
 	mu sync.Mutex
 
@@ -60,9 +65,9 @@ type Metrics struct {
 	buildInfo *prometheus.GaugeVec
 
 	// New metrics
-	connectionUp     prometheus.Gauge
-	killswitchActive prometheus.Gauge
-	lastHandshake    prometheus.Gauge
+	connectionUp         prometheus.Gauge
+	killswitchActive     prometheus.Gauge
+	lastHandshake        prometheus.Gauge
 	portForwardingActive prometheus.Gauge
 	portForwardingPort   prometheus.Gauge
 
@@ -85,6 +90,8 @@ type Metrics struct {
 func New(cfg Config, version string) *Metrics {
 	m := &Metrics{
 		Config:      &cfg,
+		Version:     version,
+		WANUp:       true,
 		UptimeStart: time.Now(),
 	}
 
@@ -335,15 +342,6 @@ func (m *Metrics) RecordReconnect() {
 	m.reconnectsTotal.Inc()
 }
 
-func (m *Metrics) ResetSession() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.ConnectedAt = time.Now()
-	m.CurrentServer = ""
-	m.CurrentIP = ""
-}
-
 func (m *Metrics) RecordNewConnection(server, ip string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -359,11 +357,11 @@ func (m *Metrics) RecordNewConnection(server, ip string) {
 	m.vpnInfo.Reset()
 	m.vpnInfo.WithLabelValues(server, ip).Set(1)
 
-	m.ServerUptime = 0
 	m.sessionUptimeGauge.Set(float64(m.ConnectedAt.Unix()))
 }
 
 func (m *Metrics) UpdateConnectionStatus(connected bool) {
+	m.ConnectionUp = connected
 	if connected {
 		m.connectionUp.Set(1)
 	} else {
@@ -372,6 +370,7 @@ func (m *Metrics) UpdateConnectionStatus(connected bool) {
 }
 
 func (m *Metrics) UpdateKillswitchStatus(active bool) {
+	m.KillswitchActive = active
 	if active {
 		m.killswitchActive.Set(1)
 	} else {
@@ -380,6 +379,7 @@ func (m *Metrics) UpdateKillswitchStatus(active bool) {
 }
 
 func (m *Metrics) UpdateWANStatus(up bool) {
+	m.WANUp = up
 	if up {
 		m.wanUp.Set(1)
 	} else {
@@ -392,6 +392,8 @@ func (m *Metrics) UpdateLastHandshake(timestamp int64) {
 }
 
 func (m *Metrics) UpdatePortForwarding(active bool, port int) {
+	m.PortForwardingActive = active
+	m.PortForwardingPort = port
 	if active {
 		m.portForwardingActive.Set(1)
 	} else {
@@ -446,31 +448,39 @@ func (m *Metrics) GetStats() map[string]interface{} {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	uptime := time.Since(m.UptimeStart)
-	successRate := float64(0)
+	containerUptime := time.Since(m.UptimeStart)
+	var sessionUptime time.Duration
+	if !m.ConnectedAt.IsZero() {
+		sessionUptime = time.Since(m.ConnectedAt)
+	}
+	var successRate string
 	if m.TotalChecks > 0 {
-		successRate = float64(m.SuccessfulChecks) / float64(m.TotalChecks) * 100
+		successRate = fmt.Sprintf("%.2f%%", float64(m.SuccessfulChecks)/float64(m.TotalChecks)*100)
+	} else {
+		successRate = "N/A"
 	}
 
 	return map[string]interface{}{
-		"total_checks":            m.TotalChecks,
-		"successful_checks":       m.SuccessfulChecks,
-		"failed_checks":           m.FailedChecks,
-		"success_rate":            fmt.Sprintf("%.2f%%", successRate),
-		"success_rate_decimal":    successRate / 100,
-		"total_reconnects":        m.TotalReconnects,
-		"uptime_seconds":          int(uptime.Seconds()),
-		"uptime_formatted":        log.FormatDuration(uptime),
-		"last_check":              m.LastCheckTime.Format("2006-01-02 15:04:05"),
-		"last_check_duration_ms":  m.LastCheckDuration.Milliseconds(),
-		"current_server":          m.CurrentServer,
-		"current_ip":              m.CurrentIP,
-		"bytes_received":          m.BytesReceived,
-		"bytes_transmitted":       m.BytesTransmitted,
-		"total_bytes":             m.BytesReceived + m.BytesTransmitted,
-		"server_latency_ms":       m.ServerLatency,
-		"server_uptime_seconds":   int(m.ServerUptime.Seconds()),
-		"server_uptime_formatted": log.FormatDuration(m.ServerUptime),
+		"version":                    m.Version,
+		"connection_up":              m.ConnectionUp,
+		"wan_up":                     m.WANUp,
+		"killswitch_active":          m.KillswitchActive,
+		"current_server":             m.CurrentServer,
+		"current_ip":                 m.CurrentIP,
+		"session_uptime":             log.FormatDuration(sessionUptime),
+		"container_uptime":           log.FormatDuration(containerUptime),
+		"server_latency_ms":          m.ServerLatency,
+		"bytes_received":             m.BytesReceived,
+		"bytes_transmitted":          m.BytesTransmitted,
+		"bytes_total":                m.BytesReceived + m.BytesTransmitted,
+		"port_forwarding_active":     m.PortForwardingActive,
+		"port_forwarding_port":       m.PortForwardingPort,
+		"reconnects_total":           m.TotalReconnects,
+		"health_checks_total":        m.TotalChecks,
+		"health_checks_successful":   m.SuccessfulChecks,
+		"health_checks_failed":       m.FailedChecks,
+		"health_checks_success_rate": successRate,
+		"health_checks_latency_ms":   m.LastCheckDuration.Milliseconds(),
 	}
 }
 
