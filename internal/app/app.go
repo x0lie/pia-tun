@@ -199,7 +199,7 @@ func (a *App) connect(ctx context.Context) error {
 	a.connInfo = connInfo
 	a.log.Debug("Connected to %s (%s) in %s, latency %dms",
 		connInfo.ServerCN, connInfo.ServerIP, connInfo.Location, connInfo.Latency.Milliseconds())
-	a.metrics.RecordNewConnection("pia0", connInfo.ServerCN, connInfo.ServerIP)
+	a.metrics.RecordNewConnection(connInfo.ServerCN, connInfo.ServerIP)
 	if err := a.fw.AddPFRoute(a.cfg.PF.Enabled, a.connInfo.PFGateway); err != nil {
 		log.Warning(fmt.Sprintf("Failed to add PF gateway route: %v", err))
 	}

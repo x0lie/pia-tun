@@ -49,10 +49,10 @@ type Metrics struct {
 	healthChecksSuccess    prometheus.Counter
 	reconnectsTotal        prometheus.Counter
 	checkDurationHistogram prometheus.Histogram
-	bytesReceivedTotal     *prometheus.CounterVec
-	bytesTransmittedTotal  *prometheus.CounterVec
+	bytesReceivedTotal     prometheus.Counter
+	bytesTransmittedTotal  prometheus.Counter
 	serverLatencyHistogram prometheus.Histogram
-	sessionUptimeGauge     *prometheus.GaugeVec
+	sessionUptimeGauge     prometheus.Gauge
 	vpnInfo                *prometheus.GaugeVec
 	wanUp                  prometheus.Gauge
 
@@ -60,9 +60,9 @@ type Metrics struct {
 	buildInfo *prometheus.GaugeVec
 
 	// New metrics
-	connectionUp         *prometheus.GaugeVec
-	killswitchActive     prometheus.Gauge
-	lastHandshake        *prometheus.GaugeVec
+	connectionUp     prometheus.Gauge
+	killswitchActive prometheus.Gauge
+	lastHandshake    prometheus.Gauge
 	portForwardingActive prometheus.Gauge
 	portForwardingPort   prometheus.Gauge
 
@@ -112,21 +112,15 @@ func New(cfg Config, version string) *Metrics {
 		},
 	})
 
-	m.bytesReceivedTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "pia_tun_bytes_received_total",
-			Help: "Total bytes received through VPN",
-		},
-		[]string{"interface"},
-	)
+	m.bytesReceivedTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "pia_tun_bytes_received_total",
+		Help: "Total bytes received through VPN",
+	})
 
-	m.bytesTransmittedTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "pia_tun_bytes_transmitted_total",
-			Help: "Total bytes transmitted through VPN",
-		},
-		[]string{"interface"},
-	)
+	m.bytesTransmittedTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "pia_tun_bytes_transmitted_total",
+		Help: "Total bytes transmitted through VPN",
+	})
 
 	m.serverLatencyHistogram = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name: "pia_tun_server_latency_seconds",
@@ -136,20 +130,17 @@ func New(cfg Config, version string) *Metrics {
 		},
 	})
 
-	m.sessionUptimeGauge = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "pia_tun_session_start_timestamp_seconds",
-			Help: "Unix timestamp when current VPN session started",
-		},
-		[]string{"interface"},
-	)
+	m.sessionUptimeGauge = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "pia_tun_session_start_timestamp_seconds",
+		Help: "Unix timestamp when current VPN session started",
+	})
 
 	m.vpnInfo = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "pia_tun_info",
 			Help: "VPN connection information (server and IP as labels)",
 		},
-		[]string{"interface", "server", "ip"},
+		[]string{"server", "ip"},
 	)
 
 	m.wanUp = prometheus.NewGauge(prometheus.GaugeOpts{
@@ -165,26 +156,20 @@ func New(cfg Config, version string) *Metrics {
 		[]string{"version"},
 	)
 
-	m.connectionUp = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "pia_tun_connection_up",
-			Help: "VPN connection status (1=up, 0=down)",
-		},
-		[]string{"interface"},
-	)
+	m.connectionUp = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "pia_tun_connection_up",
+		Help: "VPN connection status (1=up, 0=down)",
+	})
 
 	m.killswitchActive = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "pia_tun_killswitch_active",
 		Help: "Killswitch status (1=active, 0=inactive)",
 	})
 
-	m.lastHandshake = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "pia_tun_last_handshake_timestamp_seconds",
-			Help: "Unix timestamp of last WireGuard handshake",
-		},
-		[]string{"interface"},
-	)
+	m.lastHandshake = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "pia_tun_last_handshake_timestamp_seconds",
+		Help: "Unix timestamp of last WireGuard handshake",
+	})
 
 	m.portForwardingActive = prometheus.NewGauge(
 		prometheus.GaugeOpts{
@@ -308,26 +293,26 @@ func (m *Metrics) RecordCheck(success bool, duration time.Duration) {
 	m.checkDurationHistogram.Observe(duration.Seconds())
 }
 
-func (m *Metrics) UpdateTransferBytes(iface string, rx, tx int64) {
+func (m *Metrics) UpdateTransferBytes(rx, tx int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if rx >= m.BytesReceived {
 		delta := rx - m.BytesReceived
 		if delta > 0 {
-			m.bytesReceivedTotal.WithLabelValues(iface).Add(float64(delta))
+			m.bytesReceivedTotal.Add(float64(delta))
 		}
 	} else {
-		m.bytesReceivedTotal.WithLabelValues(iface).Add(float64(rx))
+		m.bytesReceivedTotal.Add(float64(rx))
 	}
 
 	if tx >= m.BytesTransmitted {
 		delta := tx - m.BytesTransmitted
 		if delta > 0 {
-			m.bytesTransmittedTotal.WithLabelValues(iface).Add(float64(delta))
+			m.bytesTransmittedTotal.Add(float64(delta))
 		}
 	} else {
-		m.bytesTransmittedTotal.WithLabelValues(iface).Add(float64(tx))
+		m.bytesTransmittedTotal.Add(float64(tx))
 	}
 
 	m.BytesReceived = rx
@@ -359,7 +344,7 @@ func (m *Metrics) ResetSession() {
 	m.CurrentIP = ""
 }
 
-func (m *Metrics) RecordNewConnection(iface, server, ip string) {
+func (m *Metrics) RecordNewConnection(server, ip string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -372,17 +357,17 @@ func (m *Metrics) RecordNewConnection(iface, server, ip string) {
 	m.CurrentIP = ip
 
 	m.vpnInfo.Reset()
-	m.vpnInfo.WithLabelValues(iface, server, ip).Set(1)
+	m.vpnInfo.WithLabelValues(server, ip).Set(1)
 
 	m.ServerUptime = 0
-	m.sessionUptimeGauge.WithLabelValues(iface).Set(float64(m.ConnectedAt.Unix()))
+	m.sessionUptimeGauge.Set(float64(m.ConnectedAt.Unix()))
 }
 
-func (m *Metrics) UpdateConnectionStatus(iface string, connected bool) {
+func (m *Metrics) UpdateConnectionStatus(connected bool) {
 	if connected {
-		m.connectionUp.WithLabelValues(iface).Set(1)
+		m.connectionUp.Set(1)
 	} else {
-		m.connectionUp.WithLabelValues(iface).Set(0)
+		m.connectionUp.Set(0)
 	}
 }
 
@@ -402,8 +387,8 @@ func (m *Metrics) UpdateWANStatus(up bool) {
 	}
 }
 
-func (m *Metrics) UpdateLastHandshake(iface string, timestamp int64) {
-	m.lastHandshake.WithLabelValues(iface).Set(float64(timestamp))
+func (m *Metrics) UpdateLastHandshake(timestamp int64) {
+	m.lastHandshake.Set(float64(timestamp))
 }
 
 func (m *Metrics) UpdatePortForwarding(active bool, port int) {

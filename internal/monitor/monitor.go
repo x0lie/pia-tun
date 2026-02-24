@@ -206,13 +206,12 @@ func (m *Monitor) performCheck() {
 
 func (m *Monitor) updateMetrics(result *HealthCheckResult, healthy bool) {
 	if m.metrics.Enabled() {
-		const iface = "pia0"
 		rx, tx, _ := m.getTransferBytes()
 
-		m.metrics.UpdateTransferBytes(iface, rx, tx)
-		m.metrics.UpdateConnectionStatus(iface, healthy && result.InterfaceUp && result.Connectivity)
+		m.metrics.UpdateTransferBytes(rx, tx)
+		m.metrics.UpdateConnectionStatus(healthy && result.InterfaceUp && result.Connectivity)
 		m.metrics.UpdateKillswitchStatus(m.isKillswitchActive())
-		m.metrics.UpdateLastHandshake(iface, m.getLastHandshake())
+		m.metrics.UpdateLastHandshake(m.getLastHandshake())
 
 		pktsIn, bytesIn, pktsOut, bytesOut := m.getKillswitchDropStats()
 		m.metrics.UpdateKillswitchDrops(pktsIn, bytesIn, pktsOut, bytesOut)
