@@ -232,10 +232,15 @@ func New(cfg Config, version string) *Metrics {
 		),
 	))
 
-	registerer := prometheus.WrapRegistererWith(
-		prometheus.Labels{"name": cfg.Name},
-		m.registry,
-	)
+	var registerer prometheus.Registerer
+	if cfg.Name != "" {
+		registerer = prometheus.WrapRegistererWith(
+			prometheus.Labels{"name": cfg.Name},
+			m.registry,
+		)
+	} else {
+		registerer = m.registry
+	}
 
 	registerer.MustRegister(
 		m.healthChecksTotal,
