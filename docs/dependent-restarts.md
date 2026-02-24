@@ -1,44 +1,23 @@
-**1. Port File Monitoring**
+# Restarting Brittle Dependents on Port Changes
 
-Watch the port file for changes:
-```bash
-# Using inotifywait
-inotifywait -m /run/pia-tun/port | while read; do
-    NEW_PORT=$(cat /run/pia-tun/port)
-    echo "Port changed to: $NEW_PORT"
-    # Restart your service or update configuration
-done
-```
+Most torrent clients support live port updates via API — use `PS_CLIENT` or `PS_SCRIPT` for these (see README). This page covers the rare case where a dependent has no usable API and requires a full container restart when the forwarded port changes (e.g., rtorrent).
 
-**2. Webhook Integration**
+## The Problem
 
-Use `PS_CMD` to POST to your own webhook service with {PORT}:
-```yaml
-environment:
-  - PS_CMD=curl -s "http://localhost:8081/api/v2/app/setPreferences" --data "json={\"listen_port\":{PORT}}"
-```
+`PS_SCRIPT` runs inside the pia-tun container and can do most things — update config files on shared volumes, hit API endpoints, write to files. However, it cannot restart other containers without mounting the Docker socket, which is not recommended for security reasons.
 
-Your chosen API receives a POST request when the port changes, allowing you to:
-- Restart dependent containers (via Docker API)
-- Update load balancer configuration
-- Trigger custom automation
+Restarting a Docker container requires Docker socket access. Something outside of pia-tun should do it.
 
-**3. Docker Compose Healthcheck**
+## Options
 
-For coordinating initial startup only (not for liveness monitoring):
-```yaml
-services:
-  pia-tun:
-    healthcheck:
-      test: ["CMD", "test", "-f", "/tmp/killswitch_up"]
-      interval: 5s
-      timeout: 3s
-      retries: 3
-      start_period: 30s
+- **Host-side file watcher** — A script on the host watches `PORT_FILE` (on a shared volume) with `inotifywait` and runs `docker restart` when it changes. Simple and keeps the Docker socket on the host where it belongs.
 
-  dependent:
-    network_mode: "service:pia-tun"
-    depends_on:
-      pia-tun:
-        condition: service_healthy
-```
+- **PS_SCRIPT + shared volume** — Use `PS_SCRIPT` to write the new port into the dependent's config file on a shared volume. Combine with a host-side watcher or the dependent's own config reload mechanism if it has one.
+
+- **PS_SCRIPT + webhook** — Use `PS_SCRIPT` to hit a webhook endpoint on a sidecar or host service that has the permissions to restart the dependent.
+
+- **rtorrent.rc scheduler** — rtorrent can periodically read the port from a file using a scheduled command in `rtorrent.rc`. Whether this takes effect without a restart is [debated](https://github.com/crazy-max/docker-rtorrent-rutorrent/discussions/335).
+
+## Recommendation
+
+If possible, switch to a client with API support (qBittorrent, Transmission, Deluge) and use `PS_CLIENT`. These work out of the box with no scripting required.

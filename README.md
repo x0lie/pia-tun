@@ -78,7 +78,7 @@ See [`docs/docker-compose-examples/`](docs/docker-compose-examples/) for more ty
 - Do NOT use health-based restart policies
 - Use `network_mode: "service:pia-tun"` for dependents
 - Use `depends_on: pia-tun` for dependents
-- Use `PS_CLIENT` for easy port syncing to dependents
+- Use `PS_CLIENT` for easy port syncing to dependents or `PS_SCRIPT` for custom endpoints
 - Access from containers + LAN usually requires `LOCAL_NETWORKS=auto,192.168.1.0/24` or similar
 
 ## Configuration
@@ -105,15 +105,15 @@ See [`docs/docker-compose-examples/`](docs/docker-compose-examples/) for more ty
 
 ### Port Forwarding & Syncing
 
-| Variable     | Description                                                                                                 | Default             |
-|--------------|-------------------------------------------------------------------------------------------------------------|---------------------|
-| `PF_ENABLED` | Enable PIA port forwarding. Automatically enabled when `PS_CLIENT` or `PS_CMD` is set.                      | `false`             |
-| `PS_CLIENT`  | Client type: `qbittorrent`, `transmission`, `deluge`                                                        | None                |
-| `PS_URL`     | `PS_CLIENT` API endpoint. Auto-set to localhost:{default-port} based on PS_CLIENT setting.                  | Auto                |
-| `PS_USER`    | Client API username                                                                                         | None                |
-| `PS_PASS`    | Client API password                                                                                         | None                |
-| `PS_CMD`     | Custom command for port updates (use `{PORT}` placeholder). Can be used alongside or instead of `PS_CLIENT` | None                |
-| `PORT_FILE`  | File to write forwarded port                                                                                | `/run/pia-tun/port` |
+| Variable     | Description                                                                                                           | Default             |
+|--------------|-----------------------------------------------------------------------------------------------------------------------|---------------------|
+| `PF_ENABLED` | Enable PIA port forwarding. Automatically enabled when `PS_CLIENT` or `PS_SCRIPT` is set.                             | `false`             |
+| `PS_CLIENT`  | Client type: `qbittorrent`, `transmission`, `deluge`                                                                  | None                |
+| `PS_URL`     | `PS_CLIENT` API endpoint. Auto-set to localhost:{default-port} based on PS_CLIENT setting.                            | Auto                |
+| `PS_USER`    | Client API username                                                                                                   | None                |
+| `PS_PASS`    | Client API password                                                                                                   | None                |
+| `PS_SCRIPT`  | Custom script executed after port refresh (use `{PORT}` placeholder). Can be used alongside or instead of `PS_CLIENT` | None                |
+| `PORT_FILE`  | File to write forwarded port                                                                                          | `/run/pia-tun/port` |
 
 ### Proxy Settings
 
@@ -196,26 +196,20 @@ services:
       - pia-tun
 ```
 
-Do NOT use livenessProbes or docker restart policies. These will restart pia-tun unnecessarily and fail to restart dependents, leaving them in a broken or even leaking state.
+Do NOT use livenessProbes or docker restart policies. Docker restart policies will restart pia-tun unnecessarily and fail to restart dependents, leaving them in a broken or even leaking state.
 
-#### Custom Port Update Commands
+#### Custom Port Update Script
 
-Execute custom commands when the port changes using `PS_CMD`. This works independently or alongside `PS_CLIENT`:
+Execute custom scripts when the forwarded port changes using `PS_SCRIPT`. This works independently of `PS_CLIENT` (you can use both).
+Can be useful as a webhook, or to update clients not supported by `PS_CLIENT`. Script will be retried indefinitely until success, like with `PS_CLIENT`.
 
-**Option 1: Custom command only**
+**Using PS_SCRIPT**:
 ```yaml
 environment:
-  - PS_CMD=/path/to/script.sh {PORT}
+  - PS_SCRIPT=/app/scripts/your-script.sh {PORT}
+volumes:
+  - ./your-script.sh:/app/scripts/your-script.sh
 ```
-
-**Option 2: Both client sync AND custom command**
-```yaml
-environment:
-  - PS_CLIENT=qbittorrent
-  - PS_CMD=/path/to/notify-webhook.sh {PORT}
-```
-
-The `{PORT}` placeholder is replaced with the forwarded port number. When a new port is obtained, the command retries indefinitely until successful.
 
 ## Troubleshooting
 

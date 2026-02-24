@@ -18,19 +18,19 @@ type Config struct {
 	URL    string
 	User   string
 	Pass   string
-	Cmd    string
+	Script string
 }
 
 type Syncer struct {
 	client Client
-	cmd    string
+	script string
 	log    *log.Logger
 	portCh chan int
 }
 
 func New(cfg Config) *Syncer {
 	s := &Syncer{
-		cmd:    cfg.Cmd,
+		script: cfg.Script,
 		log:    log.New("portsync"),
 		portCh: make(chan int, 1),
 	}
@@ -78,11 +78,11 @@ func (s *Syncer) Run(ctx context.Context) error {
 
 func (s *Syncer) handleNewPort(ctx context.Context, port int) {
 	clientOK := s.client == nil // true if no client configured (nothing to do)
-	cmdOK := s.cmd == ""        // true if no cmd configured
+	scriptOK := s.script == ""  // true if no script configured
 
 	// Initial attempt
-	clientOK, cmdOK = s.trySync(ctx, port, clientOK, cmdOK)
-	if clientOK && cmdOK {
+	clientOK, scriptOK = s.trySync(ctx, port, clientOK, scriptOK)
+	if clientOK && scriptOK {
 		return
 	}
 
@@ -90,8 +90,8 @@ func (s *Syncer) handleNewPort(ctx context.Context, port int) {
 	if s.client != nil && !clientOK {
 		log.Warning(fmt.Sprintf("%s not reachable, will retry", s.client.Name()))
 	}
-	if s.cmd != "" && !cmdOK {
-		log.Warning("port sync command failed, will retry")
+	if s.script != "" && !scriptOK {
+		log.Warning("port-sync script failed, will retry")
 	}
 
 	// Retry loop — exits on success, new port, or context cancellation
@@ -107,8 +107,8 @@ func (s *Syncer) handleNewPort(ctx context.Context, port int) {
 			s.handleNewPort(ctx, newPort)
 			return
 		case <-timer.C:
-			clientOK, cmdOK = s.trySync(ctx, port, clientOK, cmdOK)
-			if clientOK && cmdOK {
+			clientOK, scriptOK = s.trySync(ctx, port, clientOK, scriptOK)
+			if clientOK && scriptOK {
 				return
 			}
 			timer.Reset(30 * time.Second)
@@ -117,7 +117,7 @@ func (s *Syncer) handleNewPort(ctx context.Context, port int) {
 }
 
 // trySync attempts sync for only the methods that haven't succeeded yet.
-func (s *Syncer) trySync(ctx context.Context, port int, clientOK, cmdOK bool) (bool, bool) {
+func (s *Syncer) trySync(ctx context.Context, port int, clientOK, scriptOK bool) (bool, bool) {
 	if s.client != nil && !clientOK {
 		if err := s.client.SyncPort(ctx, port); err != nil {
 			s.log.Debug("%s sync failed: %v", s.client.Name(), err)
@@ -127,17 +127,16 @@ func (s *Syncer) trySync(ctx context.Context, port int, clientOK, cmdOK bool) (b
 		}
 	}
 
-	if s.cmd != "" && !cmdOK {
-		if err := executeCommand(ctx, s.cmd, port, s.log); err != nil {
-			s.log.Debug("command failed: %v", err)
+	if s.script != "" && !scriptOK {
+		if err := executeScript(ctx, s.script, port, s.log); err != nil {
+			s.log.Debug("script failed: %v", err)
 		} else {
-			log.Success(fmt.Sprintf("[%s] port sync command completed",
-				time.Now().Format("2006-01-02 15:04:05")))
-			cmdOK = true
+			log.Success("port-sync script successful")
+			scriptOK = true
 		}
 	}
 
-	return clientOK, cmdOK
+	return clientOK, scriptOK
 }
 
 func normalizeClient(ct string) string {

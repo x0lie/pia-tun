@@ -289,7 +289,7 @@ func (a *App) runServices(ctx context.Context, reconnectCh chan struct{}) error 
 	})
 
 	syncer := portsync.New(a.cfg.PS)
-	if a.cfg.PS.Client != "" || a.cfg.PS.Cmd != "" {
+	if a.cfg.PS.Client != "" || a.cfg.PS.Script != "" {
 		g.Go(func() error {
 			return syncer.Run(gCtx)
 		})

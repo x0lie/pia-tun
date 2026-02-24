@@ -109,7 +109,7 @@ func loadPSConfig() portsync.Config {
 		URL:    getEnv("PS_URL", ""),
 		User:   getEnvOrSecret("PS_USER", ""),
 		Pass:   getEnvOrSecret("PS_PASS", ""),
-		Cmd:    getEnv("PS_CMD", ""),
+		Script: getEnv("PS_SCRIPT", ""),
 	}
 }
 
@@ -190,8 +190,7 @@ func parseLogLevel(level string) int {
 }
 
 func setupAutoEnable() {
-	if os.Getenv("PS_CLIENT") != "" || os.Getenv("PS_CMD") != "" {
-		os.Setenv("PS_ENABLED", "true")
+	if os.Getenv("PS_CLIENT") != "" || os.Getenv("PS_SCRIPT") != "" {
 		os.Setenv("PF_ENABLED", "true")
 	}
 }
@@ -210,7 +209,7 @@ func (a *App) logConfig() {
 	a.log.Debug("  PORT_FILE=%s", a.cfg.PF.PortFile)
 	a.log.Debug("  PS_CLIENT=%s", a.cfg.PS.Client)
 	a.log.Debug("  PS_URL=%s", a.cfg.PS.URL)
-	a.log.Debug("  PS_CMD=%s", a.cfg.PS.Cmd)
+	a.log.Debug("  PS_SCRIPT=%s", a.cfg.PS.Script)
 	a.log.Debug("  PROXY_ENABLED=%v", a.cfg.Proxy.Enabled)
 	a.log.Debug("  SOCKS5_PORT=%d", a.cfg.Proxy.Socks5Port)
 	a.log.Debug("  HTTP_PROXY_PORT=%v", a.cfg.Proxy.HTTPPort)
