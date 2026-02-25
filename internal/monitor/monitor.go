@@ -144,7 +144,7 @@ func (m *Monitor) performCheck() {
 	result, err := m.checkVPNHealth(normalTimeout)
 
 	m.setHealthStatus(err == nil)
-	m.updateMetrics(result, err == nil)
+	m.updateMetrics()
 
 	if m.metrics.Enabled() {
 		m.metrics.RecordCheck(err == nil, result.CheckDuration)
@@ -172,10 +172,10 @@ func (m *Monitor) performCheck() {
 				break
 			}
 
-			rapidResult, rapidErr := m.checkVPNHealth(rapidTimeout)
+			_, rapidErr := m.checkVPNHealth(rapidTimeout)
 
 			m.setHealthStatus(rapidErr == nil)
-			m.updateMetrics(rapidResult, rapidErr == nil)
+			m.updateMetrics()
 
 			if rapidErr == nil {
 				m.log.Debug("Connectivity recovered during rapid checks")
@@ -204,12 +204,11 @@ func (m *Monitor) performCheck() {
 	}
 }
 
-func (m *Monitor) updateMetrics(result *HealthCheckResult, healthy bool) {
+func (m *Monitor) updateMetrics() {
 	if m.metrics.Enabled() {
 		rx, tx, _ := m.getTransferBytes()
 
 		m.metrics.UpdateTransferBytes(rx, tx)
-		m.metrics.UpdateConnectionStatus(healthy && result.InterfaceUp && result.Connectivity)
 		m.metrics.UpdateKillswitchStatus(m.isKillswitchActive())
 		m.metrics.UpdateLastHandshake(m.getLastHandshake())
 

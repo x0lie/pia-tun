@@ -74,6 +74,7 @@ func Run(ctx context.Context) error {
 		return err
 	}
 
+	a.metrics.UpdateConnectionStatus(true)
 	reconnectCh := make(chan struct{}, 1)
 
 	// Permanent services (persist across reconnects, use parent ctx)
@@ -90,6 +91,7 @@ func Run(ctx context.Context) error {
 			return nil // graceful shutdown (SIGTERM)
 		}
 
+		a.metrics.UpdateConnectionStatus(false)
 		if errors.Is(err, ErrReconnect) {
 			a.log.Debug("Services requested reconnect")
 
@@ -103,6 +105,7 @@ func Run(ctx context.Context) error {
 			if err := a.connectLoop(ctx); err != nil {
 				return err
 			}
+			a.metrics.UpdateConnectionStatus(true)
 			continue
 		}
 
