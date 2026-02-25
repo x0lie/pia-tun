@@ -15,7 +15,6 @@ import (
 type Config struct {
 	Enabled              bool
 	BindInterval         time.Duration
-	SignatureRefreshDays int
 	SignatureSafetyHours int
 	PortFile             string
 }
@@ -42,7 +41,6 @@ func Run(ctx context.Context, cfg *Config, connCfg *ConnectionConfig, onReconnec
 
 	logger.Debug("Port forwarding configuration:")
 	logger.Debug("  BIND_INTERVAL=%v (%dmin)", cfg.BindInterval, int(cfg.BindInterval.Minutes()))
-	logger.Debug("  SIGNATURE_REFRESH_DAYS=%d", cfg.SignatureRefreshDays)
 	logger.Debug("  SIGNATURE_SAFETY_HOURS=%d", cfg.SignatureSafetyHours)
 	logger.Debug("  PF_GATEWAY=%s", connCfg.PFGateway)
 	logger.Debug("  TOKEN length: %d", len(connCfg.Token))

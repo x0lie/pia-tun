@@ -76,6 +76,13 @@ func Warning(msg string) {
 	fmt.Printf("  %s\u26a0%s %s\n", ColorYellow, ColorReset, msg)
 }
 
+func Refreshed(msg string) {
+	if Level < 1 {
+		return
+	}
+	fmt.Printf("  %s\u21bb%s %s\n", ColorBlue, ColorReset, msg)
+}
+
 // FormatDuration formats a duration into a human-readable string.
 func FormatDuration(d time.Duration) string {
 	days := int(d.Hours()) / 24

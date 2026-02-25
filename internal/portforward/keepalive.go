@@ -130,16 +130,19 @@ func (m *KeepaliveManager) initialSetup(ctx context.Context) error {
 
 	secondsUntilExpiry := int(time.Until(expiresAt).Seconds())
 	daysUntilExpiry := secondsUntilExpiry / 86400
-	expiryDate := expiresAt.Format("2006-01-02 15:04:05")
+	renewalTime := expiresAt.Add(-time.Duration(m.config.SignatureSafetyHours) * time.Hour)
+	daysUntilRenewal := int(time.Until(renewalTime).Hours()) / 24
+	renewalDate := renewalTime.Format("2006-01-02")
 
 	m.log.Debug("Expiration info: %d seconds (%d days)", secondsUntilExpiry, daysUntilExpiry)
-	log.Success(fmt.Sprintf("Expires: %s (%d days)", expiryDate, daysUntilExpiry))
-	log.Success(fmt.Sprintf("Keep-alive: Bind refresh every %d minutes", int(m.config.BindInterval.Minutes())))
+	log.Success(fmt.Sprintf("Renews: %s (%d days)", renewalDate, daysUntilRenewal))
 
-	if m.config.SignatureRefreshDays > 0 {
-		log.Success(fmt.Sprintf("Signature refresh: Every %d days", m.config.SignatureRefreshDays))
-	} else {
-		m.log.Debug("Signature refresh disabled (SIGNATURE_REFRESH_DAYS=0, testing mode)")
+	if m.config.BindInterval != 900*time.Second {
+		log.Success(fmt.Sprintf("Keep-alive: Bind refresh every %d minutes", int(m.config.BindInterval.Minutes())))
+	}
+
+	if m.config.SignatureSafetyHours != 6 {
+		log.Success(fmt.Sprintf("Signature safety hours: %d hours", m.config.SignatureSafetyHours))
 	}
 
 	m.log.Debug("Main loop initialized:")
@@ -177,12 +180,6 @@ func (m *KeepaliveManager) keepaliveLoop(ctx context.Context) error {
 
 			needNewSignature := false
 			reason := ""
-
-			if timeSinceSignature >= time.Duration(m.config.SignatureRefreshDays)*24*time.Hour {
-				needNewSignature = true
-				reason = fmt.Sprintf("scheduled refresh (%d-day interval)", m.config.SignatureRefreshDays)
-				m.log.Debug("Signature refresh trigger: %s", reason)
-			}
 
 			safetyThreshold := time.Duration(m.config.SignatureSafetyHours) * time.Hour
 			if time.Until(m.state.ExpiresAt) <= safetyThreshold {
@@ -309,9 +306,11 @@ func (m *KeepaliveManager) refreshSignature(ctx context.Context) error {
 	if portChanged {
 		m.log.Debug("Port changed: %d -> %d", oldPort, newPort)
 
-		currentTime := time.Now()
+		renewalTime := newExpiresAt.Add(-time.Duration(m.config.SignatureSafetyHours) * time.Hour)
+		renewalDate := renewalTime.Format("2006-01-02")
+
 		log.Info("")
-		log.Info(fmt.Sprintf("%s\u21bb%s [%s] New Signature with Port: %s%d%s", log.ColorBlue, log.ColorReset, currentTime.Format("01-02 15:04"), log.ColorGreen, newPort, log.ColorReset))
+		log.Refreshed(fmt.Sprintf("Port renewed: %s%s%d%s (renews %s)", log.ColorGreen, log.ColorBold, newPort, log.ColorReset, renewalDate))
 
 		m.log.Debug("Writing new port to %s", m.config.PortFile)
 		os.WriteFile(m.config.PortFile, []byte(fmt.Sprintf("%d", newPort)), 0644)

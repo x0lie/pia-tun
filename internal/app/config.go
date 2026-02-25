@@ -97,8 +97,7 @@ func loadPFConfig() portforward.Config {
 	return portforward.Config{
 		Enabled:              getEnvBool("PF_ENABLED", false),
 		BindInterval:         time.Duration(getEnvInt("PF_BIND_INTERVAL", 900)) * time.Second,
-		SignatureRefreshDays: getEnvInt("PF_SIGNATURE_REFRESH_DAYS", 31),
-		SignatureSafetyHours: getEnvInt("PF_SIGNATURE_SAFETY_HOURS", 24),
+		SignatureSafetyHours: getEnvInt("PF_SIGNATURE_SAFETY_HOURS", 6),
 		PortFile:             getEnv("PORT_FILE", "/run/pia-tun/port"),
 	}
 }
