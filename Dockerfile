@@ -72,12 +72,7 @@ COPY ca/rsa_4096.crt /app/ca.rsa.4096.crt
 
 WORKDIR /app
 
-# Copy scripts
-COPY scripts/ /app/scripts/
-
-# CRITICAL FIX: Only chmod scripts, NOT the Go binaries (prevents 10MB duplication)
-RUN chmod +x /app/scripts/*.sh && \
-    mkdir -p /etc/wireguard && \
+RUN mkdir -p /etc/wireguard && \
     mkdir -p /run/pia-tun
 
 # Set VERSION and SHA as environment variables for runtime
@@ -94,8 +89,7 @@ LABEL org.opencontainers.image.title="pia-tun" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.vendor="x0lie"
 
-ENV TZ=UTC \
-    LOG_LEVEL=info \
+ENV LOG_LEVEL=info \
     IPV6_ENABLED=false \
     LOCAL_NETWORKS="auto" \
     DNS="pia" \

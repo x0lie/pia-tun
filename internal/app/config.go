@@ -17,6 +17,7 @@ import (
 type Config struct {
 	Version  string
 	LogLevel string
+	SHA      string
 
 	PIA     PIA
 	VPN     VPN
@@ -55,6 +56,7 @@ func LoadConfig() Config {
 	return Config{
 		Version:  getEnv("VERSION", "local"),
 		LogLevel: getEnv("LOG_LEVEL", "info"),
+		SHA:      getEnv("SHA", ""),
 
 		PIA:     loadPIAConfig(),
 		VPN:     loadVPNConfig(),

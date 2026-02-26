@@ -5,15 +5,15 @@
 feature:
   - changed-files:
     - any-glob-to-any-file:
-      - 'src/**'
-      - 'scripts/**'
+      - 'cmd/**'
+      - 'internal/**'
       - 'Dockerfile'
 
 enhancement:
   - changed-files:
     - any-glob-to-any-file:
-      - 'src/**'
-      - 'scripts/**'
+      - 'cmd/**'
+      - 'internal/**'
 
 # Breaking changes
 breaking-change:
@@ -30,7 +30,7 @@ bug:
 security:
   - changed-files:
     - any-glob-to-any-file:
-      - 'internal/firewall'
+      - 'internal/firewall/**'
   - head-branch: ['^security/']
 
 # CI/CD & Automation

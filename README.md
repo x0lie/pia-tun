@@ -206,9 +206,9 @@ Can be useful as a webhook, or to update clients not supported by `PS_CLIENT`. S
 **Using PS_SCRIPT**:
 ```yaml
 environment:
-  - PS_SCRIPT=/app/scripts/your-script.sh {PORT}
+  - PS_SCRIPT=/app/your-script.sh {PORT}
 volumes:
-  - ./your-script.sh:/app/scripts/your-script.sh
+  - ./your-script.sh:/app/your-script.sh
 ```
 
 ## Troubleshooting

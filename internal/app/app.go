@@ -28,9 +28,6 @@ import (
 // ErrReconnect is a sentinel error indicating a service has requested VPN reconnection.
 var ErrReconnect = errors.New("reconnect requested")
 
-// shellPreamble sources shell scripts to make UI functions available.
-const shellPreamble = "set -euo pipefail; source /app/scripts/ui.sh;"
-
 // App holds the application state and configuration.
 type App struct {
 	// Config (set once, read-only)
@@ -62,7 +59,7 @@ func Run(ctx context.Context) error {
 	}
 
 	a.logConfig()
-	a.shellFunc(ctx, "print_banner")
+	log.StartupBanner(a.cfg.Version, a.cfg.SHA)
 
 	if err := a.initialize(ctx); err != nil {
 		return fmt.Errorf("initialization failed: %w", err)
@@ -96,7 +93,7 @@ func Run(ctx context.Context) error {
 			a.log.Debug("Services requested reconnect")
 
 			a.monitorState.Pause()
-			a.shellFunc(ctx, "show_reconnecting")
+			log.ReconnectingBanner()
 			a.teardown()
 
 			a.metrics.RecordReconnect()
@@ -200,14 +197,13 @@ func (a *App) connect(ctx context.Context) error {
 
 	// Verify connection (non-fatal)
 	log.Step("Verifying connection...")
-	if publicIP, err := vpn.VerifyConnection(ctx); err != nil {
-		log.Warning(fmt.Sprintf("%v", err))
-		a.shellFunc(ctx, "show_vpn_connected_warning")
-		return nil
-	} else {
+	if publicIP, err := vpn.VerifyConnection(ctx); err == nil {
 		log.Success(fmt.Sprintf("External IP: %s%s%s%s", log.ColorGreen, log.ColorBold, publicIP, log.ColorReset))
-		a.shellFunc(ctx, "show_vpn_connected")
+	} else {
+		log.Warning(fmt.Sprintf("%v", err))
 	}
+	log.ConnectedBanner()
+
 	return nil
 }
 
@@ -409,13 +405,6 @@ func (a *App) cleanup() {
 		log.Warning("Killswitch preserved due to error exit")
 	}
 	log.Success("Cleanup complete")
-}
-
-func (a *App) shellFunc(ctx context.Context, funcCall string) error {
-	cmd := exec.CommandContext(ctx, "bash", "-c", shellPreamble+funcCall)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
 
 // PIA DNS servers (used when DNS="pia" or empty)

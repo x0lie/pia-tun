@@ -2,16 +2,18 @@ package log
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
 const (
 	ColorReset  = "\033[0m"
+	ColorBold   = "\033[1m"
 	ColorRed    = "\033[0;31m"
 	ColorGreen  = "\033[0;32m"
 	ColorBlue   = "\033[0;34m"
 	ColorYellow = "\033[0;33m"
-	ColorBold   = "\033[1m"
+	ColorCyan   = "\033[0;36m"
 )
 
 // Level controls global log verbosity.
@@ -95,4 +97,79 @@ func FormatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh %dm", hours, minutes)
 	}
 	return fmt.Sprintf("%dm", minutes)
+}
+
+func StartupBanner(version, sha string) {
+	if Level < 1 {
+		return
+	}
+
+	versionText := "pia-tun " + version
+	if len(version) > 0 && version[0] >= '0' && version[0] <= '9' {
+		versionText = "pia-tun v" + version
+	}
+
+	c, r, g, b := ColorCyan, ColorReset, ColorGreen, ColorBold
+
+	out := fmt.Sprintf("\n%s\n%s\n%s\n%s\n%s\n%s\n",
+		boxTop(c),
+		boxEmpty(c),
+		boxCenter(c, b+versionText+r, len(versionText)),
+		boxCenter(c, g+"x0lie"+r, 5),
+		boxEmpty(c),
+		boxBottom(c),
+	)
+
+	if version == "develop" && sha != "" {
+		out += fmt.Sprintf(" commit: %s\n", sha)
+	}
+
+	fmt.Print(out)
+}
+
+func ConnectedBanner() {
+	if Level < 1 {
+		return
+	}
+	c, r, b := ColorGreen, ColorReset, ColorBold
+	fmt.Printf("\n%s\n%s\n%s\n",
+		boxTop(c),
+		boxCenter(c, c+"✓"+r+" "+b+"VPN Connected"+r, 15),
+		boxBottom(c),
+	)
+}
+
+func ReconnectingBanner() {
+	if Level < 1 {
+		return
+	}
+	c, r, b := ColorYellow, ColorReset, ColorBold
+	fmt.Printf("\n%s\n%s\n%s\n",
+		boxTop(c),
+		boxCenter(c, c+"↻"+r+" "+b+"Reconnecting VPN"+r, 18),
+		boxBottom(c),
+	)
+}
+
+const boxBorder = "════════════════════════════════════════════════"
+
+func boxTop(color string) string {
+	return color + "╔" + boxBorder + "╗" + ColorReset
+}
+
+func boxBottom(color string) string {
+	return color + "╚" + boxBorder + "╝" + ColorReset
+}
+
+func boxEmpty(color string) string {
+	return color + "║" + ColorReset + strings.Repeat(" ", 48) + color + "║" + ColorReset
+}
+
+func boxCenter(color, content string, visibleLen int) string {
+	const inner = 48
+	left := (inner - visibleLen) / 2
+	right := inner - visibleLen - left
+	return color + "║" + ColorReset +
+		strings.Repeat(" ", left) + content + strings.Repeat(" ", right) +
+		color + "║" + ColorReset
 }
