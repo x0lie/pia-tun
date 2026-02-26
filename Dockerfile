@@ -115,6 +115,6 @@ ENV LOG_LEVEL=info \
 
 EXPOSE 1080 8888 9090
 
-HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 CMD wget -q --spider http://127.0.0.1:9090/health || exit 1  
+HEALTHCHECK --interval=5s --timeout=5s --start-period=15s --retries=2 CMD wget -q --spider http://127.0.0.1:$METRICS_PORT/ready
 
 ENTRYPOINT ["/usr/local/bin/pia-tun"]

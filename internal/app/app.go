@@ -8,8 +8,10 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
+	"github.com/x0lie/pia-tun/internal/api"
 	"github.com/x0lie/pia-tun/internal/cacher"
 	"github.com/x0lie/pia-tun/internal/firewall"
 	"github.com/x0lie/pia-tun/internal/log"
@@ -38,8 +40,10 @@ type App struct {
 	cache         *vpn.CacheState
 	fw            *firewall.Firewall
 	connInfo      *vpn.ConnectionInfo
+	connectionUp  atomic.Bool
 	exitedCleanly bool
 	metrics       *metrics.Metrics
+	api           *api.Server
 
 	// Infrastructure
 	log      *log.Logger
@@ -71,6 +75,7 @@ func Run(ctx context.Context) error {
 		return err
 	}
 
+	a.connectionUp.Store(true)
 	a.metrics.UpdateConnectionStatus(true)
 	reconnectCh := make(chan struct{}, 1)
 
@@ -88,6 +93,7 @@ func Run(ctx context.Context) error {
 			return nil // graceful shutdown (SIGTERM)
 		}
 
+		a.connectionUp.Store(false)
 		a.metrics.UpdateConnectionStatus(false)
 		if errors.Is(err, ErrReconnect) {
 			a.log.Debug("Services requested reconnect")
@@ -102,6 +108,7 @@ func Run(ctx context.Context) error {
 			if err := a.connectLoop(ctx); err != nil {
 				return err
 			}
+			a.connectionUp.Store(true)
 			a.metrics.UpdateConnectionStatus(true)
 			continue
 		}
@@ -160,6 +167,8 @@ func (a *App) initialize(ctx context.Context) error {
 	a.writeDNS()
 
 	a.metrics = metrics.New(a.cfg.Metrics, a.cfg.Version)
+	a.api = api.New(a.cfg.Metrics.Port, a.fw.IsActive, a.connectionUp.Load, a.metrics)
+	go a.api.Start()
 	a.wan = &wan.Checker{}
 
 	// Non-fatal: capture pre-VPN IP for leak detection
@@ -327,13 +336,12 @@ func (a *App) showStatus() {
 		int(a.cfg.Monitor.FailureWindow.Seconds())))
 
 	port := a.cfg.Metrics.Port
+	log.Success(fmt.Sprintf("Endpoints on localhost:%d", port))
+
 	if a.cfg.Metrics.Enabled {
-		log.Success(fmt.Sprintf("Metrics available on port %d", port))
-		log.Info(fmt.Sprintf("    Prometheus:  http://<container-ip>:%d/metrics", port))
-		log.Info(fmt.Sprintf("    JSON:        http://<container-ip>:%d/metrics?format=json", port))
-		log.Info(fmt.Sprintf("    Health:      http://<container-ip>:%d/health", port))
+		log.Info("    /ready /health /metrics /metrics?format=json")
 	} else {
-		log.Info(fmt.Sprintf("    Health:      http://<container-ip>:%d/health", port))
+		log.Info("    /ready /health")
 	}
 }
 
@@ -393,6 +401,7 @@ func (a *App) teardown() {
 
 func (a *App) cleanup() {
 	log.Step("Shutting down...")
+	a.api.Shutdown()
 
 	if a.connInfo != nil {
 		a.teardown()

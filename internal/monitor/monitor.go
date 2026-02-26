@@ -63,29 +63,6 @@ type Monitor struct {
 
 	// Orchestrator state for pause/reconnect signaling. Nil in standalone mode.
 	state *State
-
-	// Health status for /health endpoint
-	healthy         bool
-	lastHealthCheck time.Time
-}
-
-func (m *Monitor) setHealthStatus(healthy bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.healthy = healthy
-	m.lastHealthCheck = time.Now()
-}
-
-func (m *Monitor) isHealthy() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	staleThreshold := m.config.Interval * 2
-	if time.Since(m.lastHealthCheck) > staleThreshold && m.lastHealthCheck.Unix() > 0 {
-		return false
-	}
-
-	return m.healthy
 }
 
 func (m *Monitor) monitorLoop(ctx context.Context) {
@@ -143,7 +120,6 @@ func (m *Monitor) performCheck() {
 	// Normal health check
 	result, err := m.checkVPNHealth(normalTimeout)
 
-	m.setHealthStatus(err == nil)
 	m.updateMetrics()
 
 	if m.metrics.Enabled() {
@@ -174,7 +150,6 @@ func (m *Monitor) performCheck() {
 
 			_, rapidErr := m.checkVPNHealth(rapidTimeout)
 
-			m.setHealthStatus(rapidErr == nil)
 			m.updateMetrics()
 
 			if rapidErr == nil {
@@ -232,9 +207,6 @@ func Run(ctx context.Context, cfg *Config, onReconnect func(), state *State, m *
 		state:       state,
 		firewall:    fw,
 	}
-
-	// Always start HTTP server for /health endpoint
-	go startHTTPServer(monitor, monitor.metrics.Config.Port)
 
 	monitor.monitorLoop(ctx)
 	return nil

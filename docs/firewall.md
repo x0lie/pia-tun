@@ -15,13 +15,7 @@ This container implements a strict firewall using iptables-nft or -legacy to pre
 - On normal shutdown: Firewall rules cleanly removed after dependents stop
 - On crash/OOM: Firewall remains active until network namespace destroyed
 
-**Dependent Services:**
-
-For containers sharing the network namespace (`network_mode: "service:pia-tun"`), use Docker Compose healthchecks to ensure the kill-switch is active before dependent services start. See the [Coordinating with Dependent Services](#coordinating-with-dependent-services) section for detailed examples and best practices.
-
-**Important:** As long as you use `depends_on` with the killswitch healthcheck, you will never have a leak occur during startup. Startup ordering and waiting is not possible with this method in k8s. Containers in pods in k8s will always race.
-
-**For the Paranoid:** You can use depends_on: pia-tun: condition: service_healthy for dependents to wait until killswitch is up. Unfortunately not possible in k8s:
+**Preventing startup race leaks:** You can use `condition: service_healthy` for dependents to wait until killswitch is up. Unfortunately not possible in k8s - containers in the same pod will always race. This generally is not necessary as pia-tun will win most races, but it does gaurantee no startup leaks.
 
 ```yaml
 services:
@@ -45,9 +39,9 @@ secrets:
 **Routing**
 - All internet traffic is routed through the VPN or dropped
 - All LAN routing is routed to LAN or dropped if not enabled with LOCAL_NETWORKS
-- PIA 'local' addresses are exemptions; if PF_ENABLED, an exemption on the relevant 10.x.x.x address will be made and routed through the tunnel regardless of `LOCAL_NETWORKS` overlap. The same is true for when DNS=pia.
+- PIA 'local' addresses are exemptions; if PF_ENABLED, an exemption on the relevant 10.x.x.x address will be made and routed through the tunnel regardless of `LOCAL_NETWORKS` overlap. The same is true for 10.0.0.242/243 (`DNS=pia`).
 - You can check out routing with `ip rule list`.
-- Some home DNS setups grab anything on port 53 and resolve it themselves. For this reason it is possible to leak your DNS to the internet if `DNS` and `LOCAL_NETWORKS` misconfigured.
+- Some routers have DNS redirecting/interception which will grab anything on port 53 and forward the request to their preferred resolver. For this reason it is possible to leak your DNS to the internet if `DNS` and `LOCAL_NETWORKS` is misconfigured/unintentionally going to LAN.
 
 **DNS chicken and egg:**
 - The container needs to resolve DNS to connect to PIA (their ips rotate - cannot hardcode ips)
