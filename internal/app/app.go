@@ -398,10 +398,9 @@ func (a *App) teardown() {
 func (a *App) cleanup() {
 	log.Step("Shutting down...")
 
-	// Use background context since parent ctx is likely cancelled
-	bgCtx := context.Background()
-	a.fw.RemoveVPN()
-	wg.Down(bgCtx, a.log)
+	if a.connInfo != nil {
+		a.teardown()
+	}
 	a.fw.CleanupPrivateRoutes()
 	a.fw.RemovePIADNSRoutes()
 	if a.exitedCleanly {
