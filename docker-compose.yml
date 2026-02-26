@@ -7,7 +7,6 @@ services:
     cap_drop:
       - all                                                                   # Highly recommended
     environment:
-      - TZ=America/New_York
       - PIA_LOCATION=ca_ontario,ca_ontario-so,ca_toronto,ca                   # Supports multiple options, chooses lowest latency
       - PS_CLIENT=qbittorrent
       - PROXY_ENABLED=true
@@ -21,12 +20,6 @@ services:
       - 8080:8080                                                             # qBittorrent port for web UI access
       - 9090:9090                                                             # Metrics
       - 1080:1080                                                             # SOCKS5
-    healthcheck:
-      test: ["CMD", "test", "-f", "/tmp/killswitch_up"]
-      interval: 5s
-      timeout: 2s
-      retries: 3
-      start_period: 3s
 
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:latest
@@ -41,10 +34,9 @@ services:
       - ./qbittorrent/downloads:/downloads
     network_mode: "service:pia-tun"
     depends_on:
-      pia-tun:
-        condition: service_healthy                                            # condition: service_healthy + the killswitch_up healthcheck = gauranteed no startup leaks, but not really necessary
+      - pia-tun
 
-secrets:                                                                      # Supports pia_user, pia_pass, proxy_user, proxy_pass, ps_user, ps_pass
+secrets:                                                                      # Also supports proxy_user and proxy_pass
   pia_user:
     file: ./secrets/pia_user
   pia_pass:

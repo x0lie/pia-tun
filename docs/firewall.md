@@ -21,19 +21,13 @@ For containers sharing the network namespace (`network_mode: "service:pia-tun"`)
 
 **Important:** As long as you use `depends_on` with the killswitch healthcheck, you will never have a leak occur during startup. Startup ordering and waiting is not possible with this method in k8s. Containers in pods in k8s will always race.
 
-**For the Paranoid:** You can use depends_on: with this healthcheck and condition: service_healthy for dependents to wait until killswitch is up:
+**For the Paranoid:** You can use depends_on: pia-tun: condition: service_healthy for dependents to wait until killswitch is up. Unfortunately not possible in k8s:
 
 ```yaml
 services:
   pia-tun:
     image: x0lie/pia-tun:latest
     container_name: pia-tun
-    healthcheck:
-      test: ["CMD", "test", "-f", "/tmp/killswitch_up"]
-      interval: 5s
-      timeout: 2s
-      retries: 3
-      start_period: 3s
   
   dependent:
     depends_on:

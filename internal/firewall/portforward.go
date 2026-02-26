@@ -15,11 +15,6 @@ var portForwardComments = []string{"port_forward_tcp", "port_forward_udp"}
 func (fw *Firewall) AllowForwardedPort(port int) error {
 	fw.RemoveForwardedPort()
 
-	pos, err := fw.ruleCount(chainIn)
-	if err != nil {
-		return fmt.Errorf("find DROP position in %s: %w", chainIn, err)
-	}
-
 	portStr := strconv.Itoa(port)
 
 	for _, proto := range []string{"tcp", "udp"} {
@@ -29,7 +24,7 @@ func (fw *Firewall) AllowForwardedPort(port int) error {
 			"-j", "ACCEPT",
 			"-m", "comment", "--comment", comment,
 		}
-		if err := fw.ipt4.Insert(tableFilter, chainIn, pos, spec...); err != nil {
+		if err := fw.insertBeforeDrop(fw.ipt4, chainIn, spec...); err != nil {
 			return fmt.Errorf("insert port forward %s rule: %w", proto, err)
 		}
 	}

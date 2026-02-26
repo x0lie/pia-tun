@@ -46,11 +46,6 @@ func (fw *Firewall) AddVPN(fwmark string, ipv6Enabled bool) error {
 		if err := fw.ipt6.Insert(tableFilter, chainOut6, vpnInsertPos, ifaceSpec6...); err != nil {
 			return fmt.Errorf("insert IPv6 VPN interface rule: %w", err)
 		}
-
-		icmpSpec6 := []string{"-p", "ipv6-icmp", "-m", "comment", "--comment", "vpn_icmpv6", "-j", "ACCEPT"}
-		if err := fw.ipt6.Insert(tableFilter, chainOut6, vpnInsertPos, icmpSpec6...); err != nil {
-			return fmt.Errorf("insert IPv6 ICMPv6 rule: %w", err)
-		}
 	}
 
 	return nil
@@ -116,6 +111,5 @@ func (fw *Firewall) findRuleLineNumbers(iptables, chain string, comments []strin
 
 // removeIPv6VPNRules removes IPv6 VPN rules by comment.
 func (fw *Firewall) removeIPv6VPNRules() {
-	ipv6Comments := []string{"vpn_interface", "vpn_icmpv6"}
-	fw.removeVPNRulesByComment(fw.Ipt6Cmd, chainOut6, ipv6Comments)
+	fw.removeVPNRulesByComment(fw.Ipt6Cmd, chainOut6, []string{"vpn_interface"})
 }

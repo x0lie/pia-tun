@@ -2,9 +2,9 @@ package firewall
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/coreos/go-iptables/iptables"
 	"github.com/x0lie/pia-tun/internal/log"
@@ -17,6 +17,12 @@ type Firewall struct {
 	ipt4    *iptables.IPTables
 	ipt6    *iptables.IPTables
 	log     *log.Logger
+
+	// Killswitch state (protected by mu)
+	mu              sync.Mutex
+	active          bool
+	localNetworksV4 []string
+	localNetworksV6 []string
 }
 
 // New creates a Firewall with auto-detected or manually specified iptables backend.
@@ -34,10 +40,6 @@ func New(backend string) (*Firewall, error) {
 	if err != nil {
 		return nil, fmt.Errorf("init iptables IPv6 (%s): %w", ipt6Cmd, err)
 	}
-
-	// Export for killswitch.sh
-	os.Setenv("IPT_CMD", ipt4Cmd)
-	os.Setenv("IP6T_CMD", ipt6Cmd)
 
 	return &Firewall{ipt4: ipt4, ipt6: ipt6, log: logger, Ipt4Cmd: ipt4Cmd, Ipt6Cmd: ipt6Cmd}, nil
 }

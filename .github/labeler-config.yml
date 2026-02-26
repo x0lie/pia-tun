@@ -30,8 +30,7 @@ bug:
 security:
   - changed-files:
     - any-glob-to-any-file:
-      - 'scripts/firewall.sh'
-      - 'scripts/killswitch.sh'
+      - 'internal/firewall'
   - head-branch: ['^security/']
 
 # CI/CD & Automation

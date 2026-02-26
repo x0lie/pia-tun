@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -182,8 +181,7 @@ func (m *Monitor) pingServerLatency(ctx context.Context, serverIP string) float6
 }
 
 func (m *Monitor) isKillswitchActive() bool {
-	_, err := os.Stat("/tmp/killswitch_up")
-	return err == nil
+	return m.firewall.IsActive()
 }
 
 func (m *Monitor) getKillswitchDropStats() (packetsIn, bytesIn, packetsOut, bytesOut int64) {

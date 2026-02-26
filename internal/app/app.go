@@ -28,8 +28,8 @@ import (
 // ErrReconnect is a sentinel error indicating a service has requested VPN reconnection.
 var ErrReconnect = errors.New("reconnect requested")
 
-// shellPreamble sources all shell scripts to make their functions available.
-const shellPreamble = "set -euo pipefail; source /app/scripts/ui.sh; source /app/scripts/killswitch.sh;"
+// shellPreamble sources shell scripts to make UI functions available.
+const shellPreamble = "set -euo pipefail; source /app/scripts/ui.sh;"
 
 // App holds the application state and configuration.
 type App struct {
@@ -127,14 +127,6 @@ func (a *App) initialize(ctx context.Context) error {
 		return fmt.Errorf("PIA_LOCATION not configured")
 	}
 
-	a.log.Debug("Removing stale flag files")
-	for _, f := range []string{
-		"/tmp/monitor_up",
-		"/tmp/killswitch_up",
-	} {
-		os.Remove(f)
-	}
-
 	exec.CommandContext(ctx, "ip", "link", "delete", "pia0").Run()
 
 	if err := checkCapNetAdmin(); err != nil {
@@ -152,9 +144,8 @@ func (a *App) initialize(ctx context.Context) error {
 	}
 	a.fw = fw
 	a.resolver = pia.NewResolver(fw, a.log)
-	a.log.Debug("Firewall initialized (backend: %s)", fw.Backend())
 
-	if err := a.shellFunc(ctx, "setup_baseline_killswitch"); err != nil {
+	if err := a.fw.Setup(firewall.KillswitchConfig{LANs: a.cfg.FW.LANs, IPv6Enabled: a.cfg.VPN.IPv6Enabled}); err != nil {
 		log.Error("CRITICAL: Killswitch setup failed - cannot safely connect to VPN")
 		return fmt.Errorf("killswitch setup failed: %w", err)
 	}
@@ -407,13 +398,6 @@ func (a *App) teardown() {
 func (a *App) cleanup() {
 	log.Step("Shutting down...")
 
-	for _, f := range []string{
-		"/tmp/monitor_up",
-		"/tmp/killswitch_up",
-	} {
-		os.Remove(f)
-	}
-
 	// Use background context since parent ctx is likely cancelled
 	bgCtx := context.Background()
 	a.fw.RemoveVPN()
@@ -421,7 +405,7 @@ func (a *App) cleanup() {
 	a.fw.CleanupPrivateRoutes()
 	a.fw.RemovePIADNSRoutes()
 	if a.exitedCleanly {
-		a.shellFunc(bgCtx, "cleanup_killswitch")
+		a.fw.Cleanup()
 	} else {
 		log.Warning("Killswitch preserved due to error exit")
 	}
