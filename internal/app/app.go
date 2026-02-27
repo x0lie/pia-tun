@@ -36,7 +36,6 @@ type App struct {
 	cfg Config
 
 	// Runtime state
-	monitorState  *monitor.State
 	cache         *vpn.CacheState
 	fw            *firewall.Firewall
 	connInfo      *vpn.ConnectionInfo
@@ -56,10 +55,9 @@ type App struct {
 // reconnection, and cleanup.
 func Run(ctx context.Context) error {
 	a := &App{
-		cfg:          LoadConfig(),
-		monitorState: monitor.NewState(),
-		cache:        &vpn.CacheState{},
-		log:          log.New("app"),
+		cfg:   LoadConfig(),
+		cache: &vpn.CacheState{},
+		log:   log.New("app"),
 	}
 
 	a.logConfig()
@@ -77,17 +75,14 @@ func Run(ctx context.Context) error {
 
 	a.connectionUp.Store(true)
 	a.metrics.UpdateConnectionStatus(true)
-	reconnectCh := make(chan struct{}, 1)
 
 	// Permanent services (persist across reconnects, use parent ctx)
-	a.startMonitor(ctx, reconnectCh)
 	if a.cfg.Proxy.Enabled {
 		a.startProxy(ctx)
 	}
 
 	for {
-		a.monitorState.Resume()
-		err := a.runServices(ctx, reconnectCh)
+		err := a.runServices(ctx)
 		if ctx.Err() != nil {
 			a.exitedCleanly = true
 			return nil // graceful shutdown (SIGTERM)
@@ -98,7 +93,6 @@ func Run(ctx context.Context) error {
 		if errors.Is(err, ErrReconnect) {
 			a.log.Debug("Services requested reconnect")
 
-			a.monitorState.Pause()
 			log.ReconnectingBanner()
 			a.teardown()
 
@@ -217,6 +211,7 @@ func (a *App) connect(ctx context.Context) error {
 		log.Warning(fmt.Sprintf("%v", err))
 	}
 	log.ConnectedBanner()
+	a.showStatus()
 
 	return nil
 }
@@ -272,20 +267,22 @@ func (a *App) connectLoop(ctx context.Context) error {
 	}
 }
 
-// runServices starts transient services (cacher, port forwarding, port monitor) as
-// goroutines managed by errgroup. Monitor and proxy are permanent services started
+// runServices starts transient services (monitor, cacher, port forwarding, port monitor) as
+// goroutines managed by errgroup. Proxy and API server are permanent services started
 // separately. Returns ErrReconnect if reconnection was requested, nil on graceful shutdown.
-func (a *App) runServices(ctx context.Context, reconnectCh chan struct{}) error {
-	// Drain any stale reconnect signal from the previous cycle
-	select {
-	case <-reconnectCh:
-	default:
-	}
-
+func (a *App) runServices(ctx context.Context) error {
 	svcCtx, svcCancel := context.WithCancelCause(ctx)
 	defer svcCancel(nil)
 
 	g, gCtx := errgroup.WithContext(svcCtx)
+
+	// Monitor - always runs (verifies tunnel working)
+	mntrReconnect := func() {
+		svcCancel(ErrReconnect)
+	}
+	g.Go(func() error {
+		return monitor.Run(gCtx, &a.cfg.Monitor, mntrReconnect, a.metrics, a.connInfo.ServerIP)
+	})
 
 	// Cacher - always runs (refreshes PIA login token and server list)
 	g.Go(func() error {
@@ -318,21 +315,14 @@ func (a *App) runServices(ctx context.Context, reconnectCh chan struct{}) error 
 	errCh := make(chan error, 1)
 	go func() { errCh <- g.Wait() }()
 
-	select {
-	case <-reconnectCh:
-		// Monitor requested reconnect
-		svcCancel(nil)
-		<-errCh
-		return ErrReconnect
-	case err := <-errCh:
-		if ctx.Err() != nil {
-			return nil // parent SIGTERM
-		}
-		if errors.Is(context.Cause(svcCtx), ErrReconnect) {
-			return ErrReconnect
-		}
-		return fmt.Errorf("services exited: %w", err)
+	err := <-errCh
+	if ctx.Err() != nil {
+		return nil // parent SIGTERM
 	}
+	if errors.Is(context.Cause(svcCtx), ErrReconnect) {
+		return ErrReconnect
+	}
+	return fmt.Errorf("services exited: %w", err)
 }
 
 func (a *App) showStatus() {
@@ -371,28 +361,6 @@ func (a *App) startProxy(ctx context.Context) {
 			log.Error(fmt.Sprintf("Proxy server error: %v", err))
 		}
 	}()
-}
-
-// startMonitor launches the health monitor as a permanent background goroutine.
-// It uses the parent context so the monitor persists across VPN reconnects.
-// Reconnect requests are signaled via reconnectCh.
-func (a *App) startMonitor(ctx context.Context, reconnectCh chan<- struct{}) {
-	log.Step("Starting health monitor...")
-
-	reconnect := func() {
-		select {
-		case reconnectCh <- struct{}{}:
-		default:
-		}
-	}
-
-	go func() {
-		if err := monitor.Run(ctx, &a.cfg.Monitor, reconnect, a.monitorState, a.metrics); err != nil {
-			log.Error(fmt.Sprintf("Health monitor error: %v", err))
-		}
-	}()
-
-	a.showStatus()
 }
 
 func (a *App) teardown() {

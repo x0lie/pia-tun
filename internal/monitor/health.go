@@ -5,17 +5,8 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
-	"strings"
 	"time"
 )
-
-// HealthCheckResult holds the result of a VPN health check.
-type HealthCheckResult struct {
-	InterfaceUp   bool
-	Connectivity  bool
-	CheckDuration time.Duration
-	Error         error
-}
 
 func (m *Monitor) checkConnectivity(ctx context.Context, host string) bool {
 	d := net.Dialer{Timeout: 2 * time.Second}
@@ -67,56 +58,20 @@ func (m *Monitor) checkExternalConnectivity(timeout time.Duration) bool {
 	return false
 }
 
-func (m *Monitor) checkVPNHealth(timeout time.Duration) (*HealthCheckResult, error) {
+func (m *Monitor) checkVPNHealth(timeout time.Duration) (time.Duration, error) {
 	start := time.Now()
 
-	result := &HealthCheckResult{
-		InterfaceUp: true,
-	}
-
 	if m.checkExternalConnectivity(timeout) {
-		result.Connectivity = true
-		result.CheckDuration = time.Since(start)
-		return result, nil
+		return time.Since(start), nil
 	}
-
-	result.CheckDuration = time.Since(start)
-	result.Error = fmt.Errorf("connectivity check failed")
-	return result, result.Error
+	return time.Since(start), fmt.Errorf("connectivity check failed")
 }
 
 func (m *Monitor) triggerReconnect() {
 	if m.onReconnect != nil {
 		m.log.Debug("Signaling orchestrator to reconnect")
-		if m.state != nil {
-			m.state.Pause()
-		}
 		m.onReconnect()
 	}
-}
-
-func (m *Monitor) getServerEndpoint() string {
-	cmd := exec.Command("wg", "show", "pia0", "endpoints")
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(lines) == 0 {
-		return ""
-	}
-
-	parts := strings.Fields(lines[0])
-	if len(parts) < 2 {
-		return ""
-	}
-
-	endpoint := parts[1]
-	if idx := strings.LastIndex(endpoint, ":"); idx > 0 {
-		return endpoint[:idx]
-	}
-	return endpoint
 }
 
 func (m *Monitor) pingServerLatency(ctx context.Context, serverIP string) float64 {

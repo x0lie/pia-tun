@@ -3,7 +3,6 @@ package monitor
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/log"
@@ -16,52 +15,17 @@ type Config struct {
 	FailureWindow time.Duration
 }
 
-// State allows the orchestrator to communicate with the monitor
-// without filesystem flags or named pipes. Nil in standalone mode.
-type State struct {
-	paused  atomic.Bool
-	resumed chan struct{}
-}
-
-func NewState() *State {
-	s := &State{resumed: make(chan struct{}, 1)}
-	s.paused.Store(true)
-	return s
-}
-
-func (s *State) Pause() {
-	s.paused.Store(true)
-	// Drain any buffered resume signal so the monitor doesn't
-	// immediately wake up from a stale signal.
-	select {
-	case <-s.resumed:
-	default:
-	}
-}
-
-func (s *State) Resume() {
-	s.paused.Store(false)
-	select {
-	case s.resumed <- struct{}{}:
-	default:
-	}
-}
-
 // Monitor manages VPN health monitoring.
 type Monitor struct {
-	config  *Config
-	log     *log.Logger
-	metrics *metrics.Metrics
-
-	// Reconnect callback for orchestrated mode.
-	// When set, triggerReconnect calls this instead of writing to a pipe file.
+	config      *Config
+	log         *log.Logger
+	metrics     *metrics.Metrics
 	onReconnect func()
-
-	// Orchestrator state for pause/reconnect signaling. Nil in standalone mode.
-	state *State
+	serverIP    string
 }
 
 func (m *Monitor) monitorLoop(ctx context.Context) {
+	m.log.Debug("Loop starting with %s interval and %s failure tolerance", m.config.Interval, m.config.FailureWindow)
 	ticker := time.NewTicker(m.config.Interval)
 	defer ticker.Stop()
 
@@ -70,24 +34,10 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			m.log.Debug("Monitor loop received shutdown signal")
+			m.log.Debug("Loop received shutdown signal")
 			return
 
 		case <-ticker.C:
-			if m.state != nil && m.state.paused.Load() {
-				m.log.Debug("Health checks paused")
-				ticker.Stop()
-				select {
-				case <-ctx.Done():
-					m.log.Debug("Monitor loop received shutdown signal")
-					return
-				case <-m.state.resumed:
-				}
-				m.log.Debug("Health checks resumed")
-				ticker.Reset(m.config.Interval)
-				m.performCheck()
-				continue
-			}
 			m.performCheck()
 		}
 	}
@@ -102,22 +52,21 @@ func (m *Monitor) performCheck() {
 	if m.metrics.Enabled() {
 		serverLatencyChan = make(chan float64, 1)
 		go func() {
-			serverIP := m.getServerEndpoint()
-			if serverIP == "" {
+			if m.serverIP == "" {
 				serverLatencyChan <- -1
 				return
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			serverLatencyChan <- m.pingServerLatency(ctx, serverIP)
+			serverLatencyChan <- m.pingServerLatency(ctx, m.serverIP)
 		}()
 	}
 
 	// Normal health check
-	result, err := m.checkVPNHealth(normalTimeout)
+	duration, err := m.checkVPNHealth(normalTimeout)
 
 	if m.metrics.Enabled() {
-		m.metrics.RecordCheck(err == nil, result.CheckDuration)
+		m.metrics.RecordCheck(err == nil, duration)
 
 		if serverLatencyChan != nil {
 			latency := <-serverLatencyChan
@@ -135,13 +84,6 @@ func (m *Monitor) performCheck() {
 		recovered := false
 
 		for {
-			// Exit rapid checks if reconnect is already in progress
-			if m.state != nil && m.state.paused.Load() {
-				m.log.Debug("Reconnect in progress, exiting rapid checks")
-				recovered = true
-				break
-			}
-
 			_, rapidErr := m.checkVPNHealth(rapidTimeout)
 
 			if rapidErr == nil {
@@ -171,19 +113,14 @@ func (m *Monitor) performCheck() {
 	}
 }
 
-// Run starts the monitor. This is the main entry point called by the dispatcher.
-// onReconnect is an optional callback for orchestrated mode. When set, the monitor
-// calls it instead of writing to a pipe file when a reconnect is needed.
-// state provides orchestrator pause/reconnect signaling. Pass nil for both
-// in standalone mode.
-func Run(ctx context.Context, cfg *Config, onReconnect func(), state *State, m *metrics.Metrics) error {
+func Run(ctx context.Context, cfg *Config, onReconnect func(), m *metrics.Metrics, serverIP string) error {
 
 	monitor := &Monitor{
 		config:      cfg,
 		log:         log.New("monitor"),
 		metrics:     m,
 		onReconnect: onReconnect,
-		state:       state,
+		serverIP:    serverIP,
 	}
 
 	monitor.monitorLoop(ctx)
