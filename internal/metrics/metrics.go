@@ -21,6 +21,7 @@ type Config struct {
 // Metrics tracks VPN health metrics and exposes them via Prometheus.
 type Metrics struct {
 	Config *Config
+	log    *log.Logger
 
 	// Internal state tracking (for JSON endpoint)
 	TotalChecks       int64
@@ -90,6 +91,7 @@ type Metrics struct {
 func New(cfg Config, version string) *Metrics {
 	m := &Metrics{
 		Config:      &cfg,
+		log:         log.New("Metrics"),
 		Version:     version,
 		WANUp:       true,
 		UptimeStart: time.Now(),

@@ -3,6 +3,7 @@ package firewall
 import (
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -12,8 +13,8 @@ import (
 
 // Firewall manages iptables rules for VPN killswitch and temporary exemptions.
 type Firewall struct {
-	Ipt4Cmd string
-	Ipt6Cmd string
+	ipt4Cmd string
+	ipt6Cmd string
 	ipt4    *iptables.IPTables
 	ipt6    *iptables.IPTables
 	log     *log.Logger
@@ -41,12 +42,12 @@ func New(backend string) (*Firewall, error) {
 		return nil, fmt.Errorf("init iptables IPv6 (%s): %w", ipt6Cmd, err)
 	}
 
-	return &Firewall{ipt4: ipt4, ipt6: ipt6, log: logger, Ipt4Cmd: ipt4Cmd, Ipt6Cmd: ipt6Cmd}, nil
+	return &Firewall{ipt4: ipt4, ipt6: ipt6, log: logger, ipt4Cmd: ipt4Cmd, ipt6Cmd: ipt6Cmd}, nil
 }
 
 // Backend returns the detected backend name (e.g. "iptables-nft" or "iptables-legacy").
 func (fw *Firewall) Backend() string {
-	return fw.Ipt4Cmd
+	return fw.ipt4Cmd
 }
 
 // detectBackend determines the iptables backend to use. It checks IPT_BACKEND
@@ -76,4 +77,46 @@ func detectBackend(backend string, logger *log.Logger) (ipt4, ipt6 string) {
 
 	logger.Debug("iptables-nft works cleanly, using nft")
 	return "iptables-nft", "ip6tables-nft"
+}
+
+func (fw *Firewall) GetDropStats() (packetsIn, bytesIn, packetsOut, bytesOut int64) {
+	iptables := fw.ipt4Cmd
+	ip6tables := fw.ipt6Cmd
+
+	parseChain := func(iptCmd, chain string) (packets, bytes int64) {
+		cmd := exec.Command(iptCmd, "-L", chain, "-v", "-n", "-x")
+		output, err := cmd.Output()
+		if err != nil {
+			if iptCmd == iptables {
+				fw.log.Debug("Failed to get iptables stats for %s: %v", chain, err)
+			}
+			return 0, 0
+		}
+
+		lines := strings.Split(string(output), "\n")
+		for _, line := range lines {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 && fields[2] == "DROP" {
+				if p, err := strconv.ParseInt(fields[0], 10, 64); err == nil {
+					packets += p
+				}
+				if b, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
+					bytes += b
+				}
+			}
+		}
+		return packets, bytes
+	}
+
+	packetsIn, bytesIn = parseChain(iptables, "VPN_IN")
+	packetsOut, bytesOut = parseChain(iptables, "VPN_OUT")
+
+	p, b := parseChain(ip6tables, "VPN_IN6")
+	packetsIn += p
+	bytesIn += b
+	p, b = parseChain(ip6tables, "VPN_OUT6")
+	packetsOut += p
+	bytesOut += b
+
+	return packetsIn, bytesIn, packetsOut, bytesOut
 }

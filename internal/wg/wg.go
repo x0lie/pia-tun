@@ -293,3 +293,54 @@ func output(ctx context.Context, name string, args ...string) ([]byte, error) {
 	}
 	return out, nil
 }
+
+func GetTransferBytes() (rx, tx int64, err error) {
+	cmd := exec.Command("wg", "show", "pia0", "transfer")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) == 0 {
+		return 0, 0, fmt.Errorf("no transfer data")
+	}
+
+	parts := strings.Fields(lines[0])
+	if len(parts) < 3 {
+		return 0, 0, fmt.Errorf("interface transitioning")
+	}
+
+	rx, err = strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	tx, err = strconv.ParseInt(parts[2], 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return rx, tx, nil
+}
+
+func GetLastHandshake() int64 {
+	cmd := exec.Command("wg", "show", "pia0", "latest-handshakes")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) == 0 {
+		return 0
+	}
+
+	parts := strings.Fields(lines[0])
+	if len(parts) < 2 {
+		return 0
+	}
+
+	timestamp, _ := strconv.ParseInt(parts[1], 10, 64)
+	return timestamp
+}

@@ -3,11 +3,9 @@ package monitor
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/x0lie/pia-tun/internal/firewall"
 	"github.com/x0lie/pia-tun/internal/log"
 	"github.com/x0lie/pia-tun/internal/metrics"
 )
@@ -51,11 +49,9 @@ func (s *State) Resume() {
 
 // Monitor manages VPN health monitoring.
 type Monitor struct {
-	config   *Config
-	log      *log.Logger
-	metrics  *metrics.Metrics
-	firewall *firewall.Firewall
-	mu       sync.Mutex
+	config  *Config
+	log     *log.Logger
+	metrics *metrics.Metrics
 
 	// Reconnect callback for orchestrated mode.
 	// When set, triggerReconnect calls this instead of writing to a pipe file.
@@ -120,8 +116,6 @@ func (m *Monitor) performCheck() {
 	// Normal health check
 	result, err := m.checkVPNHealth(normalTimeout)
 
-	m.updateMetrics()
-
 	if m.metrics.Enabled() {
 		m.metrics.RecordCheck(err == nil, result.CheckDuration)
 
@@ -150,8 +144,6 @@ func (m *Monitor) performCheck() {
 
 			_, rapidErr := m.checkVPNHealth(rapidTimeout)
 
-			m.updateMetrics()
-
 			if rapidErr == nil {
 				m.log.Debug("Connectivity recovered during rapid checks")
 				recovered = true
@@ -179,25 +171,12 @@ func (m *Monitor) performCheck() {
 	}
 }
 
-func (m *Monitor) updateMetrics() {
-	if m.metrics.Enabled() {
-		rx, tx, _ := m.getTransferBytes()
-
-		m.metrics.UpdateTransferBytes(rx, tx)
-		m.metrics.UpdateKillswitchStatus(m.isKillswitchActive())
-		m.metrics.UpdateLastHandshake(m.getLastHandshake())
-
-		pktsIn, bytesIn, pktsOut, bytesOut := m.getKillswitchDropStats()
-		m.metrics.UpdateKillswitchDrops(pktsIn, bytesIn, pktsOut, bytesOut)
-	}
-}
-
 // Run starts the monitor. This is the main entry point called by the dispatcher.
 // onReconnect is an optional callback for orchestrated mode. When set, the monitor
 // calls it instead of writing to a pipe file when a reconnect is needed.
 // state provides orchestrator pause/reconnect signaling. Pass nil for both
 // in standalone mode.
-func Run(ctx context.Context, cfg *Config, onReconnect func(), state *State, m *metrics.Metrics, fw *firewall.Firewall) error {
+func Run(ctx context.Context, cfg *Config, onReconnect func(), state *State, m *metrics.Metrics) error {
 
 	monitor := &Monitor{
 		config:      cfg,
@@ -205,7 +184,6 @@ func Run(ctx context.Context, cfg *Config, onReconnect func(), state *State, m *
 		metrics:     m,
 		onReconnect: onReconnect,
 		state:       state,
-		firewall:    fw,
 	}
 
 	monitor.monitorLoop(ctx)

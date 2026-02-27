@@ -54,7 +54,7 @@ func (fw *Firewall) AddVPN(fwmark string, ipv6Enabled bool) error {
 // RemoveVPN deletes VPN rules by finding them by comment and deleting by line number.
 // This approach is more reliable than spec-based deletion with iptables-nft.
 func (fw *Firewall) RemoveVPN() {
-	fw.removeVPNRulesByComment(fw.Ipt4Cmd, chainOut, vpnComments)
+	fw.removeVPNRulesByComment(fw.ipt4Cmd, chainOut, vpnComments)
 
 	// For IPv6, look for pia0 interface rules (no comment on these)
 	fw.removeIPv6VPNRules()
@@ -111,5 +111,5 @@ func (fw *Firewall) findRuleLineNumbers(iptables, chain string, comments []strin
 
 // removeIPv6VPNRules removes IPv6 VPN rules by comment.
 func (fw *Firewall) removeIPv6VPNRules() {
-	fw.removeVPNRulesByComment(fw.Ipt6Cmd, chainOut6, []string{"vpn_interface"})
+	fw.removeVPNRulesByComment(fw.ipt6Cmd, chainOut6, []string{"vpn_interface"})
 }

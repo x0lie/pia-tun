@@ -167,8 +167,13 @@ func (a *App) initialize(ctx context.Context) error {
 	a.writeDNS()
 
 	a.metrics = metrics.New(a.cfg.Metrics, a.cfg.Version)
+	if a.cfg.Metrics.Enabled {
+		go a.metrics.RunCollector(ctx, a.fw)
+	}
+
 	a.api = api.New(a.cfg.Metrics.Port, a.fw.IsActive, a.connectionUp.Load, a.metrics)
 	go a.api.Start()
+
 	a.wan = &wan.Checker{}
 
 	// Non-fatal: capture pre-VPN IP for leak detection
@@ -382,7 +387,7 @@ func (a *App) startMonitor(ctx context.Context, reconnectCh chan<- struct{}) {
 	}
 
 	go func() {
-		if err := monitor.Run(ctx, &a.cfg.Monitor, reconnect, a.monitorState, a.metrics, a.fw); err != nil {
+		if err := monitor.Run(ctx, &a.cfg.Monitor, reconnect, a.monitorState, a.metrics); err != nil {
 			log.Error(fmt.Sprintf("Health monitor error: %v", err))
 		}
 	}()

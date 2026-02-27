@@ -31,7 +31,7 @@ func (fw *Firewall) Setup(cfg KillswitchConfig) error {
 	if err := fw.setupBaselineChains(); err != nil {
 		return err
 	}
-	log.Success(fmt.Sprintf("Baseline established (%s)", fw.Ipt4Cmd))
+	log.Success(fmt.Sprintf("Baseline established (%s)", fw.ipt4Cmd))
 	fw.active = true
 
 	// Resolve LOCAL_NETWORKS keywords into CIDRs and add them to chains if != "none"
