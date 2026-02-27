@@ -34,9 +34,13 @@ PROXY_PASS="pass"
 HC_INTERVAL="${HC_INTERVAL:-4}"
 HC_FAILURE_WINDOW="${HC_FAILURE_WINDOW:-4}"
 
+# Internals
+HC_TIMEOUT=2
+
 # Timeouts (seconds)
 CONNECT_TIMEOUT=25
-MAX_DOWNTIME="$(( HC_INTERVAL + HC_FAILURE_WINDOW ))"
+READY_TIMEOUT=10
+MAX_DOWNTIME="$(( HC_INTERVAL + HC_FAILURE_WINDOW + HC_TIMEOUT ))"
 
 # Counters
 PASSED=0
@@ -167,6 +171,12 @@ start_container() {
 # ============================================================================
 # Wait phases
 # ============================================================================
+
+wait_for_ready() {
+    step "Waiting for ready..."
+    wait_for "$READY_TIMEOUT" "Ready endpoint reports ready" \
+        curl -sf "$METRICS_URL/ready"
+}
 
 wait_for_healthy() {
     step "Waiting for VPN connection..."
@@ -353,9 +363,10 @@ test_killswitch() {
     fi
 
     # Wait for reconnect
-    info "Waiting for health to recover..."
+    info "Sleeping for $MAX_DOWNTIME seconds"
     sleep $MAX_DOWNTIME
 
+    info "Waiting for health to recover..."
     if ! wait_for "$CONNECT_TIMEOUT" "Reconnected" curl -sf "$METRICS_URL/health"; then
         return 1
     fi
@@ -563,6 +574,7 @@ main() {
     start_container
 
     # wait for up
+    wait_for_ready        || { summary; exit 1; }
     wait_for_healthy      || { summary; exit 1; }
     wait_for_port_forward || { summary; exit 1; }
 
