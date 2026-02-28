@@ -35,10 +35,10 @@ HC_INTERVAL="${HC_INTERVAL:-4}"
 HC_FAILURE_WINDOW="${HC_FAILURE_WINDOW:-4}"
 
 # Internals
-HC_TIMEOUT=2
+HC_TIMEOUT=3
 
 # Timeouts (seconds)
-CONNECT_TIMEOUT=25
+CONNECT_TIMEOUT=15
 READY_TIMEOUT=10
 MAX_DOWNTIME="$(( HC_INTERVAL + HC_FAILURE_WINDOW + HC_TIMEOUT ))"
 
@@ -198,8 +198,14 @@ wait_for_port_forward() {
 }
 
 wait_for_wan_down() {
-    step "Waiting for wan down..."
-    wait_for 15 "WAN down" wan_down
+    info "Waiting for wan down..."
+    wait_for 10 "WAN down" wan_down
+}
+
+wait_for_unhealthy() {
+    info "Waiting for unhealthy..."
+    wait_for "$(( MAX_DOWNTIME + 5 ))" "Health endpoint reports unhealthy" \
+        bash -c "! curl -sf $METRICS_URL/health >/dev/null 2>&1"
 }
 
 # ============================================================================
@@ -363,8 +369,7 @@ test_killswitch() {
     fi
 
     # Wait for reconnect
-    info "Sleeping for $MAX_DOWNTIME seconds"
-    sleep $MAX_DOWNTIME
+    wait_for_unhealthy
 
     info "Waiting for health to recover..."
     if ! wait_for "$CONNECT_TIMEOUT" "Reconnected" curl -sf "$METRICS_URL/health"; then
@@ -496,7 +501,7 @@ emulate_wan_down() {
     dexec ip link set down pia0
     info "pia0 interface set down"
 
-    sleep $MAX_DOWNTIME
+    wait_for_unhealthy
 }
 
 test_downtime_leaks() {
