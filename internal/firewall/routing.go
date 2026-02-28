@@ -19,9 +19,9 @@ var privateNetworksV6 = []string{
 	"fc00::/7",
 }
 
-// SetupPrivateRoutes adds routing rules so traffic to RFC1918 and ULA
+// setupPrivateRoutes adds routing rules so traffic to RFC1918 and ULA
 // networks uses the main routing table instead of the VPN tunnel.
-func (fw *Firewall) SetupPrivateRoutes() error {
+func (fw *Firewall) setupPrivateRoutes() error {
 	for _, network := range privateNetworks {
 		args := []string{"rule", "add", "to", network, "table", "main", "priority", strconv.Itoa(priorityLocalNet)}
 		fw.log.Debug("exec: ip %s", strings.Join(args, " "))
@@ -39,8 +39,8 @@ func (fw *Firewall) SetupPrivateRoutes() error {
 	return nil
 }
 
-// CleanupPrivateRoutes removes all routing rules at priority 100 (IPv4 and IPv6).
-func (fw *Firewall) CleanupPrivateRoutes() {
+// cleanupPrivateRoutes removes all routing rules at priority 100 (IPv4 and IPv6).
+func (fw *Firewall) cleanupPrivateRoutes() {
 	priority := strconv.Itoa(priorityLocalNet)
 	for _, family := range [][]string{{}, {"-6"}} {
 		for {
@@ -56,9 +56,9 @@ func (fw *Firewall) CleanupPrivateRoutes() {
 const priorityPIAGuard = 76
 const priorityPIA = 75
 
-// AddPIADNSRoutes adds routing rules for PIA's internal dns so it uses the VPN
+// addPIADNSRoutes adds routing rules for PIA's internal dns so it uses the VPN
 // table instead of being caught by the RFC1918 bypass at priority 100.
-func (fw *Firewall) AddPIADNSRoutes(dns string) error {
+func (fw *Firewall) addPIADNSRoutes(dns string) error {
 	if dns == "pia" {
 		for _, ip := range []string{"10.0.0.242", "10.0.0.243"} {
 			// Prevent fallthrough to priority 100 (LOCAL_NETWORKS) when pia0 is down
@@ -92,7 +92,7 @@ func (fw *Firewall) AddPFRoute(pfEnabled bool, pfGateway string) error {
 	return nil
 }
 
-func (fw *Firewall) RemovePIADNSRoutes() {
+func (fw *Firewall) removePIADNSRoutes() {
 	for _, ip := range []string{"10.0.0.242", "10.0.0.243"} {
 		args := []string{"rule", "del", "to", ip, "lookup", "51820", "priority", strconv.Itoa(priorityPIA)}
 		exec.Command("ip", args...).Run()

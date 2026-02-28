@@ -12,6 +12,7 @@ import (
 type KillswitchConfig struct {
 	LANs        string
 	IPv6Enabled bool
+	DNS         string
 }
 
 // Setup applies the baseline killswitch: resolves local networks, sets up bypass
@@ -82,6 +83,16 @@ func (fw *Firewall) Setup(cfg KillswitchConfig) error {
 	}
 	log.Success("DROP Rule on all VPN chains")
 
+	// Set up RFC1918/ULA bypass routes so LOCAL_NETWORKS traffic uses default gateway, not pia0
+	if err := fw.setupPrivateRoutes(); err != nil {
+		return fmt.Errorf("failed to setup private network routes: %w", err)
+	}
+
+	// Configure DNS once after killswitch is up
+	if err := fw.addPIADNSRoutes(cfg.DNS); err != nil {
+		return fmt.Errorf("failed to add PIA DNS routes: %w", err)
+	}
+
 	return nil
 }
 
@@ -91,6 +102,8 @@ func (fw *Firewall) Cleanup() {
 	defer fw.mu.Unlock()
 
 	fw.log.Debug("Full killswitch cleanup")
+	fw.cleanupPrivateRoutes()
+	fw.removePIADNSRoutes()
 	fw.cleanupMSSClamping()
 	fw.cleanupBypassRoutes()
 	fw.cleanupChains()

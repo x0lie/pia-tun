@@ -68,17 +68,21 @@ func Run(ctx context.Context) error {
 	log.StartupBanner(a.cfg.Version, a.cfg.SHA)
 
 	if err := a.initialize(ctx); err != nil {
-		return fmt.Errorf("initialization failed: %w", err)
+		log.Error(err.Error())
+		return err
 	}
 	defer a.cleanup()
 
 	// Initial connection with retry
 	if err := a.connectLoop(ctx); err != nil {
+		log.Error(err.Error())
 		return err
 	}
 
 	a.connectionUp.Store(true)
 	a.metrics.UpdateConnectionStatus(true)
+
+	a.showMonitorStatus()
 
 	// Permanent services (persist across reconnects, use parent ctx)
 	if a.cfg.Proxy.Enabled {
@@ -104,6 +108,7 @@ func Run(ctx context.Context) error {
 			a.wan.WaitForUp(ctx, a.metrics)
 
 			if err := a.connectLoop(ctx); err != nil {
+				log.Error(err.Error())
 				return err
 			}
 			a.connectionUp.Store(true)
@@ -111,7 +116,8 @@ func Run(ctx context.Context) error {
 			continue
 		}
 
-		return fmt.Errorf("services exited unexpectedly: %w", err)
+		log.Error(err.Error())
+		return err
 	}
 }
 
@@ -120,8 +126,7 @@ func (a *App) initialize(ctx context.Context) error {
 	exec.CommandContext(ctx, "ip", "link", "delete", "pia0").Run()
 
 	if err := checkCapNetAdmin(); err != nil {
-		log.Error("Container missing CAP_NET_ADMIN capability")
-		log.Error("Required for firewall management. Add '--cap-add=NET_ADMIN'")
+		log.Warning("Required for firewall management. Add '--cap-add=NET_ADMIN'")
 		return err
 	}
 	a.log.Debug("CAP_NET_ADMIN check passed")
@@ -129,38 +134,29 @@ func (a *App) initialize(ctx context.Context) error {
 	// Initialize firewall
 	fw, err := firewall.New(a.cfg.FW.Backend)
 	if err != nil {
-		log.Error("Failed to initialize firewall")
-		return fmt.Errorf("firewall init: %w", err)
+		return err
 	}
 	a.fw = fw
-	a.resolver = pia.NewResolver(fw, a.log)
 
-	if err := a.fw.Setup(firewall.KillswitchConfig{LANs: a.cfg.FW.LANs, IPv6Enabled: a.cfg.VPN.IPv6Enabled}); err != nil {
-		log.Error("CRITICAL: Killswitch setup failed - cannot safely connect to VPN")
-		return fmt.Errorf("killswitch setup failed: %w", err)
-	}
-
-	// Set up RFC1918/ULA bypass routes so LOCAL_NETWORKS traffic uses default gateway, not pia0
-	if err := a.fw.SetupPrivateRoutes(); err != nil {
-		log.Error("Failed to setup private network routes")
-		return fmt.Errorf("private network routes: %w", err)
-	}
-
-	// Configure DNS once after killswitch is up
-	if err := a.fw.AddPIADNSRoutes(a.cfg.FW.DNS); err != nil {
-		log.Warning(fmt.Sprintf("Failed to add PIA DNS routes: %v", err))
+	// Setup Killswitch
+	if err := a.fw.Setup(firewall.KillswitchConfig{LANs: a.cfg.FW.LANs, IPv6Enabled: a.cfg.VPN.IPv6Enabled, DNS: a.cfg.FW.DNS}); err != nil {
+		return err
 	}
 	a.writeDNS()
 
+	// Run Metrics Collector
 	a.metrics = metrics.New(a.cfg.Metrics, a.cfg.Version)
 	if a.cfg.Metrics.Enabled {
 		go a.metrics.RunCollector(ctx, a.fw)
 	}
 
+	// Start API server
 	a.api = api.New(a.cfg.Metrics.Port, a.fw.IsActive, a.connectionUp.Load, a.metrics)
 	go a.api.Start()
 
 	a.wan = &wan.Checker{}
+
+	a.resolver = pia.NewResolver(fw, a.log)
 
 	// Non-fatal: capture pre-VPN IP for leak detection
 	a.captureRealIP(ctx)
@@ -191,6 +187,7 @@ func (a *App) connect(ctx context.Context) error {
 	a.log.Debug("Connected to %s (%s) in %s, latency %dms",
 		connInfo.ServerCN, connInfo.ServerIP, connInfo.Location, connInfo.Latency.Milliseconds())
 	a.metrics.RecordNewConnection(connInfo.ServerCN, connInfo.ServerIP)
+
 	if err := a.fw.AddPFRoute(a.cfg.PF.Enabled, a.connInfo.PFGateway); err != nil {
 		log.Warning(fmt.Sprintf("Failed to add PF gateway route: %v", err))
 	}
@@ -203,7 +200,6 @@ func (a *App) connect(ctx context.Context) error {
 		log.Warning(fmt.Sprintf("%v", err))
 	}
 	log.ConnectedBanner()
-	a.showStatus()
 
 	return nil
 }
@@ -226,14 +222,12 @@ func (a *App) connectLoop(ctx context.Context) error {
 
 		// AuthError is fatal - bad credentials, don't retry
 		if _, isAuth := err.(*pia.AuthError); isAuth {
-			log.Error("Authentication failed - check PIA_USER and PIA_PASS")
+			log.Warning("Check PIA_USER/PASS or secrets pia_user/pass")
 			return err
 		}
 
 		// LocationError is fatal - no servers available, don't retry
 		if _, isLocation := err.(*pia.LocationError); isLocation {
-			log.Error(err.Error())
-			log.Warning("Check PIA_LOCATION")
 			return err
 		}
 
@@ -317,7 +311,8 @@ func (a *App) runServices(ctx context.Context) error {
 	return fmt.Errorf("services exited: %w", err)
 }
 
-func (a *App) showStatus() {
+func (a *App) showMonitorStatus() {
+	log.Step("Health monitor running...")
 	log.Success(fmt.Sprintf("Check interval: %ds, Failure window: %ds",
 		int(a.cfg.Monitor.Interval.Seconds()),
 		int(a.cfg.Monitor.FailureWindow.Seconds())))
@@ -359,8 +354,8 @@ func (a *App) teardown() {
 	a.log.Debug("Tearing down VPN tunnel")
 	// Remove VPN from killswitch first to prevent leak window
 	a.fw.RemoveVPN()
-	wg.Down(context.Background(), a.log)
 	a.fw.RemovePFRoute(a.connInfo.PFGateway)
+	wg.Down(context.Background(), a.log)
 	a.connInfo = nil
 }
 
@@ -371,8 +366,6 @@ func (a *App) cleanup() {
 	if a.connInfo != nil {
 		a.teardown()
 	}
-	a.fw.CleanupPrivateRoutes()
-	a.fw.RemovePIADNSRoutes()
 	if a.exitedCleanly {
 		a.fw.Cleanup()
 	} else {
@@ -422,8 +415,6 @@ func (a *App) writeDNS() {
 		a.log.Debug("Failed to write /etc/resolv.conf: %v", err)
 	}
 }
-
-// Environment setup (called before LoadConfig)
 
 func checkCapNetAdmin() error {
 	data, err := os.ReadFile("/proc/self/status")
