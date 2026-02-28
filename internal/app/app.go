@@ -59,8 +59,12 @@ func Run(ctx context.Context) error {
 		cache: &vpn.CacheState{},
 		log:   log.New("app"),
 	}
-
 	a.logConfig()
+	if err := a.cfg.validate(); err != nil {
+		log.Error(err.Error())
+		return err
+	}
+
 	log.StartupBanner(a.cfg.Version, a.cfg.SHA)
 
 	if err := a.initialize(ctx); err != nil {
@@ -113,18 +117,6 @@ func Run(ctx context.Context) error {
 
 // initialize validates config, clears stale state, sets up the killswitch, and configures DNS.
 func (a *App) initialize(ctx context.Context) error {
-	// Validate required credentials early
-	if a.cfg.PIA.User == "" || a.cfg.PIA.Pass == "" {
-		log.Error("PIA credentials not configured")
-		log.Error("Set PIA_USER and PIA_PASS environment variables, or use Docker secrets at /run/secrets/pia_user and /run/secrets/pia_pass")
-		return fmt.Errorf("PIA credentials not configured")
-	}
-	if a.cfg.PIA.Location == "" && a.cfg.PIA.CN == "" {
-		log.Error("PIA_LOCATION not configured")
-		log.Error("Set PIA_LOCATION to a region ID (e.g., 'us_california', 'uk_london')")
-		return fmt.Errorf("PIA_LOCATION not configured")
-	}
-
 	exec.CommandContext(ctx, "ip", "link", "delete", "pia0").Run()
 
 	if err := checkCapNetAdmin(); err != nil {

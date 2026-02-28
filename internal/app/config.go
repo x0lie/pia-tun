@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -137,6 +138,16 @@ func loadMonitorConfig() monitor.Config {
 		Interval:      time.Duration(getEnvInt("HC_INTERVAL", 10)) * time.Second,
 		FailureWindow: time.Duration(getEnvInt("HC_FAILURE_WINDOW", 30)) * time.Second,
 	}
+}
+
+func (c *Config) validate() error {
+	if c.PIA.User == "" || c.PIA.Pass == "" {
+		return fmt.Errorf("Set PIA_USER and PIA_PASS environment variables, or use Docker secrets at /run/secrets/pia_user and pia_pass")
+	}
+	if c.PIA.Location == "" && c.PIA.CN == "" {
+		return fmt.Errorf("Set PIA_LOCATION to a region ID (e.g., 'ca_ontario', 'us_california', 'uk_london')")
+	}
+	return nil
 }
 
 func getEnv(key, def string) string {
