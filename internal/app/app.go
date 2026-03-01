@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -65,8 +63,6 @@ func Run(ctx context.Context) error {
 		return err
 	}
 
-	log.StartupBanner(a.cfg.Version, a.cfg.SHA)
-
 	if err := a.initialize(ctx); err != nil {
 		log.Error(err.Error())
 		return err
@@ -79,14 +75,9 @@ func Run(ctx context.Context) error {
 		return err
 	}
 
-	a.connectionUp.Store(true)
-	a.metrics.UpdateConnectionStatus(true)
-
 	a.showMonitorStatus()
-
-	// Permanent services (persist across reconnects, use parent ctx)
 	if a.cfg.Proxy.Enabled {
-		a.startProxy(ctx)
+		a.showProxyStatus()
 	}
 
 	for {
@@ -96,23 +87,19 @@ func Run(ctx context.Context) error {
 			return nil // graceful shutdown (SIGTERM)
 		}
 
-		a.connectionUp.Store(false)
-		a.metrics.UpdateConnectionStatus(false)
 		if errors.Is(err, ErrReconnect) {
 			a.log.Debug("Services requested reconnect")
 
-			log.ReconnectingBanner()
 			a.teardown()
-
+			log.ReconnectingBanner()
 			a.metrics.RecordReconnect()
+
 			a.wan.WaitForUp(ctx, a.metrics)
 
 			if err := a.connectLoop(ctx); err != nil {
 				log.Error(err.Error())
 				return err
 			}
-			a.connectionUp.Store(true)
-			a.metrics.UpdateConnectionStatus(true)
 			continue
 		}
 
@@ -123,13 +110,10 @@ func Run(ctx context.Context) error {
 
 // initialize validates config, clears stale state, sets up the killswitch, and configures DNS.
 func (a *App) initialize(ctx context.Context) error {
-	exec.CommandContext(ctx, "ip", "link", "delete", "pia0").Run()
+	log.StartupBanner(a.cfg.Version, a.cfg.SHA)
 
-	if err := checkCapNetAdmin(); err != nil {
-		log.Warning("Required for firewall management. Add '--cap-add=NET_ADMIN'")
-		return err
-	}
-	a.log.Debug("CAP_NET_ADMIN check passed")
+	// Defensive cleanup
+	wg.Down(ctx, a.log)
 
 	// Initialize firewall
 	fw, err := firewall.New(a.cfg.FW.Backend)
@@ -142,7 +126,6 @@ func (a *App) initialize(ctx context.Context) error {
 	if err := a.fw.Setup(firewall.KillswitchConfig{LANs: a.cfg.FW.LANs, IPv6Enabled: a.cfg.VPN.IPv6Enabled, DNS: a.cfg.FW.DNS}); err != nil {
 		return err
 	}
-	a.writeDNS()
 
 	// Run Metrics Collector
 	a.metrics = metrics.New(a.cfg.Metrics, a.cfg.Version)
@@ -154,9 +137,19 @@ func (a *App) initialize(ctx context.Context) error {
 	a.api = api.New(a.cfg.Metrics.Port, a.fw.IsActive, a.connectionUp.Load, a.metrics)
 	go a.api.Start()
 
-	a.wan = &wan.Checker{}
+	// Start Proxy server
+	if a.cfg.Proxy.Enabled {
+		go func() {
+			if err := proxy.Run(ctx, a.cfg.Proxy); err != nil {
+				log.Error(fmt.Sprintf("Proxy server error: %v", err))
+			}
+		}()
+	}
 
+	a.wan = &wan.Checker{}
 	a.resolver = pia.NewResolver(fw, a.log)
+
+	a.writeDNS()
 
 	// Non-fatal: capture pre-VPN IP for leak detection
 	a.captureRealIP(ctx)
@@ -188,10 +181,6 @@ func (a *App) connect(ctx context.Context) error {
 		connInfo.ServerCN, connInfo.ServerIP, connInfo.Location, connInfo.Latency.Milliseconds())
 	a.metrics.RecordNewConnection(connInfo.ServerCN, connInfo.ServerIP)
 
-	if err := a.fw.AddPFRoute(a.cfg.PF.Enabled, a.connInfo.PFGateway); err != nil {
-		log.Warning(fmt.Sprintf("Failed to add PF gateway route: %v", err))
-	}
-
 	// Verify connection (non-fatal)
 	log.Step("Verifying connection...")
 	if publicIP, err := vpn.VerifyConnection(ctx); err == nil {
@@ -199,13 +188,17 @@ func (a *App) connect(ctx context.Context) error {
 	} else {
 		log.Warning(fmt.Sprintf("%v", err))
 	}
+
+	// Signal success
+	a.connectionUp.Store(true)
+	a.metrics.UpdateConnectionStatus(true)
 	log.ConnectedBanner()
 
 	return nil
 }
 
 // connectLoop retries connect() with exponential backoff until it succeeds or the context is cancelled.
-// Returns immediately on AuthError (bad credentials - fatal).
+// Returns immediately on AuthError and LocationError (bad config - fatal).
 func (a *App) connectLoop(ctx context.Context) error {
 	delay := 5 * time.Second
 	const maxDelay = 60 * time.Second
@@ -253,9 +246,9 @@ func (a *App) connectLoop(ctx context.Context) error {
 	}
 }
 
-// runServices starts transient services (monitor, cacher, port forwarding, port monitor) as
-// goroutines managed by errgroup. Proxy and API server are permanent services started
-// separately. Returns ErrReconnect if reconnection was requested, nil on graceful shutdown.
+// runServices starts services that track with vpn lifecycle. They run as goroutines managed
+// by errgroup. Services that track with container lifecycle start in initialize. Returns
+// ErrReconnect for reconnection request and nil on graceful shutdown
 func (a *App) runServices(ctx context.Context) error {
 	svcCtx, svcCancel := context.WithCancelCause(ctx)
 	defer svcCancel(nil)
@@ -275,6 +268,7 @@ func (a *App) runServices(ctx context.Context) error {
 		return cacher.Run(gCtx, a.cache, a.cfg.PIA.User, a.cfg.PIA.Pass)
 	})
 
+	// Port syncer - conditional
 	syncer := portsync.New(a.cfg.PS)
 	if a.cfg.PS.Client != "" || a.cfg.PS.Script != "" {
 		g.Go(func() error {
@@ -298,15 +292,21 @@ func (a *App) runServices(ctx context.Context) error {
 		})
 	}
 
+	// Wait for error (requesting reconnect)
 	errCh := make(chan error, 1)
 	go func() { errCh <- g.Wait() }()
-
 	err := <-errCh
+
 	if ctx.Err() != nil {
 		return nil // parent SIGTERM
 	}
+
+	// Signal down state
+	a.connectionUp.Store(false)
+	a.metrics.UpdateConnectionStatus(false)
+
 	if errors.Is(context.Cause(svcCtx), ErrReconnect) {
-		return ErrReconnect
+		return ErrReconnect // Issue reconnect
 	}
 	return fmt.Errorf("services exited: %w", err)
 }
@@ -327,11 +327,8 @@ func (a *App) showMonitorStatus() {
 	}
 }
 
-// startProxy launches the SOCKS5/HTTP proxy as a background goroutine.
-// It uses the parent context so the proxy persists across VPN reconnects
-// and shuts down only on SIGTERM.
-func (a *App) startProxy(ctx context.Context) {
-	log.Step("Starting proxy servers...")
+func (a *App) showProxyStatus() {
+	log.Step("Proxy server running...")
 
 	if a.cfg.Proxy.User != "" && a.cfg.Proxy.Pass != "" {
 		log.Success("Proxy servers ready (authenticated):")
@@ -342,17 +339,10 @@ func (a *App) startProxy(ctx context.Context) {
 		log.Info(fmt.Sprintf("    SOCKS5: socks5://<container-ip>:%d", a.cfg.Proxy.Socks5Port))
 		log.Info(fmt.Sprintf("    HTTP:   http://<container-ip>:%d", a.cfg.Proxy.HTTPPort))
 	}
-
-	go func() {
-		if err := proxy.Run(ctx, a.cfg.Proxy); err != nil {
-			log.Error(fmt.Sprintf("Proxy server error: %v", err))
-		}
-	}()
 }
 
 func (a *App) teardown() {
 	a.log.Debug("Tearing down VPN tunnel")
-	// Remove VPN from killswitch first to prevent leak window
 	a.fw.RemoveVPN()
 	a.fw.RemovePFRoute(a.connInfo.PFGateway)
 	wg.Down(context.Background(), a.log)
@@ -414,28 +404,4 @@ func (a *App) writeDNS() {
 	if err := os.WriteFile("/etc/resolv.conf", []byte(buf.String()), 0644); err != nil {
 		a.log.Debug("Failed to write /etc/resolv.conf: %v", err)
 	}
-}
-
-func checkCapNetAdmin() error {
-	data, err := os.ReadFile("/proc/self/status")
-	if err != nil {
-		return fmt.Errorf("cannot read /proc/self/status: %w", err)
-	}
-
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "CapEff:") {
-			hex := strings.TrimSpace(strings.TrimPrefix(line, "CapEff:"))
-			capEff, err := strconv.ParseUint(hex, 16, 64)
-			if err != nil {
-				return fmt.Errorf("cannot parse CapEff: %w", err)
-			}
-			const capNetAdmin = 1 << 12
-			if capEff&capNetAdmin == 0 {
-				return fmt.Errorf("missing CAP_NET_ADMIN")
-			}
-			return nil
-		}
-	}
-
-	return fmt.Errorf("CapEff not found in /proc/self/status")
 }

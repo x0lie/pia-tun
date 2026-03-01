@@ -131,6 +131,11 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *CacheS
 	}
 	log.Success("VPN added to killswitch")
 
+	// Step 6: Add PFGateway route if PF.Enabled
+	if err := fw.AddPFRoute(cfg.PFRequired, addKeyResp.ServerVIP); err != nil {
+		log.Warning(fmt.Sprintf("Failed to add PF gateway route: %v", err))
+	}
+
 	return &ConnectionInfo{
 		Token:        token,
 		ServerIP:     serverIP,

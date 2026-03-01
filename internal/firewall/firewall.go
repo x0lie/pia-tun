@@ -2,6 +2,7 @@ package firewall
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -30,6 +31,11 @@ type Firewall struct {
 // Respects the IPT_BACKEND environment variable ("legacy" or "nft").
 func New(backend string) (*Firewall, error) {
 	logger := log.New("firewall")
+
+	if err := checkCapNetAdmin(); err != nil {
+		return nil, err
+	}
+
 	ipt4Cmd, ipt6Cmd := detectBackend(backend, logger)
 
 	ipt4, err := iptables.New(iptables.IPFamily(iptables.ProtocolIPv4), iptables.Path(ipt4Cmd))
@@ -119,4 +125,28 @@ func (fw *Firewall) GetDropStats() (packetsIn, bytesIn, packetsOut, bytesOut int
 	bytesOut += b
 
 	return packetsIn, bytesIn, packetsOut, bytesOut
+}
+
+func checkCapNetAdmin() error {
+	data, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return fmt.Errorf("cannot read /proc/self/status: %w", err)
+	}
+
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "CapEff:") {
+			hex := strings.TrimSpace(strings.TrimPrefix(line, "CapEff:"))
+			capEff, err := strconv.ParseUint(hex, 16, 64)
+			if err != nil {
+				return fmt.Errorf("cannot parse CapEff: %w", err)
+			}
+			const capNetAdmin = 1 << 12
+			if capEff&capNetAdmin == 0 {
+				return fmt.Errorf("missing CAP_NET_ADMIN")
+			}
+			return nil
+		}
+	}
+
+	return fmt.Errorf("CapEff not found in /proc/self/status")
 }
