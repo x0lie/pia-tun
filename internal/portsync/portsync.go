@@ -69,6 +69,7 @@ func (s *Syncer) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			s.log.Debug("Received shutdown signal")
 			return nil
 		case port := <-s.portCh:
 			s.handleNewPort(ctx, port)

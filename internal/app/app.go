@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/api"
+	"github.com/x0lie/pia-tun/internal/apperrors"
 	"github.com/x0lie/pia-tun/internal/cacher"
 	"github.com/x0lie/pia-tun/internal/firewall"
 	"github.com/x0lie/pia-tun/internal/log"
@@ -24,9 +25,6 @@ import (
 	"github.com/x0lie/pia-tun/internal/wg"
 	"golang.org/x/sync/errgroup"
 )
-
-// ErrReconnect is a sentinel error indicating a service has requested VPN reconnection.
-var ErrReconnect = errors.New("reconnect requested")
 
 // App holds the application state and configuration.
 type App struct {
@@ -87,19 +85,19 @@ func Run(ctx context.Context) error {
 			return nil // graceful shutdown (SIGTERM)
 		}
 
-		if errors.Is(err, ErrReconnect) {
-			a.log.Debug("Services requested reconnect")
+		if errors.Is(err, apperrors.ErrReconnect) {
+			log.Info("")
+			log.Error(err.Error())
 
 			a.teardown()
 			log.ReconnectingBanner()
-			a.metrics.RecordReconnect()
-
 			a.wan.WaitForUp(ctx, a.metrics)
 
 			if err := a.connectLoop(ctx); err != nil {
 				log.Error(err.Error())
 				return err
 			}
+			a.metrics.RecordReconnect()
 			continue
 		}
 
@@ -250,17 +248,11 @@ func (a *App) connectLoop(ctx context.Context) error {
 // by errgroup. Services that track with container lifecycle start in initialize. Returns
 // ErrReconnect for reconnection request and nil on graceful shutdown
 func (a *App) runServices(ctx context.Context) error {
-	svcCtx, svcCancel := context.WithCancelCause(ctx)
-	defer svcCancel(nil)
-
-	g, gCtx := errgroup.WithContext(svcCtx)
+	g, gCtx := errgroup.WithContext(ctx)
 
 	// Monitor - always runs (verifies tunnel working)
-	mntrReconnect := func() {
-		svcCancel(ErrReconnect)
-	}
 	g.Go(func() error {
-		return monitor.Run(gCtx, &a.cfg.Monitor, mntrReconnect, a.metrics, a.connInfo.ServerIP)
+		return monitor.Run(gCtx, &a.cfg.Monitor, a.metrics, a.connInfo.ServerIP)
 	})
 
 	// Cacher - always runs (refreshes PIA login token and server list)
@@ -278,9 +270,6 @@ func (a *App) runServices(ctx context.Context) error {
 
 	// Port forwarding - conditional
 	if a.cfg.PF.Enabled {
-		pfReconnect := func() {
-			svcCancel(ErrReconnect)
-		}
 		connCfg := portforward.ConnectionConfig{
 			Token:     a.connInfo.Token,
 			ClientIP:  a.connInfo.ClientIP,
@@ -288,14 +277,12 @@ func (a *App) runServices(ctx context.Context) error {
 			PFGateway: a.connInfo.PFGateway,
 		}
 		g.Go(func() error {
-			return portforward.Run(gCtx, &a.cfg.PF, &connCfg, pfReconnect, a.metrics, syncer, a.fw)
+			return portforward.Run(gCtx, &a.cfg.PF, &connCfg, a.metrics, syncer, a.fw)
 		})
 	}
 
-	// Wait for error (requesting reconnect)
-	errCh := make(chan error, 1)
-	go func() { errCh <- g.Wait() }()
-	err := <-errCh
+	// Wait for error (reconnect or fatal)
+	err := g.Wait()
 
 	if ctx.Err() != nil {
 		return nil // parent SIGTERM
@@ -305,10 +292,7 @@ func (a *App) runServices(ctx context.Context) error {
 	a.connectionUp.Store(false)
 	a.metrics.UpdateConnectionStatus(false)
 
-	if errors.Is(context.Cause(svcCtx), ErrReconnect) {
-		return ErrReconnect // Issue reconnect
-	}
-	return fmt.Errorf("services exited: %w", err)
+	return err
 }
 
 func (a *App) showMonitorStatus() {

@@ -6,6 +6,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/x0lie/pia-tun/internal/apperrors"
 	"github.com/x0lie/pia-tun/internal/log"
 	"github.com/x0lie/pia-tun/internal/metrics"
 )
@@ -18,48 +19,46 @@ type Config struct {
 
 // Monitor manages VPN health monitoring.
 type Monitor struct {
-	config      *Config
-	log         *log.Logger
-	metrics     *metrics.Metrics
-	onReconnect func()
-	serverIP    string
+	config   *Config
+	log      *log.Logger
+	metrics  *metrics.Metrics
+	serverIP string
 }
 
-func Run(ctx context.Context, cfg *Config, onReconnect func(), m *metrics.Metrics, serverIP string) error {
-	monitor := &Monitor{
-		config:      cfg,
-		log:         log.New("monitor"),
-		metrics:     m,
-		onReconnect: onReconnect,
-		serverIP:    serverIP,
+func Run(ctx context.Context, cfg *Config, metrics *metrics.Metrics, serverIP string) error {
+	m := &Monitor{
+		config:   cfg,
+		log:      log.New("monitor"),
+		metrics:  metrics,
+		serverIP: serverIP,
 	}
 
-	monitor.monitorLoop(ctx)
-	return nil
-}
-
-func (m *Monitor) monitorLoop(ctx context.Context) {
 	m.log.Debug("Loop starting with %s interval and %s failure tolerance", m.config.Interval, m.config.FailureWindow)
+
 	ticker := time.NewTicker(m.config.Interval)
 	defer ticker.Stop()
 
-	m.performCheck(ctx)
+	if err := m.performCheck(ctx); err != nil {
+		return fmt.Errorf("%w: %w", err, apperrors.ErrReconnect)
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			m.log.Debug("Received shutdown signal")
-			return
+			return nil
 
 		case <-ticker.C:
-			m.performCheck(ctx)
+			if err := m.performCheck(ctx); err != nil {
+				return fmt.Errorf("%w: %w", err, apperrors.ErrReconnect)
+			}
 		}
 	}
 }
 
 const timeout = 3 * time.Second
 
-func (m *Monitor) performCheck(ctx context.Context) {
+func (m *Monitor) performCheck(ctx context.Context) error {
 	var serverLatencyChan chan float64
 
 	// Server latency metric gathering
@@ -89,16 +88,19 @@ func (m *Monitor) performCheck(ctx context.Context) {
 	}
 
 	if ctx.Err() != nil {
-		return
+		return nil
 	}
 
 	// If check failed, enter rapid check mode
 	if err != nil {
-		m.performRapidChecks(ctx)
+		if err = m.performRapidChecks(ctx); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func (m *Monitor) performRapidChecks(ctx context.Context) {
+func (m *Monitor) performRapidChecks(ctx context.Context) error {
 	m.log.Debug("Entering rapid check mode (failure window: %s)", m.config.FailureWindow)
 
 	recovered := false
@@ -107,7 +109,7 @@ func (m *Monitor) performRapidChecks(ctx context.Context) {
 
 	for {
 		if ctx.Err() != nil {
-			return
+			return nil
 		}
 
 		remaining := m.config.FailureWindow - time.Since(failureStart)
@@ -139,17 +141,9 @@ func (m *Monitor) performRapidChecks(ctx context.Context) {
 	}
 
 	if !recovered {
-		log.Info("")
-		log.Error(fmt.Sprintf("VPN connection lost (down for more than %s)", m.config.FailureWindow))
-		m.triggerReconnect()
+		return fmt.Errorf("connection down for more than %s", m.config.FailureWindow)
 	}
-}
-
-func (m *Monitor) triggerReconnect() {
-	if m.onReconnect != nil {
-		m.log.Debug("Signaling orchestrator to reconnect")
-		m.onReconnect()
-	}
+	return nil
 }
 
 func (m *Monitor) checkConnectivity(ctx context.Context, timeout time.Duration) (time.Duration, error) {

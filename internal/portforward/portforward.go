@@ -2,12 +2,12 @@ package portforward
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"time"
 
+	"github.com/x0lie/pia-tun/internal/apperrors"
 	"github.com/x0lie/pia-tun/internal/firewall"
 	"github.com/x0lie/pia-tun/internal/log"
 	"github.com/x0lie/pia-tun/internal/metrics"
@@ -30,15 +30,14 @@ type ConnectionConfig struct {
 }
 
 type manager struct {
-	cfg         *Config
-	connCfg     *ConnectionConfig
-	log         *log.Logger
-	httpClient  *http.Client
-	state       *state
-	onReconnect func()
-	metrics     *metrics.Metrics
-	syncer      *portsync.Syncer
-	fw          *firewall.Firewall
+	cfg        *Config
+	connCfg    *ConnectionConfig
+	log        *log.Logger
+	httpClient *http.Client
+	state      *state
+	metrics    *metrics.Metrics
+	syncer     *portsync.Syncer
+	fw         *firewall.Firewall
 }
 
 type state struct {
@@ -55,21 +54,20 @@ const (
 	portBindDuration = 20 * time.Minute // conservative evaluation of port bind death (tested ~23 minute lifespan)
 )
 
-func newManager(config *Config, connConfig *ConnectionConfig, logger *log.Logger, onReconnect func(), metrics *metrics.Metrics, syncer *portsync.Syncer, fw *firewall.Firewall) *manager {
+func newManager(config *Config, connConfig *ConnectionConfig, logger *log.Logger, metrics *metrics.Metrics, syncer *portsync.Syncer, fw *firewall.Firewall) *manager {
 	return &manager{
-		cfg:         config,
-		connCfg:     connConfig,
-		log:         logger,
-		httpClient:  pia.NewBoundClient(3*time.Second, 3*time.Second),
-		state:       &state{},
-		onReconnect: onReconnect,
-		metrics:     metrics,
-		syncer:      syncer,
-		fw:          fw,
+		cfg:        config,
+		connCfg:    connConfig,
+		log:        logger,
+		httpClient: pia.NewBoundClient(3*time.Second, 3*time.Second),
+		state:      &state{},
+		metrics:    metrics,
+		syncer:     syncer,
+		fw:         fw,
 	}
 }
 
-func Run(ctx context.Context, cfg *Config, connCfg *ConnectionConfig, onReconnect func(), metrics *metrics.Metrics, syncer *portsync.Syncer, fw *firewall.Firewall) error {
+func Run(ctx context.Context, cfg *Config, connCfg *ConnectionConfig, metrics *metrics.Metrics, syncer *portsync.Syncer, fw *firewall.Firewall) error {
 	if connCfg.PFGateway == "" {
 		return fmt.Errorf("port forwarding unavailable: no pf gateway")
 	}
@@ -84,19 +82,14 @@ func Run(ctx context.Context, cfg *Config, connCfg *ConnectionConfig, onReconnec
 	logger.Trace("  PEER_IP: %s", connCfg.ClientIP)
 	logger.Trace("  PIA_CN: %s", connCfg.ServerCN)
 
-	m := newManager(cfg, connCfg, logger, onReconnect, metrics, syncer, fw)
+	m := newManager(cfg, connCfg, logger, metrics, syncer, fw)
 
 	m.state.bindTime = time.Now().Add(-portBindDuration + time.Minute) // To limit initial run's failure threshold to 1 minute
 
 	log.Step("Acquiring forwarded port...")
 	if err := m.acquirePort(ctx); err != nil {
 		m.teardown()
-		if errors.Is(err, context.Canceled) {
-			return nil
-		}
-		log.Error(err.Error())
-		m.triggerReconnect(ctx)
-		return nil
+		return fmt.Errorf("%w: %w", err, apperrors.ErrReconnect)
 	}
 	m.announcePort()
 
@@ -123,24 +116,14 @@ func Run(ctx context.Context, cfg *Config, connCfg *ConnectionConfig, onReconnec
 				log.Step("Renewing forwarded port...")
 				if err := m.acquirePort(ctx); err != nil {
 					m.teardown()
-					if errors.Is(err, context.Canceled) {
-						return nil
-					}
-					log.Error(err.Error())
-					m.triggerReconnect(ctx)
-					return nil
+					return fmt.Errorf("%w: %w", err, apperrors.ErrReconnect)
 				}
 				m.announcePort()
 				continue
 			}
 			if err := m.bindPortWithRetry(ctx, m.state.payload, m.state.signature); err != nil {
 				m.teardown()
-				if errors.Is(err, context.Canceled) {
-					return nil
-				}
-				log.Error(err.Error())
-				m.triggerReconnect(ctx)
-				return nil
+				return fmt.Errorf("%w: %w", err, apperrors.ErrReconnect)
 			}
 		}
 	}
@@ -215,12 +198,4 @@ func (m *manager) announcePort() {
 func (m *manager) teardown() {
 	m.fw.RemoveForwardedPort()
 	m.metrics.UpdatePortForwarding(false, 0)
-}
-
-// Triggers reconnect and waits for context cancellation to avoid race
-// May be simplified in the future by returning ErrReconnect instead
-func (m *manager) triggerReconnect(ctx context.Context) {
-	m.log.Debug("Signaling orchestrator to reconnect")
-	m.onReconnect()
-	<-ctx.Done()
 }

@@ -102,7 +102,7 @@ func Run(ctx context.Context, cache *vpn.CacheState, piaUser string, piaPass str
 	// Initial refresh on startup
 	logger.Debug("Performing initial cache refresh")
 	if err := refreshAll(ctx, logger, cfg, client, cache); err != nil {
-		log.Warning(fmt.Sprintf("Initial cache refresh failed: %v", err))
+		logger.Debug(fmt.Sprintf("Initial cache refresh failed: %v", err))
 	} else {
 		logger.Debug("Cache initialized")
 	}
@@ -114,7 +114,7 @@ func Run(ctx context.Context, cache *vpn.CacheState, piaUser string, piaPass str
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Debug("Cacher received shutdown signal")
+			logger.Debug("Received shutdown signal")
 			return ctx.Err()
 
 		case <-ticker.C:

@@ -120,7 +120,7 @@ func (m *manager) bindPort(ctx context.Context, payload, signature string) error
 		errMsg := err.Error()
 		errMsg = strings.ReplaceAll(errMsg, url.QueryEscape(payload), url.QueryEscape(payloadPreview))
 		errMsg = strings.ReplaceAll(errMsg, url.QueryEscape(signature), url.QueryEscape(sigPreview))
-		return fmt.Errorf("request failed: %v", errMsg)
+		return fmt.Errorf("request failed: %s", errMsg)
 	}
 	defer resp.Body.Close()
 
@@ -199,6 +199,7 @@ func (m *manager) retryWithDeadline(ctx context.Context, operation string, fn fu
 			if errors.Is(retryCtx.Err(), context.DeadlineExceeded) {
 				return fmt.Errorf("failed to %s after %v - port bind expiring soon", operation, time.Since(startTime).Round(time.Second))
 			}
+			m.log.Debug("Received shutdown signal")
 			return ctx.Err()
 		}
 	}
