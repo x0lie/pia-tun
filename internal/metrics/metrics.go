@@ -82,8 +82,6 @@ type Metrics struct {
 	lastDroppedPacketsOut int64
 	lastDroppedBytesOut   int64
 
-	vpnInfoNeedsUpdate bool
-
 	registry *prometheus.Registry
 }
 
@@ -363,6 +361,9 @@ func (m *Metrics) RecordNewConnection(server, ip string) {
 }
 
 func (m *Metrics) UpdateConnectionStatus(connected bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	m.ConnectionUp = connected
 	if connected {
 		m.connectionUp.Set(1)
@@ -372,6 +373,9 @@ func (m *Metrics) UpdateConnectionStatus(connected bool) {
 }
 
 func (m *Metrics) UpdateKillswitchStatus(active bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	m.KillswitchActive = active
 	if active {
 		m.killswitchActive.Set(1)
@@ -381,6 +385,9 @@ func (m *Metrics) UpdateKillswitchStatus(active bool) {
 }
 
 func (m *Metrics) UpdateWANStatus(up bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	m.WANUp = up
 	if up {
 		m.wanUp.Set(1)
@@ -394,6 +401,9 @@ func (m *Metrics) UpdateLastHandshake(timestamp int64) {
 }
 
 func (m *Metrics) UpdatePortForwarding(active bool, port int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	m.PortForwardingActive = active
 	m.PortForwardingPort = port
 	if active {
