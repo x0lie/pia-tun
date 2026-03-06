@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/x0lie/pia-tun/internal/cacher"
 	"github.com/x0lie/pia-tun/internal/firewall"
 	"github.com/x0lie/pia-tun/internal/log"
 	"github.com/x0lie/pia-tun/internal/pia"
@@ -13,7 +14,6 @@ import (
 )
 
 const (
-	tokenMaxAge        = 23 * time.Hour
 	apiTimeout         = 5 * time.Second
 	latencyTestTimeout = 1 * time.Second
 )
@@ -31,10 +31,25 @@ type Config struct {
 	WGBackend  string
 }
 
+// ConnectionInfo holds the result of a successful VPN connection.
+// Populated by Setup() and consumed by monitor (metrics), port forwarding,
+// and the orchestrator.
+type ConnectionInfo struct {
+	Token        string
+	ServerIP     string
+	ServerCN     string
+	ClientIP     string
+	PFGateway    string
+	Location     string
+	LocationName string
+	Latency      time.Duration
+	WGMode       string
+}
+
 // Setup establishes a VPN connection and returns connection info.
 // Returns *pia.AuthError for credential failures (fatal).
 // Returns *pia.ConnectivityError for network failures (retry with WAN check).
-func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *CacheState, resolver *pia.Resolver) (*ConnectionInfo, error) {
+func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *pia.Resolver) (*ConnectionInfo, error) {
 	logger := log.New("vpn")
 
 	// Step 1: Select server and authenticate
@@ -151,7 +166,7 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *CacheS
 
 // selectServer fetches the server list, merges with cache, and selects by latency.
 // Flow: fetch fresh (cached IP or DNS) → merge with cache → filter → latency test
-func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *CacheState, resolver *pia.Resolver, logger *log.Logger) (pia.CachedServer, time.Duration, error) {
+func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *pia.Resolver, logger *log.Logger) (pia.CachedServer, time.Duration, error) {
 	// Fetch fresh server list (uses cached serverlist IPs, falls back to DNS)
 	log.Step(fmt.Sprintf("Selecting server across %s...", cfg.Location))
 	freshServers, err := fetchServerList(ctx, cache, resolver, fw, logger)
@@ -181,7 +196,7 @@ func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 }
 
 // fetchServerList fetches the server list using cached IPs or DNS resolution.
-func fetchServerList(ctx context.Context, cache *CacheState, resolver *pia.Resolver, fw *firewall.Firewall, logger *log.Logger) ([]pia.CachedServer, error) {
+func fetchServerList(ctx context.Context, cache *cacher.Cache, resolver *pia.Resolver, fw *firewall.Firewall, logger *log.Logger) ([]pia.CachedServer, error) {
 	client := pia.NewDirectClient(apiTimeout)
 
 	// Try cached serverlist IPs first
@@ -207,7 +222,7 @@ func fetchServerList(ctx context.Context, cache *CacheState, resolver *pia.Resol
 		return nil, err
 	}
 
-	cache.MergeIPs(&cache.ServerListIPs, ips, 5)
+	cache.MergeServerListIPs(ips)
 
 	for _, ip := range ips {
 		logger.Debug("Trying resolved serverlist IP: %s", ip)
@@ -228,13 +243,13 @@ func fetchServerList(ctx context.Context, cache *CacheState, resolver *pia.Resol
 }
 
 // getToken returns a valid authentication token, using cache if fresh.
-func getToken(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *CacheState, resolver *pia.Resolver, logger *log.Logger) (string, error) {
+func getToken(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *pia.Resolver, logger *log.Logger) (string, error) {
 	log.Step("Authenticating with PIA...")
 	// Use cached token if fresh
-	if cache.TokenFresh(tokenMaxAge) {
-		logger.Debug("Using cached token (age: %s)", time.Since(cache.TokenTime).Round(time.Second))
+	if fresh, tokenAge := cache.TokenFresh(); fresh {
+		logger.Debug("Using cached token (age: %v)", tokenAge)
 		log.Success("Using cached token")
-		return cache.Token, nil
+		return cache.GetToken(), nil
 	}
 
 	token, err := authenticate(ctx, cfg, fw, cache, resolver, logger)
@@ -248,13 +263,13 @@ func getToken(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *Cac
 }
 
 // authenticate obtains a new token from PIA.
-func authenticate(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *CacheState, resolver *pia.Resolver, logger *log.Logger) (string, error) {
+func authenticate(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *pia.Resolver, logger *log.Logger) (string, error) {
 	client := pia.NewDirectClient(apiTimeout)
 
 	// Try cached auth IPs first
 	for _, ip := range cache.AuthIPs {
 		logger.Debug("Trying cached auth IP: %s", ip)
-		token, err := tryAuth(ctx, client, ip, cfg.PIAUser, cfg.PIAPass, fw, logger)
+		token, err := tryAuth(ctx, client, ip, cfg.PIAUser, cfg.PIAPass, fw)
 		if err == nil {
 			return token, nil
 		}
@@ -271,11 +286,11 @@ func authenticate(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 		return "", err
 	}
 
-	cache.MergeIPs(&cache.AuthIPs, ips, 5)
+	cache.MergeAuthIPs(ips)
 
 	for _, ip := range ips {
 		logger.Debug("Trying resolved auth IP: %s", ip)
-		token, err := tryAuth(ctx, client, ip, cfg.PIAUser, cfg.PIAPass, fw, logger)
+		token, err := tryAuth(ctx, client, ip, cfg.PIAUser, cfg.PIAPass, fw)
 		if err == nil {
 			return token, nil
 		}
@@ -289,7 +304,7 @@ func authenticate(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 }
 
 // tryAuth attempts authentication with a single IP.
-func tryAuth(ctx context.Context, client *http.Client, ip, user, pass string, fw *firewall.Firewall, logger *log.Logger) (string, error) {
+func tryAuth(ctx context.Context, client *http.Client, ip, user, pass string, fw *firewall.Firewall) (string, error) {
 	exemption, err := fw.AddTemporaryExemption(ip, "443", "tcp", "auth")
 	if err != nil {
 		return "", &pia.ConnectivityError{Op: "auth", Msg: "add firewall exemption", Err: err}

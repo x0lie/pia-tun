@@ -32,7 +32,7 @@ type App struct {
 	cfg Config
 
 	// Runtime state
-	cache         *vpn.CacheState
+	cache         *cacher.Cache
 	fw            *firewall.Firewall
 	connInfo      *vpn.ConnectionInfo
 	connectionUp  atomic.Bool
@@ -52,7 +52,7 @@ type App struct {
 func Run(ctx context.Context) error {
 	a := &App{
 		cfg:   LoadConfig(),
-		cache: &vpn.CacheState{},
+		cache: &cacher.Cache{},
 		log:   log.New("app"),
 	}
 	a.logConfig()
@@ -101,6 +101,7 @@ func Run(ctx context.Context) error {
 			continue
 		}
 
+		log.Info("")
 		log.Error(err.Error())
 		return err
 	}
@@ -271,13 +272,12 @@ func (a *App) runServices(ctx context.Context) error {
 	// Port forwarding - conditional
 	if a.cfg.PF.Enabled {
 		connCfg := portforward.ConnectionConfig{
-			Token:     a.connInfo.Token,
 			ClientIP:  a.connInfo.ClientIP,
 			ServerCN:  a.connInfo.ServerCN,
 			PFGateway: a.connInfo.PFGateway,
 		}
 		g.Go(func() error {
-			return portforward.Run(gCtx, &a.cfg.PF, &connCfg, a.metrics, syncer, a.fw)
+			return portforward.Run(gCtx, &a.cfg.PF, &connCfg, a.cache, a.metrics, syncer, a.fw)
 		})
 	}
 

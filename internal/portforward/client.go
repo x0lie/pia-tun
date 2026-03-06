@@ -44,14 +44,14 @@ func (e *apiError) Error() string {
 }
 
 func (m *manager) getSignature(ctx context.Context) (*signatureResponse, error) {
-	token := m.connCfg.Token
+	token := m.cache.GetToken()
 	baseURL := fmt.Sprintf("https://%s:%v/getSignature", m.connCfg.PFGateway, pfAPIPort)
 	params := url.Values{}
 	params.Add("token", token)
 	fullURL := baseURL + "?" + params.Encode()
 
 	// Create preview for sanitization
-	tokenPreview := m.connCfg.Token
+	tokenPreview := token
 	if len(tokenPreview) > 8 {
 		tokenPreview = tokenPreview[:8] + "..."
 	}
@@ -152,6 +152,12 @@ func (m *manager) bindPort(ctx context.Context, payload, signature string) error
 }
 
 func (m *manager) getSignatureWithRetry(ctx context.Context) (*signatureResponse, error) {
+	fresh, tokenAge := m.cache.TokenFresh()
+	if !fresh {
+		return nil, fmt.Errorf("token expired (%v old)", tokenAge.Round(time.Second))
+	}
+	m.log.Debug("Token fresh (%v old)", tokenAge.Round(time.Second))
+
 	var resp *signatureResponse
 	err := m.retryWithDeadline(ctx, "getSignature", func() error {
 		var err error

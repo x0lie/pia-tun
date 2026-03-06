@@ -5,27 +5,40 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/log"
 	"github.com/x0lie/pia-tun/internal/pia"
-	"github.com/x0lie/pia-tun/internal/vpn"
 )
 
 const (
 	piaAuthHost       = "www.privateinternetaccess.com"
 	piaServerlistHost = "serverlist.piaservers.net"
 	maxCachedIPs      = 5
+	maxTokenAge       = 23 * time.Hour
 )
 
-// cacherConfig holds cacher configuration.
-type cacherConfig struct {
+type config struct {
 	piaUser         string
 	piaPass         string
 	refreshInterval time.Duration
 }
 
-func refreshAll(ctx context.Context, logger *log.Logger, cfg *cacherConfig, client *http.Client, cache *vpn.CacheState) error {
+// Cache holds cached PIA API data that persists across reconnections.
+// Pre-populated by the cacher goroutine so VPN setup can skip DNS resolution
+// and authenticate using cached IPs and tokens.
+type Cache struct {
+	mu sync.RWMutex
+
+	Token         string
+	TokenTime     time.Time
+	AuthIPs       []string
+	ServerListIPs []string
+	Servers       []pia.CachedServer
+}
+
+func refreshAll(ctx context.Context, logger *log.Logger, cfg *config, client *http.Client, c *Cache) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -40,14 +53,14 @@ func refreshAll(ctx context.Context, logger *log.Logger, cfg *cacherConfig, clie
 		lastErr = err
 	} else {
 		logger.Trace("Resolved %s to %v", piaAuthHost, authIPs)
-		cache.AuthIPs = mergeIPs(cache.AuthIPs, authIPs, maxCachedIPs)
+		c.MergeAuthIPs(authIPs)
 
 		token, err := pia.GenerateToken(ctx, client, piaAuthHost, cfg.piaUser, cfg.piaPass)
 		if err != nil {
 			logger.Debug("Token refresh failed: %v", err)
 			lastErr = err
 		} else {
-			cache.SetToken(token)
+			c.SetToken(token)
 			logger.Trace("Token refreshed (length: %d)", len(token))
 		}
 	}
@@ -64,7 +77,7 @@ func refreshAll(ctx context.Context, logger *log.Logger, cfg *cacherConfig, clie
 		lastErr = err
 	} else {
 		logger.Trace("Resolved %s to %v", piaServerlistHost, slIPs)
-		cache.ServerListIPs = mergeIPs(cache.ServerListIPs, slIPs, maxCachedIPs)
+		c.MergeServerListIPs(slIPs)
 
 		regions, err := pia.FetchServerList(ctx, client, piaServerlistHost)
 		if err != nil {
@@ -72,22 +85,20 @@ func refreshAll(ctx context.Context, logger *log.Logger, cfg *cacherConfig, clie
 			lastErr = err
 		} else {
 			servers := pia.FlattenRegions(regions)
-			cache.Servers = mergeServers(cache.Servers, servers)
-			logger.Trace("Server cache updated with %d servers", len(cache.Servers))
+			c.MergeServers(servers)
+			logger.Trace("Cache updated with %d servers", len(c.Servers))
 		}
 	}
 
 	return lastErr
 }
 
-// Run starts the cacher service. cache may be nil for standalone mode,
-// in which case a local CacheState is used.
-func Run(ctx context.Context, cache *vpn.CacheState, piaUser string, piaPass string) error {
+func Run(ctx context.Context, cache *Cache, piaUser string, piaPass string) error {
 	if cache == nil {
-		cache = &vpn.CacheState{}
+		cache = &Cache{}
 	}
 
-	cfg := &cacherConfig{
+	cfg := &config{
 		piaUser:         piaUser,
 		piaPass:         piaPass,
 		refreshInterval: 6 * time.Hour,
@@ -95,7 +106,7 @@ func Run(ctx context.Context, cache *vpn.CacheState, piaUser string, piaPass str
 
 	logger := log.New("cacher")
 
-	logger.Debug("Cacher starting with refresh interval: %v", cfg.refreshInterval)
+	logger.Debug("Starting with refresh interval: %v", cfg.refreshInterval)
 
 	client := pia.NewBoundClient(15*time.Second, 30*time.Second)
 
@@ -118,7 +129,7 @@ func Run(ctx context.Context, cache *vpn.CacheState, piaUser string, piaPass str
 			return ctx.Err()
 
 		case <-ticker.C:
-			logger.Debug("Starting scheduled cache refresh")
+			logger.Debug("Starting scheduled refresh")
 			var err error
 			for attempt := range 3 {
 				if err = refreshAll(ctx, logger, cfg, client, cache); err == nil {
@@ -154,6 +165,14 @@ func resolveIPv4(ctx context.Context, hostname string) ([]string, error) {
 	return ips, nil
 }
 
+func (c *Cache) MergeAuthIPs(newIPs []string) {
+	c.AuthIPs = mergeIPs(c.AuthIPs, newIPs, maxCachedIPs)
+}
+
+func (c *Cache) MergeServerListIPs(newIPs []string) {
+	c.ServerListIPs = mergeIPs(c.ServerListIPs, newIPs, maxCachedIPs)
+}
+
 // mergeIPs adds new IPs to front of existing, deduplicates, and caps at max.
 func mergeIPs(existing, newIPs []string, max int) []string {
 	seen := make(map[string]bool, len(existing)+len(newIPs))
@@ -178,18 +197,42 @@ func mergeIPs(existing, newIPs []string, max int) []string {
 
 // mergeServers merges new servers into existing by CN, updating IP/PF/Region for
 // known servers and appending new ones.
-func mergeServers(existing, newServers []pia.CachedServer) []pia.CachedServer {
-	byCN := make(map[string]int, len(existing))
-	for i := range existing {
-		byCN[existing[i].CN] = i
+func (c *Cache) MergeServers(newServers []pia.CachedServer) {
+	byCN := make(map[string]int, len(c.Servers))
+	for i := range c.Servers {
+		byCN[c.Servers[i].CN] = i
 	}
 	for _, srv := range newServers {
 		if idx, ok := byCN[srv.CN]; ok {
-			existing[idx] = srv
+			c.Servers[idx] = srv
 		} else {
-			byCN[srv.CN] = len(existing)
-			existing = append(existing, srv)
+			byCN[srv.CN] = len(c.Servers)
+			c.Servers = append(c.Servers, srv)
 		}
 	}
-	return existing
+}
+
+func (c *Cache) GetToken() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Token
+}
+
+func (c *Cache) TokenFresh() (bool, time.Duration) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	age := time.Since(c.TokenTime)
+	return c.Token != "" && age < maxTokenAge, age
+}
+
+func (c *Cache) SetToken(token string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Token = token
+	c.TokenTime = time.Now()
+}
+
+func (c *Cache) ClearToken() {
+	c.Token = ""
+	c.TokenTime = time.Time{}
 }

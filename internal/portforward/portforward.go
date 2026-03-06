@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/apperrors"
+	"github.com/x0lie/pia-tun/internal/cacher"
 	"github.com/x0lie/pia-tun/internal/firewall"
 	"github.com/x0lie/pia-tun/internal/log"
 	"github.com/x0lie/pia-tun/internal/metrics"
@@ -23,7 +24,6 @@ type Config struct {
 }
 
 type ConnectionConfig struct {
-	Token     string
 	ClientIP  string
 	ServerCN  string
 	PFGateway string
@@ -32,6 +32,7 @@ type ConnectionConfig struct {
 type manager struct {
 	cfg        *Config
 	connCfg    *ConnectionConfig
+	cache      *cacher.Cache
 	log        *log.Logger
 	httpClient *http.Client
 	state      *state
@@ -54,10 +55,11 @@ const (
 	portBindDuration = 20 * time.Minute // conservative evaluation of port bind death (tested ~23 minute lifespan)
 )
 
-func newManager(config *Config, connConfig *ConnectionConfig, logger *log.Logger, metrics *metrics.Metrics, syncer *portsync.Syncer, fw *firewall.Firewall) *manager {
+func newManager(config *Config, connConfig *ConnectionConfig, cache *cacher.Cache, logger *log.Logger, metrics *metrics.Metrics, syncer *portsync.Syncer, fw *firewall.Firewall) *manager {
 	return &manager{
 		cfg:        config,
 		connCfg:    connConfig,
+		cache:      cache,
 		log:        logger,
 		httpClient: pia.NewBoundClient(3*time.Second, 3*time.Second),
 		state:      &state{},
@@ -67,7 +69,7 @@ func newManager(config *Config, connConfig *ConnectionConfig, logger *log.Logger
 	}
 }
 
-func Run(ctx context.Context, cfg *Config, connCfg *ConnectionConfig, metrics *metrics.Metrics, syncer *portsync.Syncer, fw *firewall.Firewall) error {
+func Run(ctx context.Context, cfg *Config, connCfg *ConnectionConfig, cache *cacher.Cache, metrics *metrics.Metrics, syncer *portsync.Syncer, fw *firewall.Firewall) error {
 	if connCfg.PFGateway == "" {
 		return fmt.Errorf("port forwarding unavailable: no pf gateway")
 	}
@@ -78,11 +80,11 @@ func Run(ctx context.Context, cfg *Config, connCfg *ConnectionConfig, metrics *m
 	logger.Trace("  BIND_INTERVAL=%v", cfg.BindInterval)
 	logger.Trace("  SIGNATURE_SAFETY_HOURS=%d", cfg.SignatureSafetyHours)
 	logger.Trace("  PF_GATEWAY=%s", connCfg.PFGateway)
-	logger.Trace("  TOKEN length: %d", len(connCfg.Token))
+	logger.Trace("  TOKEN length: %d", len(cache.GetToken()))
 	logger.Trace("  PEER_IP: %s", connCfg.ClientIP)
 	logger.Trace("  PIA_CN: %s", connCfg.ServerCN)
 
-	m := newManager(cfg, connCfg, logger, metrics, syncer, fw)
+	m := newManager(cfg, connCfg, cache, logger, metrics, syncer, fw)
 
 	m.state.bindTime = time.Now().Add(-portBindDuration + time.Minute) // To limit initial run's failure threshold to 1 minute
 
