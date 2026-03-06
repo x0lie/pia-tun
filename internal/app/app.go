@@ -89,7 +89,6 @@ func Run(ctx context.Context) error {
 			log.Info("")
 			log.Error(err.Error())
 
-			a.teardown()
 			log.ReconnectingBanner()
 			a.wan.WaitForUp(ctx, a.metrics)
 
@@ -110,9 +109,6 @@ func Run(ctx context.Context) error {
 // initialize validates config, clears stale state, sets up the killswitch, and configures DNS.
 func (a *App) initialize(ctx context.Context) error {
 	log.StartupBanner(a.cfg.Version, a.cfg.SHA)
-
-	// Defensive cleanup
-	wg.Down(ctx, a.log)
 
 	// Initialize firewall
 	fw, err := firewall.New(a.cfg.FW.Backend)
@@ -325,20 +321,11 @@ func (a *App) showProxyStatus() {
 	}
 }
 
-func (a *App) teardown() {
-	a.log.Debug("Tearing down VPN tunnel")
-	a.fw.RemoveVPN()
-	wg.Down(context.Background(), a.log)
-	a.connInfo = nil
-}
-
 func (a *App) cleanup() {
 	log.Step("Shutting down...")
 	a.api.Shutdown()
+	wg.Down(context.Background(), a.log)
 
-	if a.connInfo != nil {
-		a.teardown()
-	}
 	if a.exitedCleanly {
 		a.fw.Cleanup()
 	} else {

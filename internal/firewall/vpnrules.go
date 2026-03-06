@@ -24,7 +24,7 @@ var vpnComments = []string{"vpn_interface", "vpn_fwmark"}
 // and not "off", a fwmark-based rule is also inserted.
 func (fw *Firewall) AddVPN(fwmark string, ipv6Enabled bool) error {
 	// Clean up any stale VPN rules first (handles unclean shutdown, reconnect edge cases)
-	fw.RemoveVPN()
+	fw.removeVPN()
 
 	ifaceSpec := []string{"-o", "pia0", "-m", "comment", "--comment", "vpn_interface", "-j", "ACCEPT"}
 	if err := fw.ipt4.Insert(tableFilter, chainOut, vpnInsertPos, ifaceSpec...); err != nil {
@@ -51,9 +51,9 @@ func (fw *Firewall) AddVPN(fwmark string, ipv6Enabled bool) error {
 	return nil
 }
 
-// RemoveVPN deletes VPN rules by finding them by comment and deleting by line number.
+// removeVPN deletes VPN rules by finding them by comment and deleting by line number.
 // This approach is more reliable than spec-based deletion with iptables-nft.
-func (fw *Firewall) RemoveVPN() {
+func (fw *Firewall) removeVPN() {
 	fw.removeVPNRulesByComment(fw.ipt4Cmd, chainOut, vpnComments)
 
 	// For IPv6, look for pia0 interface rules (no comment on these)

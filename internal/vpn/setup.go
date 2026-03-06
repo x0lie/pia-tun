@@ -52,6 +52,9 @@ type ConnectionInfo struct {
 func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *pia.Resolver) (*ConnectionInfo, error) {
 	logger := log.New("vpn")
 
+	// Defensive cleanup
+	wg.Down(ctx, logger)
+
 	// Step 1: Select server and authenticate
 	var serverIP, serverCN, region string
 	var latency time.Duration
