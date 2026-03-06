@@ -81,13 +81,11 @@ func (fw *Firewall) addPIADNSRoutes(dns string) error {
 
 // AddPFRoute adds a routing rule for the port forward gateway so it uses the VPN
 // table instead of being caught by the RFC1918 bypass at priority 100.
-func (fw *Firewall) AddPFRoute(pfEnabled bool, pfGateway string) error {
-	if pfEnabled {
-		args := []string{"rule", "add", "to", pfGateway, "lookup", "51820", "priority", strconv.Itoa(priorityPIA)}
-		fw.log.Debug("exec: ip %s", strings.Join(args, " "))
-		if err := exec.Command("ip", args...).Run(); err != nil {
-			return err
-		}
+func (fw *Firewall) AddPFRoute(pfGateway string) error {
+	args := []string{"rule", "add", "to", pfGateway, "lookup", "51820", "priority", strconv.Itoa(priorityPIA)}
+	fw.log.Debug("exec: ip %s", strings.Join(args, " "))
+	if err := exec.Command("ip", args...).Run(); err != nil {
+		return err
 	}
 	return nil
 }

@@ -328,7 +328,6 @@ func (a *App) showProxyStatus() {
 func (a *App) teardown() {
 	a.log.Debug("Tearing down VPN tunnel")
 	a.fw.RemoveVPN()
-	a.fw.RemovePFRoute(a.connInfo.PFGateway)
 	wg.Down(context.Background(), a.log)
 	a.connInfo = nil
 }

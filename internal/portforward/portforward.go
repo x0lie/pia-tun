@@ -73,6 +73,9 @@ func Run(ctx context.Context, cfg *Config, connCfg *ConnectionConfig, cache *cac
 	if connCfg.PFGateway == "" {
 		return fmt.Errorf("port forwarding unavailable: no pf gateway")
 	}
+	if err := fw.AddPFRoute(connCfg.PFGateway); err != nil {
+		return fmt.Errorf("failed to add pf gateway route: %v", err)
+	}
 
 	logger := log.New("portforward")
 
@@ -198,6 +201,7 @@ func (m *manager) announcePort() {
 }
 
 func (m *manager) teardown() {
+	m.fw.RemovePFRoute(m.connCfg.PFGateway)
 	m.fw.RemoveForwardedPort()
 	m.metrics.UpdatePortForwarding(false, 0)
 }
