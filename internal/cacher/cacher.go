@@ -35,7 +35,7 @@ type Cache struct {
 	TokenTime     time.Time
 	AuthIPs       []string
 	ServerListIPs []string
-	Servers       []pia.CachedServer
+	Servers       []pia.Server
 }
 
 func refreshAll(ctx context.Context, logger *log.Logger, cfg *config, client *http.Client, c *Cache) error {
@@ -79,12 +79,11 @@ func refreshAll(ctx context.Context, logger *log.Logger, cfg *config, client *ht
 		logger.Trace("Resolved %s to %v", piaServerlistHost, slIPs)
 		c.MergeServerListIPs(slIPs)
 
-		regions, err := pia.FetchServerList(ctx, client, piaServerlistHost)
+		servers, err := pia.FetchServerList(ctx, client, piaServerlistHost)
 		if err != nil {
 			logger.Debug("Server list refresh failed: %v", err)
 			lastErr = err
 		} else {
-			servers := pia.FlattenRegions(regions)
 			c.MergeServers(servers)
 			logger.Trace("Cache updated with %d servers", len(c.Servers))
 		}
@@ -197,7 +196,7 @@ func mergeIPs(existing, newIPs []string, max int) []string {
 
 // mergeServers merges new servers into existing by CN, updating IP/PF/Region for
 // known servers and appending new ones.
-func (c *Cache) MergeServers(newServers []pia.CachedServer) {
+func (c *Cache) MergeServers(newServers []pia.Server) {
 	byCN := make(map[string]int, len(c.Servers))
 	for i := range c.Servers {
 		byCN[c.Servers[i].CN] = i

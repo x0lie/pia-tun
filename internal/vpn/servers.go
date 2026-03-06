@@ -17,7 +17,7 @@ import (
 // FilterServers returns servers matching any of the given locations +pf if enabled
 // locations is a comma or space-separated list of region IDs (e.g., "us_ca,uk_london").
 // Returns nil if no servers match.
-func FilterServers(servers []pia.CachedServer, locations string, pfRequired bool) []pia.CachedServer {
+func FilterServers(servers []pia.Server, locations string, pfRequired bool) []pia.Server {
 	if len(servers) == 0 {
 		return nil
 	}
@@ -37,7 +37,7 @@ func FilterServers(servers []pia.CachedServer, locations string, pfRequired bool
 		return nil // No locations specified
 	}
 
-	var filtered []pia.CachedServer
+	var filtered []pia.Server
 	for _, srv := range servers {
 		if !locationSet[srv.Region] {
 			continue
@@ -53,7 +53,7 @@ func FilterServers(servers []pia.CachedServer, locations string, pfRequired bool
 
 // serverLatency holds a server with its measured latency for sorting.
 type serverLatency struct {
-	server  pia.CachedServer
+	server  pia.Server
 	latency time.Duration
 }
 
@@ -62,9 +62,9 @@ type serverLatency struct {
 // dialTimeout controls how long to wait for each TCP connection attempt.
 // If all servers timeout, returns the first candidate with latency 0.
 // Returns error only if candidates is empty.
-func SelectServer(ctx context.Context, candidates []pia.CachedServer, fw *firewall.Firewall, dialTimeout time.Duration, logger *log.Logger) (pia.CachedServer, time.Duration, error) {
+func SelectServer(ctx context.Context, candidates []pia.Server, fw *firewall.Firewall, dialTimeout time.Duration, logger *log.Logger) (pia.Server, time.Duration, error) {
 	if len(candidates) == 0 {
-		return pia.CachedServer{}, 0, fmt.Errorf("no server candidates")
+		return pia.Server{}, 0, fmt.Errorf("no server candidates")
 	}
 
 	logger.Debug("Testing latency to %d server candidates (parallel)", len(candidates))

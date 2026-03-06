@@ -70,7 +70,7 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher
 		}
 	} else {
 		// Run server selection and auth
-		var srv pia.CachedServer
+		var srv pia.Server
 		token, authErr = getToken(ctx, cfg, fw, cache, resolver, logger)
 		if authErr != nil {
 			return nil, authErr
@@ -166,12 +166,12 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher
 
 // selectServer fetches the server list, merges with cache, and selects by latency.
 // Flow: fetch fresh (cached IP or DNS) → merge with cache → filter → latency test
-func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *pia.Resolver, logger *log.Logger) (pia.CachedServer, time.Duration, error) {
+func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *pia.Resolver, logger *log.Logger) (pia.Server, time.Duration, error) {
 	// Fetch fresh server list (uses cached serverlist IPs, falls back to DNS)
 	log.Step(fmt.Sprintf("Selecting server across %s...", cfg.Location))
 	freshServers, err := fetchServerList(ctx, cache, resolver, fw, logger)
 	if err != nil {
-		return pia.CachedServer{}, 0, err
+		return pia.Server{}, 0, err
 	}
 
 	cache.MergeServers(freshServers)
@@ -179,7 +179,7 @@ func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 	// Check if Region Exists
 	allInRegion := FilterServers(cache.Servers, cfg.Location, false)
 	if len(allInRegion) == 0 {
-		return pia.CachedServer{}, 0, &pia.LocationError{Msg: "region not found", Location: cfg.Location}
+		return pia.Server{}, 0, &pia.LocationError{Msg: "region not found", Location: cfg.Location}
 	}
 
 	// If enabled, check if port forwarding supported
@@ -187,7 +187,7 @@ func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 	if cfg.PFRequired {
 		candidates = FilterServers(cache.Servers, cfg.Location, true)
 		if len(candidates) == 0 {
-			return pia.CachedServer{}, 0, &pia.LocationError{Msg: "does not support port forwarding", Location: cfg.Location}
+			return pia.Server{}, 0, &pia.LocationError{Msg: "does not support port forwarding", Location: cfg.Location}
 		}
 	}
 
@@ -196,7 +196,7 @@ func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 }
 
 // fetchServerList fetches the server list using cached IPs or DNS resolution.
-func fetchServerList(ctx context.Context, cache *cacher.Cache, resolver *pia.Resolver, fw *firewall.Firewall, logger *log.Logger) ([]pia.CachedServer, error) {
+func fetchServerList(ctx context.Context, cache *cacher.Cache, resolver *pia.Resolver, fw *firewall.Firewall, logger *log.Logger) ([]pia.Server, error) {
 	client := pia.NewDirectClient(apiTimeout)
 
 	// Try cached serverlist IPs first
@@ -207,11 +207,11 @@ func fetchServerList(ctx context.Context, cache *cacher.Cache, resolver *pia.Res
 			logger.Debug("Failed to add exemption: %v", err)
 			continue
 		}
-		regions, err := pia.FetchServerList(ctx, client, ip)
+		servers, err := pia.FetchServerList(ctx, client, ip)
 		fw.RemoveTemporaryExemption(exemption)
 		if err == nil {
 			logger.Debug("Fetched server list via cached IP %s", ip)
-			return pia.FlattenRegions(regions), nil
+			return servers, nil
 		}
 		logger.Debug("Serverlist fetch from %s failed: %v", ip, err)
 	}
@@ -230,11 +230,11 @@ func fetchServerList(ctx context.Context, cache *cacher.Cache, resolver *pia.Res
 		if err != nil {
 			continue
 		}
-		regions, err := pia.FetchServerList(ctx, client, ip)
+		servers, err := pia.FetchServerList(ctx, client, ip)
 		fw.RemoveTemporaryExemption(exemption)
 		if err == nil {
 			logger.Debug("Fetched server list via resolved IP %s", ip)
-			return pia.FlattenRegions(regions), nil
+			return servers, nil
 		}
 		logger.Debug("Serverlist fetch from %s failed: %v", ip, err)
 	}

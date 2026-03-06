@@ -86,7 +86,7 @@ const serverlistHostname = "serverlist.piaservers.net"
 // FetchServerList fetches the PIA server list.
 // ip is the server IP to connect to. The hostname is used for TLS SNI.
 // Returns *ConnectivityError for network failures.
-func FetchServerList(ctx context.Context, client *http.Client, ip string) ([]Region, error) {
+func FetchServerList(ctx context.Context, client *http.Client, ip string) ([]Server, error) {
 	// Use hostname in URL for correct Host header, but connect to IP
 	reqURL := fmt.Sprintf("https://%s%s", serverlistHostname, serverListPath)
 
@@ -122,13 +122,32 @@ func FetchServerList(ctx context.Context, client *http.Client, ip string) ([]Reg
 	}
 
 	var result struct {
-		Regions []Region `json:"regions"`
+		Regions []region `json:"regions"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, &ConnectivityError{Op: "serverlist", Msg: "parse response", Err: err}
 	}
 
-	return result.Regions, nil
+	flatRegions := flattenRegions(result.Regions)
+
+	return flatRegions, nil
+}
+
+// FlattenRegions extracts WireGuard servers from regions into a flat CachedServer list.
+func flattenRegions(regions []region) []Server {
+	var servers []Server
+	for _, r := range regions {
+		for _, srv := range r.Servers["wg"] {
+			servers = append(servers, Server{
+				CN:         srv.CN,
+				IP:         srv.IP,
+				Region:     r.ID,
+				RegionName: r.Name,
+				PF:         r.PortForward,
+			})
+		}
+	}
+	return servers
 }
 
 // AddKey registers a WireGuard public key with PIA and returns tunnel parameters.
