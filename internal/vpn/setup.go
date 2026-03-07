@@ -35,7 +35,6 @@ type Config struct {
 // Populated by Setup() and consumed by monitor (metrics), port forwarding,
 // and the orchestrator.
 type ConnectionInfo struct {
-	Token        string
 	ServerIP     string
 	ServerCN     string
 	ClientIP     string
@@ -139,18 +138,15 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher
 	if err != nil {
 		return nil, &pia.ConnectivityError{Op: "wireguard", Msg: "bring up tunnel", Err: err}
 	}
-	logger.Debug("WireGuard tunnel up (backend: %s)", iface.Backend)
 	log.Success(fmt.Sprintf("WG tunnel configured (%s)", iface.Backend))
 
-	// Step 5: Add VPN to killswitch
-	if err := fw.AddVPN("51820", cfg.IPv6); err != nil {
-		wg.Down(ctx, logger)
-		return nil, &pia.ConnectivityError{Op: "firewall", Msg: "add VPN to killswitch", Err: err}
+	// Step 5: Verify connection
+	log.Step("Verifying connection...")
+	if err := verifyConnection(ctx); err != nil {
+		return nil, err
 	}
-	log.Success("VPN added to killswitch")
 
 	return &ConnectionInfo{
-		Token:        token,
 		ServerIP:     serverIP,
 		ServerCN:     serverCN,
 		ClientIP:     addKeyResp.PeerIP,

@@ -176,14 +176,6 @@ func (a *App) connect(ctx context.Context) error {
 		connInfo.ServerCN, connInfo.ServerIP, connInfo.Location, connInfo.Latency.Milliseconds())
 	a.metrics.RecordNewConnection(connInfo.ServerCN, connInfo.ServerIP)
 
-	// Verify connection (non-fatal)
-	log.Step("Verifying connection...")
-	if publicIP, err := vpn.VerifyConnection(ctx); err == nil {
-		log.Success(fmt.Sprintf("External IP: %s%s%s%s", log.ColorGreen, log.ColorBold, publicIP, log.ColorReset))
-	} else {
-		log.Warning(fmt.Sprintf("%v", err))
-	}
-
 	// Signal success
 	a.connectionUp.Store(true)
 	a.metrics.UpdateConnectionStatus(true)

@@ -22,7 +22,7 @@ var vpnComments = []string{"vpn_interface", "vpn_fwmark"}
 
 // AddVPN inserts VPN interface rules into the killswitch. If fwmark is non-empty
 // and not "off", a fwmark-based rule is also inserted.
-func (fw *Firewall) AddVPN(fwmark string, ipv6Enabled bool) error {
+func (fw *Firewall) addVPN(fwmark string, ipv6Enabled bool) error {
 	// Clean up any stale VPN rules first (handles unclean shutdown, reconnect edge cases)
 	fw.removeVPN()
 

@@ -14,11 +14,13 @@ import (
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/log"
+	"github.com/x0lie/pia-tun/internal/pia"
 )
 
 // VerifyConnection confirms traffic routes through the VPN.
-func VerifyConnection(ctx context.Context) (string, error) {
+func verifyConnection(ctx context.Context) error {
 	logger := log.New("verify")
+	timeout := 12 * time.Second
 	start := time.Now()
 
 	// Trigger handshake by sending packets in background
@@ -28,12 +30,11 @@ func VerifyConnection(ctx context.Context) (string, error) {
 
 	// Wait for WireGuard handshake
 	logger.Debug("Waiting for handshake...")
-	handshakeErr := waitForHandshake(ctx, 12*time.Second)
-	if handshakeErr != nil {
-		log.Warning("Handshake wait timed out, continuing anyway")
-	} else {
-		log.Success(fmt.Sprintf("Handshake complete (%.1fs)", time.Since(start).Seconds()))
+	err := waitForHandshake(ctx, timeout)
+	if err != nil {
+		return &pia.ConnectivityError{Op: "verify", Msg: "wait for handshake", Err: err}
 	}
+	log.Success(fmt.Sprintf("Handshake complete (%.1fs)", time.Since(start).Seconds()))
 
 	// Log DNS setting
 	dnsIP := getPrimaryDNS()
@@ -48,17 +49,19 @@ func VerifyConnection(ctx context.Context) (string, error) {
 		time.Sleep(2 * time.Second)
 		publicIP, err = getPublicIP(ctx, 5*time.Second)
 		if err != nil {
-			return "", err
+			log.Warning(fmt.Sprintf("Could not verify IP: %s", err))
+			return nil
 		}
 	}
 
 	// Show Critical Error if IP hasn't changed
 	if preVPNIP := readPreVPNIP(); preVPNIP != "" && publicIP == preVPNIP {
 		log.Error("CRITICAL: Public IP matches pre-VPN IP - possible leak!")
-		return "", fmt.Errorf("IP leak detected: traffic not routing through VPN!")
+		return fmt.Errorf("IP leak detected: traffic not routing through VPN!")
 	}
+	log.Success(fmt.Sprintf("External IP: %s%s%s%s", log.ColorGreen, log.ColorBold, publicIP, log.ColorReset))
 
-	return publicIP, nil
+	return nil
 }
 
 // triggerHandshake sends a UDP packet to initiate the WireGuard handshake.
@@ -99,7 +102,7 @@ func waitForHandshake(ctx context.Context, timeout time.Duration) error {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-	return fmt.Errorf("handshake timeout")
+	return fmt.Errorf("handshake timeout after %v", timeout)
 }
 
 // getPublicIP fetches public IP from multiple services in parallel.

@@ -19,14 +19,12 @@ type KillswitchConfig struct {
 // routes, creates iptables chains, verifies they're active, and enables MSS clamping.
 func (fw *Firewall) Setup(cfg KillswitchConfig) error {
 	log.Step("Applying killswitch...")
-	fw.mu.Lock()
-	defer fw.mu.Unlock()
 
 	// Defensive cleanup of orphaned rules from previous runs
-	fw.log.Debug("Cleaning up any orphaned killswitch rules from previous runs")
-	fw.cleanupMSSClamping()
-	fw.cleanupBypassRoutes()
-	fw.cleanupChains()
+	fw.Cleanup()
+
+	fw.mu.Lock()
+	defer fw.mu.Unlock()
 
 	// Establish baseline DROP for ipv4 and ipv6
 	if err := fw.setupBaselineChains(); err != nil {
@@ -75,6 +73,12 @@ func (fw *Firewall) Setup(cfg KillswitchConfig) error {
 		}
 		log.Success("IPv6 through tunnel enabled")
 	}
+
+	// Add VPN to killswitch - Must be present for handshake initiation packet
+	if err := fw.addVPN("51820", cfg.IPv6Enabled); err != nil {
+		return fmt.Errorf("failed to add VPN rules: %w", err)
+	}
+	log.Success("VPN allowed (fwmark 51820)")
 
 	fw.setupMSSClamping(cfg.IPv6Enabled)
 
