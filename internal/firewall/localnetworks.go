@@ -9,8 +9,44 @@ import (
 	"github.com/x0lie/pia-tun/internal/log"
 )
 
+// setupLocalNetworks inserts local network ACCEPT rules before DROP in all 4 chains.
+// INPUT chains get -s (source) rules, OUTPUT chains get -d (destination) rules.
+func (fw *Firewall) setupLocalNetworks() error {
+	// IPv4 local networks → VPN_IN and VPN_OUT
+	if len(fw.localNetworksV4) > 0 {
+		fw.log.Debug("Adding local network rules to VPN_IN and VPN_OUT")
+		for _, network := range fw.localNetworksV4 {
+			if err := fw.insertBeforeDrop(fw.ipt4, chainIn, "-s", network, "-j", "ACCEPT"); err != nil {
+				return fmt.Errorf("VPN_IN local network %s: %w", network, err)
+			}
+			if err := fw.insertBeforeDrop(fw.ipt4, chainOut, "-d", network, "-j", "ACCEPT"); err != nil {
+				return fmt.Errorf("VPN_OUT local network %s: %w", network, err)
+			}
+		}
+	}
+
+	// IPv6 local networks → VPN_IN6 and VPN_OUT6
+	if len(fw.localNetworksV6) > 0 {
+		fw.log.Debug("Adding local network rules to VPN_IN6 and VPN_OUT6")
+		for _, network := range fw.localNetworksV6 {
+			if err := fw.insertBeforeDrop(fw.ipt6, chainIn6, "-s", network, "-j", "ACCEPT"); err != nil {
+				return fmt.Errorf("VPN_IN6 local network %s: %w", network, err)
+			}
+			if err := fw.insertBeforeDrop(fw.ipt6, chainOut6, "-d", network, "-j", "ACCEPT"); err != nil {
+				return fmt.Errorf("VPN_OUT6 local network %s: %w", network, err)
+			}
+		}
+	}
+
+	if len(fw.localNetworksV4) > 0 || len(fw.localNetworksV6) > 0 {
+		log.Success(fmt.Sprintf("Local networks: %s", formatNetworks(fw.localNetworksV4, fw.localNetworksV6)))
+	}
+
+	return nil
+}
+
 // resolveLocalNetworks parses the LOCAL_NETWORKS input string into separate
-// IPv4 and IPv6 CIDR slices. Supports special values "all", and "auto"
+// IPv4 and IPv6 CIDR slices. Supports special values "all", "auto", and "none"
 func resolveLocalNetworks(input string) (ipv4, ipv6 []string) {
 	if input == "" {
 		input = "auto"

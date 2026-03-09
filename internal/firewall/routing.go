@@ -3,7 +3,6 @@ package firewall
 import (
 	"os/exec"
 	"strconv"
-	"strings"
 )
 
 const priorityLocalNet = 100
@@ -24,17 +23,17 @@ var privateNetworksV6 = []string{
 func (fw *Firewall) setupPrivateRoutes() error {
 	for _, network := range privateNetworks {
 		args := []string{"rule", "add", "to", network, "table", "main", "priority", strconv.Itoa(priorityLocalNet)}
-		fw.log.Debug("exec: ip %s", strings.Join(args, " "))
 		if err := exec.Command("ip", args...).Run(); err != nil {
 			return err
 		}
+		fw.log.Debug("Added private IPv4 route (%s)", network)
 	}
 	for _, network := range privateNetworksV6 {
 		args := []string{"-6", "rule", "add", "to", network, "table", "main", "priority", strconv.Itoa(priorityLocalNet)}
-		fw.log.Debug("exec: ip %s", strings.Join(args, " "))
 		if err := exec.Command("ip", args...).Run(); err != nil {
 			return err
 		}
+		fw.log.Debug("Added private IPv6 route (%s)", network)
 	}
 	return nil
 }
@@ -63,17 +62,17 @@ func (fw *Firewall) addPIADNSRoutes(dns string) error {
 		for _, ip := range []string{"10.0.0.242", "10.0.0.243"} {
 			// Prevent fallthrough to priority 100 (LOCAL_NETWORKS) when pia0 is down
 			guardArgs := []string{"rule", "add", "to", ip, "unreachable", "priority", strconv.Itoa(priorityPIAGuard)}
-			fw.log.Debug("exec: ip %s", strings.Join(guardArgs, " "))
 			if err := exec.Command("ip", guardArgs...).Run(); err != nil {
 				return err
 			}
+			fw.log.Debug("Added PIA DNS blackhole route (%s)", ip)
 
 			// Add routes for PIA's internal DNS through tunnel
 			args := []string{"rule", "add", "to", ip, "lookup", "51820", "priority", strconv.Itoa(priorityPIA)}
-			fw.log.Debug("exec: ip %s", strings.Join(args, " "))
 			if err := exec.Command("ip", args...).Run(); err != nil {
 				return err
 			}
+			fw.log.Debug("Added PIA DNS route (%s)", ip)
 		}
 	}
 	return nil
@@ -83,10 +82,10 @@ func (fw *Firewall) addPIADNSRoutes(dns string) error {
 // table instead of being caught by the RFC1918 bypass at priority 100.
 func (fw *Firewall) AddPFRoute(pfGateway string) error {
 	args := []string{"rule", "add", "to", pfGateway, "lookup", "51820", "priority", strconv.Itoa(priorityPIA)}
-	fw.log.Debug("exec: ip %s", strings.Join(args, " "))
 	if err := exec.Command("ip", args...).Run(); err != nil {
 		return err
 	}
+	fw.log.Debug("Added PF gateway route (%s)", pfGateway)
 	return nil
 }
 
@@ -94,11 +93,11 @@ func (fw *Firewall) removePIADNSRoutes() {
 	for _, ip := range []string{"10.0.0.242", "10.0.0.243"} {
 		args := []string{"rule", "del", "to", ip, "lookup", "51820", "priority", strconv.Itoa(priorityPIA)}
 		exec.Command("ip", args...).Run()
-		fw.log.Debug("Removed PIA DNS route for %s", ip)
+		fw.log.Debug("Removed PIA DNS route (%s)", ip)
 
 		guardArgs := []string{"rule", "del", "to", ip, "unreachable", "priority", strconv.Itoa(priorityPIAGuard)}
 		exec.Command("ip", guardArgs...).Run()
-		fw.log.Debug("Removed PIA DNS blackhole for %s", ip)
+		fw.log.Debug("Removed PIA DNS blackhole route (%s)", ip)
 	}
 }
 
@@ -108,5 +107,5 @@ func (fw *Firewall) RemovePFRoute(pfGateway string) {
 	}
 	args := []string{"rule", "del", "to", pfGateway, "lookup", "51820", "priority", strconv.Itoa(priorityPIA)}
 	exec.Command("ip", args...).Run()
-	fw.log.Debug("Removed PF gateway route for %s", pfGateway)
+	fw.log.Debug("Removed PF gateway route (%s)", pfGateway)
 }

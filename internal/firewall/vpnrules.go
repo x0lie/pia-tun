@@ -10,54 +10,116 @@ import (
 )
 
 const (
-	chainOut6 = "VPN_OUT6"
-
-	// vpnInsertPos is the position in VPN_OUT / VPN_OUT6 where VPN rules are
-	// inserted: after established/related (1) and loopback (2).
-	vpnInsertPos = 3
+	fwmark        = "51820"
+	vpnInsertPos  = 3
+	portInsertPos = 3
+	tableFilter   = "filter"
 )
 
-// vpnComments are the comment markers used to identify VPN rules.
-var vpnComments = []string{"vpn_interface", "vpn_fwmark"}
+var portForwardComments = []string{"port_forward_tcp", "port_forward_udp"}
 
-// AddVPN inserts VPN interface rules into the killswitch. If fwmark is non-empty
-// and not "off", a fwmark-based rule is also inserted.
-func (fw *Firewall) addVPN(fwmark string, ipv6Enabled bool) error {
-	// Clean up any stale VPN rules first (handles unclean shutdown, reconnect edge cases)
-	fw.removeVPN()
+type Exemption struct {
+	IP, Port, Proto, Comment string
+}
 
-	ifaceSpec := []string{"-o", "pia0", "-m", "comment", "--comment", "vpn_interface", "-j", "ACCEPT"}
-	if err := fw.ipt4.Insert(tableFilter, chainOut, vpnInsertPos, ifaceSpec...); err != nil {
-		return fmt.Errorf("insert VPN interface rule: %w", err)
+// Adds exemptions to VPN_OUT for required VPN setup steps
+func (fw *Firewall) AddExemption(ip, port, proto, comment string) error {
+	fw.log.Debug("Adding temporary exemption: %s:%s/%s (%s)", ip, port, proto, comment)
+
+	spec := []string{
+		"-d", ip, "-p", proto, "--dport", port,
+		"-m", "comment", "--comment", comment,
+		"-j", "ACCEPT",
 	}
 
-	if fwmark != "" && fwmark != "off" {
-		fwmarkSpec := []string{"-m", "mark", "--mark", fwmark, "-m", "comment", "--comment", "vpn_fwmark", "-j", "ACCEPT"}
-		if err := fw.ipt4.Insert(tableFilter, chainOut, vpnInsertPos, fwmarkSpec...); err != nil {
-			return fmt.Errorf("insert VPN fwmark rule: %w", err)
-		}
-		fw.log.Debug("VPN added to killswitch (fwmark: %s)", fwmark)
-	} else {
-		fw.log.Debug("VPN added to killswitch (interface-based)")
-	}
-
-	if ipv6Enabled {
-		ifaceSpec6 := []string{"-o", "pia0", "-m", "comment", "--comment", "vpn_interface", "-j", "ACCEPT"}
-		if err := fw.ipt6.Insert(tableFilter, chainOut6, vpnInsertPos, ifaceSpec6...); err != nil {
-			return fmt.Errorf("insert IPv6 VPN interface rule: %w", err)
-		}
+	if err := fw.insertBeforeDrop(fw.ipt4, chainOut, spec...); err != nil {
+		return fmt.Errorf("insert exemption %s: %w", comment, err)
 	}
 
 	return nil
 }
 
-// removeVPN deletes VPN rules by finding them by comment and deleting by line number.
-// This approach is more reliable than spec-based deletion with iptables-nft.
-func (fw *Firewall) removeVPN() {
-	fw.removeVPNRulesByComment(fw.ipt4Cmd, chainOut, vpnComments)
+// Batching version of AddExemption
+func (fw *Firewall) AddExemptions(specs ...Exemption) []string {
+	pos, err := ruleCount(fw.ipt4, chainOut)
+	if err != nil {
+		fw.log.Debug("ruleCount failed: %v", err)
+		return nil
+	}
+	var comments []string
+	for _, s := range specs {
+		spec := []string{"-d", s.IP, "-p", s.Proto, "--dport", s.Port,
+			"-m", "comment", "--comment", s.Comment, "-j", "ACCEPT"}
+		if err := fw.ipt4.Insert(tableFilter, chainOut, pos, spec...); err != nil {
+			fw.log.Debug("Failed to add exemption %s: %v", s.Comment, err)
+		} else {
+			comments = append(comments, s.Comment)
+		}
+	}
+	fw.log.Debug("Adding exemptions: %v", comments)
+	return comments
+}
 
-	// For IPv6, look for pia0 interface rules (no comment on these)
-	fw.removeIPv6VPNRules()
+// Removes exemptions
+func (fw *Firewall) RemoveExemptions(comments ...string) {
+	fw.log.Debug("Removing exemptions: %s", comments)
+	fw.removeVPNRulesByComment(fw.ipt4Cmd, chainOut, comments)
+}
+
+// AddVPN inserts VPN interface rules into the killswitch. If fwmark is non-empty
+// and not "off", a fwmark-based rule is also inserted.
+func (fw *Firewall) addVPN(ipv6Enabled bool) error {
+	ifaceComment := "vpn_interface"
+	fwmarkComment := "vpn_fwmark"
+
+	fwmarkSpec := []string{"-m", "mark", "--mark", fwmark, "-m", "comment", "--comment", fwmarkComment, "-j", "ACCEPT"}
+	if err := fw.ipt4.Insert(tableFilter, chainOut, vpnInsertPos, fwmarkSpec...); err != nil {
+		return fmt.Errorf("insert VPN interface rule: %w", err)
+	}
+	fw.log.Debug("fwmark ACCEPT added to %s", chainOut)
+
+	ifaceSpec := []string{"-o", "pia0", "-m", "comment", "--comment", ifaceComment, "-j", "ACCEPT"}
+	if err := fw.ipt4.Insert(tableFilter, chainOut, vpnInsertPos, ifaceSpec...); err != nil {
+		return fmt.Errorf("insert VPN interface rule: %w", err)
+	}
+	fw.log.Debug("pia0 ACCEPT added to %s", chainOut)
+
+	if ipv6Enabled {
+		ifaceSpec6 := []string{"-o", "pia0", "-m", "comment", "--comment", ifaceComment, "-j", "ACCEPT"}
+		if err := fw.ipt6.Insert(tableFilter, chainOut6, vpnInsertPos, ifaceSpec6...); err != nil {
+			return fmt.Errorf("insert IPv6 VPN interface rule: %w", err)
+		}
+		fw.log.Debug("pia0 ACCEPT added to %s", chainOut6)
+	}
+
+	return nil
+}
+
+// AllowForwardedPort inserts TCP and UDP ACCEPT rules for the given port
+func (fw *Firewall) AllowForwardedPort(port int) error {
+	fw.RemoveForwardedPort()
+
+	portStr := strconv.Itoa(port)
+
+	for _, proto := range []string{"tcp", "udp"} {
+		comment := "port_forward_" + proto
+		spec := []string{
+			"-i", "pia0", "-p", proto, "--dport", portStr,
+			"-j", "ACCEPT",
+			"-m", "comment", "--comment", comment,
+		}
+		if err := fw.ipt4.Insert(tableFilter, chainIn, portInsertPos, spec...); err != nil {
+			return fmt.Errorf("insert port forward rule: %w", err)
+		}
+	}
+
+	fw.log.Debug("Port forwarding rules added for %d (TCP+UDP)", port)
+	return nil
+}
+
+// RemoveForwardedPort removes all port forwarding rules from VPN_IN.
+func (fw *Firewall) RemoveForwardedPort() {
+	fw.removeVPNRulesByComment(fw.ipt4Cmd, chainIn, portForwardComments)
 }
 
 // removeVPNRulesByComment finds rules containing any of the given comments
@@ -107,9 +169,4 @@ func (fw *Firewall) findRuleLineNumbers(iptables, chain string, comments []strin
 	}
 
 	return lineNumbers
-}
-
-// removeIPv6VPNRules removes IPv6 VPN rules by comment.
-func (fw *Firewall) removeIPv6VPNRules() {
-	fw.removeVPNRulesByComment(fw.ipt6Cmd, chainOut6, []string{"vpn_interface"})
 }

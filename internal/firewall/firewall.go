@@ -77,7 +77,7 @@ func detectBackend(backend string, logger *log.Logger) (ipt4, ipt6 string) {
 	}
 
 	if strings.Contains(strings.ToLower(string(output)), "iptables-legacy") {
-		logger.Debug("iptables-nft detected legacy tables, using legacy")
+		logger.Debug("iptables-nft detected exiting legacy tables rules, using legacy")
 		return "iptables-legacy", "ip6tables-legacy"
 	}
 

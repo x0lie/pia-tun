@@ -2,8 +2,6 @@ package firewall
 
 import (
 	"fmt"
-	"os/exec"
-	"strings"
 
 	"github.com/x0lie/pia-tun/internal/log"
 )
@@ -19,19 +17,14 @@ type KillswitchConfig struct {
 // routes, creates iptables chains, verifies they're active, and enables MSS clamping.
 func (fw *Firewall) Setup(cfg KillswitchConfig) error {
 	log.Step("Applying killswitch...")
-
-	// Defensive cleanup of orphaned rules from previous runs
+	fw.log.Debug("Performing defensive cleanup")
 	fw.Cleanup()
-
-	fw.mu.Lock()
-	defer fw.mu.Unlock()
 
 	// Establish baseline DROP for ipv4 and ipv6
 	if err := fw.setupBaselineChains(); err != nil {
 		return err
 	}
 	log.Success(fmt.Sprintf("Baseline established (%s)", fw.ipt4Cmd))
-	fw.active = true
 
 	// Resolve LOCAL_NETWORKS keywords into CIDRs and add them to chains if != "none"
 	if cfg.LANs != "none" {
@@ -42,24 +35,19 @@ func (fw *Firewall) Setup(cfg KillswitchConfig) error {
 		}
 	}
 
-	// Get default gateway and interface
-	gateway, err := getDefaultGateway()
-	if err != nil {
-		return err
+	// Add VPN to killswitch - Must be present for handshake initiation packet
+	if err := fw.addVPN(cfg.IPv6Enabled); err != nil {
+		return fmt.Errorf("failed to add VPN rules: %w", err)
 	}
-	iface, err := getDefaultInterface()
-	if err != nil {
-		return err
-	}
-	fw.log.Debug("Default gateway: %s, interface: %s", gateway, iface)
+	log.Success(fmt.Sprintf("VPN allowed (fwmark %s)", fwmark))
 
-	if err := fw.setupBypassRoutes(gateway, iface); err != nil {
+	// Setup daytime NIST bypass for WAN checking
+	iface, err := fw.setupBypassRoutes()
+	if err != nil {
 		return fmt.Errorf("failed to setup bypass routes: %w", err)
 	}
-
-	// Insert bypass routes before DROP
-	if err := fw.insertBypassFirewallRules(fw.ipt4, chainOut, iface); err != nil {
-		return fmt.Errorf("insert bypass rules: %w", err)
+	if err := fw.insertBypassFirewallRules(iface); err != nil {
+		return fmt.Errorf("failed to insert bypass rules: %w", err)
 	}
 
 	// Set up IPv6 tunnel traffic if enabled
@@ -74,17 +62,14 @@ func (fw *Firewall) Setup(cfg KillswitchConfig) error {
 		log.Success("IPv6 through tunnel enabled")
 	}
 
-	// Add VPN to killswitch - Must be present for handshake initiation packet
-	if err := fw.addVPN("51820", cfg.IPv6Enabled); err != nil {
-		return fmt.Errorf("failed to add VPN rules: %w", err)
-	}
-	log.Success("VPN allowed (fwmark 51820)")
-
+	// Setup MSS Clamping to reduce fragmentation
 	fw.setupMSSClamping(cfg.IPv6Enabled)
 
+	// Verify Killswitch setup
 	if err := fw.verifyKillswitch(); err != nil {
 		return err
 	}
+	fw.active = true
 	log.Success("DROP Rule on all VPN chains")
 
 	// Set up RFC1918/ULA bypass routes so LOCAL_NETWORKS traffic uses default gateway, not pia0
@@ -102,10 +87,6 @@ func (fw *Firewall) Setup(cfg KillswitchConfig) error {
 
 // Cleanup removes all killswitch chains, bypass routes, and MSS clamping rules.
 func (fw *Firewall) Cleanup() {
-	fw.mu.Lock()
-	defer fw.mu.Unlock()
-
-	fw.log.Debug("Full killswitch cleanup")
 	fw.cleanupPrivateRoutes()
 	fw.removePIADNSRoutes()
 	fw.cleanupMSSClamping()
@@ -116,41 +97,5 @@ func (fw *Firewall) Cleanup() {
 
 // IsActive returns whether the killswitch is currently set up.
 func (fw *Firewall) IsActive() bool {
-	fw.mu.Lock()
-	defer fw.mu.Unlock()
 	return fw.active
-}
-
-// getDefaultGateway returns the default gateway IP from the routing table.
-func getDefaultGateway() (string, error) {
-	out, err := exec.Command("ip", "route").Output()
-	if err != nil {
-		return "", fmt.Errorf("ip route: %w", err)
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.HasPrefix(line, "default") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 {
-				return fields[2], nil
-			}
-		}
-	}
-	return "", fmt.Errorf("cannot determine default gateway")
-}
-
-// getDefaultInterface returns the default network interface from the routing table.
-func getDefaultInterface() (string, error) {
-	out, err := exec.Command("ip", "route").Output()
-	if err != nil {
-		return "", fmt.Errorf("ip route: %w", err)
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.HasPrefix(line, "default") {
-			fields := strings.Fields(line)
-			if len(fields) >= 5 {
-				return fields[4], nil
-			}
-		}
-	}
-	return "", fmt.Errorf("cannot determine default interface")
 }

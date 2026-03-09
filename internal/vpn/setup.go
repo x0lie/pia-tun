@@ -83,7 +83,6 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher
 			serverIP = srv.IP
 			serverCN = srv.CN
 			region = srv.Region
-			logger.Debug("Selected server: %s (%s) in %s, latency %dms", serverCN, serverIP, region, latency.Milliseconds())
 			log.Success(fmt.Sprintf("Best server: %s (%dms) in %s", serverCN, latency.Milliseconds(), srv.RegionName))
 		}
 	}
@@ -104,13 +103,13 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher
 	logger.Debug("Generated WireGuard key pair")
 
 	// Step 3: Register public key with PIA server
+	comment := "addkey"
 	logger.Debug("Registering public key with %s", serverCN)
-	exemption, err := fw.AddTemporaryExemption(serverIP, "1337", "tcp", "addkey")
-	if err != nil {
+	if err = fw.AddExemption(serverIP, "1337", "tcp", comment); err != nil {
 		return nil, &pia.ConnectivityError{Op: "addkey", Msg: "add firewall exemption", Err: err}
 	}
 	addKeyResp, err := pia.AddKey(ctx, serverIP, serverCN, token, publicKey)
-	fw.RemoveTemporaryExemption(exemption)
+	fw.RemoveExemptions(comment)
 	if err != nil {
 		if _, isTokenRejected := err.(*pia.TokenRejectedError); isTokenRejected {
 			cache.ClearToken()
@@ -195,14 +194,15 @@ func fetchServerList(ctx context.Context, cache *cacher.Cache, resolver *pia.Res
 
 	// Try cached serverlist IPs first
 	for _, ip := range cache.ServerListIPs {
+		comment := "pia-serverlist"
 		logger.Debug("Trying cached serverlist IP: %s", ip)
-		exemption, err := fw.AddTemporaryExemption(ip, "443", "tcp", "serverlist")
+		err := fw.AddExemption(ip, "443", "tcp", comment)
 		if err != nil {
 			logger.Debug("Failed to add exemption: %v", err)
 			continue
 		}
 		servers, err := pia.FetchServerList(ctx, client, ip)
-		fw.RemoveTemporaryExemption(exemption)
+		fw.RemoveExemptions(comment)
 		if err == nil {
 			logger.Debug("Fetched server list via cached IP %s", ip)
 			return servers, nil
@@ -219,13 +219,14 @@ func fetchServerList(ctx context.Context, cache *cacher.Cache, resolver *pia.Res
 	cache.MergeServerListIPs(ips)
 
 	for _, ip := range ips {
+		comment := "pia-serverlist"
 		logger.Debug("Trying resolved serverlist IP: %s", ip)
-		exemption, err := fw.AddTemporaryExemption(ip, "443", "tcp", "serverlist")
+		err := fw.AddExemption(ip, "443", "tcp", comment)
 		if err != nil {
 			continue
 		}
 		servers, err := pia.FetchServerList(ctx, client, ip)
-		fw.RemoveTemporaryExemption(exemption)
+		fw.RemoveExemptions(comment)
 		if err == nil {
 			logger.Debug("Fetched server list via resolved IP %s", ip)
 			return servers, nil
@@ -299,11 +300,12 @@ func authenticate(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 
 // tryAuth attempts authentication with a single IP.
 func tryAuth(ctx context.Context, client *http.Client, ip, user, pass string, fw *firewall.Firewall) (string, error) {
-	exemption, err := fw.AddTemporaryExemption(ip, "443", "tcp", "auth")
+	comment := "auth"
+	err := fw.AddExemption(ip, "443", "tcp", comment)
 	if err != nil {
 		return "", &pia.ConnectivityError{Op: "auth", Msg: "add firewall exemption", Err: err}
 	}
-	defer fw.RemoveTemporaryExemption(exemption)
+	defer fw.RemoveExemptions(comment)
 
 	return pia.GenerateToken(ctx, client, ip, user, pass)
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -51,12 +50,6 @@ func FilterServers(servers []pia.Server, locations string, pfRequired bool) []pi
 	return filtered
 }
 
-// serverLatency holds a server with its measured latency for sorting.
-type serverLatency struct {
-	server  pia.Server
-	latency time.Duration
-}
-
 // SelectServer tests latency to candidates in parallel and returns the lowest-latency server.
 // Each candidate gets a temporary firewall exemption for its IP on port 443.
 // dialTimeout controls how long to wait for each TCP connection attempt.
@@ -67,26 +60,17 @@ func SelectServer(ctx context.Context, candidates []pia.Server, fw *firewall.Fir
 		return pia.Server{}, 0, fmt.Errorf("no server candidates")
 	}
 
-	logger.Debug("Testing latency to %d server candidates (parallel)", len(candidates))
+	log.Success(fmt.Sprintf("Testing %d candidates...", len(candidates)))
 
 	// Add all firewall exemptions upfront
-	exemptions := make([]*firewall.Exemption, len(candidates))
+	specs := make([]firewall.Exemption, len(candidates))
 	for i, srv := range candidates {
-		exemption, err := fw.AddTemporaryExemption(srv.IP, "443", "tcp", fmt.Sprintf("latency_%d", i))
-		if err != nil {
-			logger.Debug("Failed to add exemption for %s: %v", srv.CN, err)
-		}
-		exemptions[i] = exemption
+		specs[i] = firewall.Exemption{IP: srv.IP, Port: "443", Proto: "tcp", Comment: srv.CN}
 	}
+	comments := fw.AddExemptions(specs...)
 
 	// Clean up all exemptions when done
-	defer func() {
-		for _, e := range exemptions {
-			if e != nil {
-				fw.RemoveTemporaryExemption(e)
-			}
-		}
-	}()
+	defer fw.RemoveExemptions(comments...)
 
 	// Test all candidates in parallel
 	type result struct {
@@ -95,13 +79,11 @@ func SelectServer(ctx context.Context, candidates []pia.Server, fw *firewall.Fir
 	}
 	resultCh := make(chan result, len(candidates))
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	var wg sync.WaitGroup
 	for i, srv := range candidates {
-		if exemptions[i] == nil {
-			// No exemption = skip this candidate
-			resultCh <- result{idx: i, latency: 0}
-			continue
-		}
 		wg.Add(1)
 		go func(idx int, ip string) {
 			defer wg.Done()
@@ -116,40 +98,20 @@ func SelectServer(ctx context.Context, candidates []pia.Server, fw *firewall.Fir
 		close(resultCh)
 	}()
 
-	// Collect results
-	var successful []serverLatency
+	// Collect result(s)
 	for r := range resultCh {
 		srv := candidates[r.idx]
 		if r.latency > 0 {
+			cancel()
 			logger.Debug("Server %s (%s): %dms", srv.CN, srv.IP, r.latency.Milliseconds())
-			successful = append(successful, serverLatency{server: srv, latency: r.latency})
+			return srv, r.latency, nil
 		} else {
 			logger.Debug("Server %s (%s): timeout", srv.CN, srv.IP)
 		}
 	}
 
-	if len(successful) == 0 {
-		// All timed out, use first candidate as fallback
-		logger.Debug("All servers timed out, using fallback: %s", candidates[0].CN)
-		return candidates[0], 0, nil
-	}
-	log.Success(fmt.Sprintf("Tested %d servers, %d responded", len(candidates), len(successful)))
-
-	// Sort by latency and pick lowest
-	sort.Slice(successful, func(i, j int) bool {
-		return successful[i].latency < successful[j].latency
-	})
-
-	best := successful[0]
-	logger.Debug("Selected server: %s (%s) - %dms", best.server.CN, best.server.IP, best.latency.Milliseconds())
-
-	// Log top 5 for debug
-	for i := 0; i < len(successful) && i < 5; i++ {
-		r := successful[i]
-		logger.Debug("  %dms - %s (%s)", r.latency.Milliseconds(), r.server.CN, r.server.Region)
-	}
-
-	return best.server, best.latency, nil
+	log.Warning(fmt.Sprintf("All servers timed out, using fallback: %s", candidates[0].CN))
+	return candidates[0], 0, nil
 }
 
 func measureLatency(ctx context.Context, ip string, timeout time.Duration) time.Duration {

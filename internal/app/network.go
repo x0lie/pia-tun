@@ -25,47 +25,33 @@ var ipServices = []string{
 const ipFetchTimeout = 5 * time.Second
 
 // captureRealIP fetches the external IP address before VPN connection.
-// This is used later by verify_connection.sh to confirm the VPN is working.
-// The IP is written to /tmp/real_ip for backward compatibility.
+// This is used later by vpn.verifyConnection to confirm the VPN is working.
 func (a *App) captureRealIP(ctx context.Context) {
 	log.Step("Capturing pre-VPN IP address...")
 
-	// Resolve all services and prepare exemptions
 	type target struct {
 		hostname string
 		ip       string
-		exempt   *firewall.Exemption
-	}
-	var targets []target
-
-	for _, hostname := range ipServices {
-		ips, err := a.resolver.Resolve(ctx, hostname)
-		if err != nil || len(ips) == 0 {
-			a.log.Debug("Failed to resolve %s: %v", hostname, err)
-			continue
-		}
-
-		ip := ips[0]
-		exempt, err := a.fw.AddTemporaryExemption(ip, "443", "tcp", "ipcheck")
-		if err != nil {
-			a.log.Debug("Failed to add exemption for %s: %v", hostname, err)
-			continue
-		}
-
-		targets = append(targets, target{hostname: hostname, ip: ip, exempt: exempt})
 	}
 
-	if len(targets) == 0 {
-		log.Error("Cannot resolve any IP detection services")
+	// Resolve ipServices
+	resolved, _ := a.resolver.ResolveAll(ctx, ipServices)
+	if len(resolved) == 0 {
+		log.Error("Cannot resolve ip retrievers")
 		return
 	}
 
+	// Batch Exemptions
+	var targets []target
+	specs := make([]firewall.Exemption, 0, len(ipServices))
+	for hostname, ips := range resolved {
+		targets = append(targets, target{hostname: hostname, ip: ips[0]})
+		specs = append(specs, firewall.Exemption{IP: ips[0], Port: "443", Proto: "tcp", Comment: hostname})
+	}
+	comments := a.fw.AddExemptions(specs...)
+
 	// Clean up all exemptions when done
-	defer func() {
-		for _, t := range targets {
-			a.fw.RemoveTemporaryExemption(t.exempt)
-		}
-	}()
+	defer a.fw.RemoveExemptions(comments...)
 
 	// Fetch IP in parallel, first success wins
 	ctx, cancel := context.WithTimeout(ctx, ipFetchTimeout)
@@ -104,7 +90,7 @@ func (a *App) captureRealIP(ctx context.Context) {
 
 	a.log.Debug("Got IP %s from %s", res.ip, res.src)
 
-	// Write to /tmp/real_ip for verify_connection.sh compatibility
+	// Write to /tmp/real_ip for vpn.verifyConnection
 	if err := os.WriteFile("/tmp/real_ip", []byte(res.ip), 0644); err != nil {
 		a.log.Debug("Failed to write /tmp/real_ip: %v", err)
 	}
