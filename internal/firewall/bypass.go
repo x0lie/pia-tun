@@ -3,12 +3,15 @@ package firewall
 import (
 	"fmt"
 	"os/exec"
-	"strings"
-
-	"github.com/x0lie/pia-tun/internal/log"
+	"strconv"
 )
 
-// WANCheckIPs are the NIST/NCAR time servers used for WAN connectivity checks.
+const (
+	bypassPriority = 50
+	bypassComment  = "bypass_routes"
+)
+
+// CheckIPs are the NIST/NCAR time servers used for WAN connectivity checks.
 // Bypass routing ensures these are reachable even when the VPN tunnel is down.
 var WANCheckIPs = []string{
 	"129.6.15.28",
@@ -18,63 +21,48 @@ var WANCheckIPs = []string{
 	"128.138.140.44",
 }
 
-const (
-	bypassTable    = "100"
-	bypassPriority = "50"
-	bypassComment  = "bypass_routes"
-)
-
-// setupBypassRoutes creates routing table 100 with the default gateway and adds
-// ip rules so WAN check IPs use that table (bypassing the VPN tunnel).
-func (fw *Firewall) setupBypassRoutes() (string, error) {
-	gateway, err := getDefaultGateway()
-	if err != nil {
-		return "", err
+// setupBypass creates the bypass for wan check capability
+func (fw *Firewall) setupBypass() error {
+	if err := fw.setupBypassRoutes(); err != nil {
+		return fmt.Errorf("failed to setup bypass routes: %w", err)
 	}
-
-	iface, err := getDefaultInterface()
-	if err != nil {
-		log.Warning(fmt.Sprintf("Defaulting to eth0: %s", err))
-		gateway = "eth0"
+	if err := fw.insertBypassFirewallRules(); err != nil {
+		return fmt.Errorf("failed to insert bypass rules: %w", err)
 	}
-
-	fw.log.Debug("Setting up bypass routing table")
-	fw.log.Debug("Adding default route to table 100: %s via %s", gateway, iface)
-
-	// Add default route to bypass table (ignore error if already exists)
-	exec.Command("ip", "route", "add", "default", "via", gateway, "dev", iface, "table", bypassTable).Run()
-
-	fw.log.Debug("Adding bypass rules for WAN check IPs (priority 50)")
-	for _, ip := range WANCheckIPs {
-		exec.Command("ip", "rule", "add", "to", ip, "table", bypassTable, "priority", bypassPriority).Run()
-	}
-
-	fw.log.Debug("Bypass routing table configured")
-
-	return iface, nil
+	return nil
 }
 
-// cleanupBypassRoutes removes ip rules and the bypass table default route.
+// setupBypassRoutes creates routes with priority 50 to main table
+func (fw *Firewall) setupBypassRoutes() error {
+	for _, network := range WANCheckIPs {
+		args := []string{"rule", "add", "to", network, "table", "main", "priority", strconv.Itoa(bypassPriority)}
+		if err := exec.Command("ip", args...).Run(); err != nil {
+			return err
+		}
+		fw.log.Debug("Added wan check bypass route (%s)", network)
+	}
+	return nil
+}
+
+// cleanupBypassRoutes removes ip rules.
 func (fw *Firewall) cleanupBypassRoutes() {
-	fw.log.Debug("Cleaning up bypass routing rules")
-
-	for _, ip := range WANCheckIPs {
-		exec.Command("ip", "rule", "del", "to", ip, "table", bypassTable, "priority", bypassPriority).Run()
+	priority := strconv.Itoa(bypassPriority)
+	for {
+		if err := exec.Command("ip", "rule", "del", "priority", priority).Run(); err != nil {
+			break
+		}
+		fw.log.Debug("Removed routing rule at priority %v", priority)
 	}
-
-	fw.log.Debug("Removing bypass table default route")
-	exec.Command("ip", "route", "del", "default", "table", bypassTable).Run()
 }
 
-// insertBypassFirewallRules inserts ACCEPT rules for each WAN check IP into the
-// given chain, just before the terminal DROP rule. Rules are restricted to TCP
-// port 13 (DAYTIME) on the specified interface.
-func (fw *Firewall) insertBypassFirewallRules(iface string) error {
+// insertBypassFirewallRules inserts ACCEPT rules for each WanCheckIP into the
+// VPN_OUT chain before DROP. Rules are restricted to TCP port 13 (DAYTIME).
+func (fw *Firewall) insertBypassFirewallRules() error {
 	fw.log.Debug("Inserting bypass route rules before DROP (TCP/13 via default gateway)")
 
 	for _, ip := range WANCheckIPs {
 		spec := []string{
-			"-o", iface, "-p", "tcp", "--dport", "13",
+			"-p", "tcp", "--dport", "13",
 			"-d", ip, "-j", "ACCEPT",
 			"-m", "comment", "--comment", bypassComment,
 		}
@@ -84,38 +72,4 @@ func (fw *Firewall) insertBypassFirewallRules(iface string) error {
 	}
 
 	return nil
-}
-
-// getDefaultGateway returns the default gateway IP from the routing table.
-func getDefaultGateway() (string, error) {
-	out, err := exec.Command("ip", "route").Output()
-	if err != nil {
-		return "", fmt.Errorf("ip route: %w", err)
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.HasPrefix(line, "default") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 {
-				return fields[2], nil
-			}
-		}
-	}
-	return "", fmt.Errorf("cannot determine default gateway")
-}
-
-// getDefaultInterface returns the default network interface from the routing table.
-func getDefaultInterface() (string, error) {
-	out, err := exec.Command("ip", "route").Output()
-	if err != nil {
-		return "", fmt.Errorf("ip route: %w", err)
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.HasPrefix(line, "default") {
-			fields := strings.Fields(line)
-			if len(fields) >= 5 {
-				return fields[4], nil
-			}
-		}
-	}
-	return "", fmt.Errorf("cannot determine default interface")
 }

@@ -6,6 +6,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/x0lie/pia-tun/internal/firewall"
 	"github.com/x0lie/pia-tun/internal/log"
 	"github.com/x0lie/pia-tun/internal/metrics"
 )
@@ -19,35 +20,28 @@ func (c *Checker) Check(ctx context.Context) bool {
 	logger := log.New("wan")
 	logger.Trace("Checking WAN connectivity (bypass routes, parallel)")
 
-	targets := []string{
-		"129.6.15.28:13",
-		"129.6.15.29:13",
-		"132.163.96.1:13",
-		"132.163.97.1:13",
-		"128.138.140.44:13",
-	}
-
 	type result struct {
 		target  string
 		success bool
 	}
 
-	results := make(chan result, len(targets))
+	results := make(chan result, len(firewall.WANCheckIPs))
 
-	for _, target := range targets {
+	for _, ip := range firewall.WANCheckIPs {
 		go func(t string) {
+			addr := net.JoinHostPort(t, "13")
 			dialer := &net.Dialer{Timeout: 5 * time.Second}
-			conn, err := dialer.Dial("tcp", t)
+			conn, err := dialer.DialContext(ctx, "tcp", addr)
 			if err == nil {
 				conn.Close()
 				results <- result{t, true}
 			} else {
 				results <- result{t, false}
 			}
-		}(target)
+		}(ip)
 	}
 
-	for i := 0; i < len(targets); i++ {
+	for i := 0; i < len(firewall.WANCheckIPs); i++ {
 		res := <-results
 		if res.success {
 			logger.Trace("WAN check successful (%s)", res.target)

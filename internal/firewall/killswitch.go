@@ -42,12 +42,8 @@ func (fw *Firewall) Setup(cfg KillswitchConfig) error {
 	log.Success(fmt.Sprintf("VPN allowed (fwmark %s)", fwmark))
 
 	// Setup daytime NIST bypass for WAN checking
-	iface, err := fw.setupBypassRoutes()
-	if err != nil {
-		return fmt.Errorf("failed to setup bypass routes: %w", err)
-	}
-	if err := fw.insertBypassFirewallRules(iface); err != nil {
-		return fmt.Errorf("failed to insert bypass rules: %w", err)
+	if err := fw.setupBypass(); err != nil {
+		return fmt.Errorf("failed to set up wan-check bypass: %w", err)
 	}
 
 	// Set up IPv6 tunnel traffic if enabled
