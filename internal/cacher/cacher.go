@@ -235,3 +235,7 @@ func (c *Cache) ClearToken() {
 	c.Token = ""
 	c.TokenTime = time.Time{}
 }
+
+func (c *Cache) ClearServerListIPs() {
+	c.ServerListIPs = nil
+}

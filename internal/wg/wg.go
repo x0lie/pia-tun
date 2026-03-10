@@ -98,12 +98,15 @@ func Up(ctx context.Context, cfg Config, logger *log.Logger) (iface *Interface, 
 	}
 
 	// Set MTU
-	mtu := cfg.MTU
-	if mtu == 0 {
-		mtu = defaultMTU
-	}
+	mtu := max(cfg.MTU, 1280)
 	if err := run(ctx, logger, "ip", "link", "set", "mtu", strconv.Itoa(mtu), "dev", ifaceName); err != nil {
 		return nil, fmt.Errorf("set MTU: %w", err)
+	}
+	logger.Debug("MTU set (%v)", mtu)
+	if mtu == 1280 {
+		log.Success(fmt.Sprintf("MTU set to %v (safe minimum)", mtu))
+	} else if mtu != defaultMTU {
+		log.Success(fmt.Sprintf("MTU set to %v", mtu))
 	}
 
 	// Set fwmark BEFORE peer config to prevent routing loops

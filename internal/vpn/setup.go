@@ -13,10 +13,7 @@ import (
 	"github.com/x0lie/pia-tun/internal/wg"
 )
 
-const (
-	apiTimeout         = 5 * time.Second
-	latencyTestTimeout = 1 * time.Second
-)
+const apiTimeout = 3 * time.Second
 
 // Config holds configuration for VPN setup.
 type Config struct {
@@ -56,42 +53,34 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher
 
 	// Step 1: Select server and authenticate
 	var serverIP, serverCN, region string
-	var latency time.Duration
 	var token string
-	var srvErr, authErr error
+	var srv pia.Server
+	var latency time.Duration
+	var err error
 
 	if cfg.ManualCN != "" && cfg.ManualIP != "" {
 		// Manual override - skip server selection, just authenticate
 		logger.Debug("Using manual server override: %s (%s)", cfg.ManualCN, cfg.ManualIP)
 		serverIP = cfg.ManualIP
 		serverCN = cfg.ManualCN
-		region = "manual"
-		token, authErr = getToken(ctx, cfg, fw, cache, resolver, logger)
-		if authErr != nil {
-			return nil, authErr
+		region = "unknown"
+		token, err = getToken(ctx, cfg, fw, cache, resolver, logger)
+		if err != nil {
+			return nil, err
 		}
 	} else {
 		// Run server selection and auth
-		var srv pia.Server
-		token, authErr = getToken(ctx, cfg, fw, cache, resolver, logger)
-		if authErr != nil {
-			return nil, authErr
+		if token, err = getToken(ctx, cfg, fw, cache, resolver, logger); err != nil {
+			return nil, err
 		}
-		srv, latency, srvErr = selectServer(ctx, cfg, fw, cache, resolver, logger)
+		if srv, latency, err = selectServer(ctx, cfg, fw, cache, resolver, logger); err != nil {
+			return nil, err
+		}
+		log.Success(fmt.Sprintf("Best server: %s (%dms) in %s", srv.CN, latency.Milliseconds(), srv.RegionName))
 
-		if srvErr == nil {
-			serverIP = srv.IP
-			serverCN = srv.CN
-			region = srv.Region
-			log.Success(fmt.Sprintf("Best server: %s (%dms) in %s", serverCN, latency.Milliseconds(), srv.RegionName))
-		}
-	}
-
-	if srvErr != nil {
-		if _, isLocation := srvErr.(*pia.LocationError); isLocation {
-			return nil, srvErr
-		}
-		return nil, fmt.Errorf("server selection: %w", srvErr)
+		serverIP = srv.IP
+		serverCN = srv.CN
+		region = srv.Region
 	}
 
 	// Step 2: Generate WireGuard key pair
@@ -155,86 +144,6 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher
 		Latency:      latency,
 		WGMode:       iface.Backend,
 	}, nil
-}
-
-// selectServer fetches the server list, merges with cache, and selects by latency.
-// Flow: fetch fresh (cached IP or DNS) → merge with cache → filter → latency test
-func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *pia.Resolver, logger *log.Logger) (pia.Server, time.Duration, error) {
-	// Fetch fresh server list (uses cached serverlist IPs, falls back to DNS)
-	log.Step(fmt.Sprintf("Selecting server across %s...", cfg.Location))
-	freshServers, err := fetchServerList(ctx, cache, resolver, fw, logger)
-	if err != nil {
-		return pia.Server{}, 0, err
-	}
-
-	cache.MergeServers(freshServers)
-
-	// Check if Region Exists
-	allInRegion := FilterServers(cache.Servers, cfg.Location, false)
-	if len(allInRegion) == 0 {
-		return pia.Server{}, 0, &pia.LocationError{Msg: "region not found", Location: cfg.Location}
-	}
-
-	// If enabled, check if port forwarding supported
-	candidates := allInRegion
-	if cfg.PFRequired {
-		candidates = FilterServers(cache.Servers, cfg.Location, true)
-		if len(candidates) == 0 {
-			return pia.Server{}, 0, &pia.LocationError{Msg: "does not support port forwarding", Location: cfg.Location}
-		}
-	}
-
-	logger.Debug("Found %d candidates after filtering", len(candidates))
-	return SelectServer(ctx, candidates, fw, latencyTestTimeout, logger)
-}
-
-// fetchServerList fetches the server list using cached IPs or DNS resolution.
-func fetchServerList(ctx context.Context, cache *cacher.Cache, resolver *pia.Resolver, fw *firewall.Firewall, logger *log.Logger) ([]pia.Server, error) {
-	client := pia.NewDirectClient(apiTimeout)
-
-	// Try cached serverlist IPs first
-	for _, ip := range cache.ServerListIPs {
-		comment := "pia-serverlist"
-		logger.Debug("Trying cached serverlist IP: %s", ip)
-		err := fw.AddExemption(ip, "443", "tcp", comment)
-		if err != nil {
-			logger.Debug("Failed to add exemption: %v", err)
-			continue
-		}
-		servers, err := pia.FetchServerList(ctx, client, ip)
-		fw.RemoveExemptions(comment)
-		if err == nil {
-			logger.Debug("Fetched server list via cached IP %s", ip)
-			return servers, nil
-		}
-		logger.Debug("Serverlist fetch from %s failed: %v", ip, err)
-	}
-
-	// Fall back to DNS resolution
-	ips, err := resolver.Resolve(ctx, "serverlist.piaservers.net")
-	if err != nil {
-		return nil, err
-	}
-
-	cache.MergeServerListIPs(ips)
-
-	for _, ip := range ips {
-		comment := "pia-serverlist"
-		logger.Debug("Trying resolved serverlist IP: %s", ip)
-		err := fw.AddExemption(ip, "443", "tcp", comment)
-		if err != nil {
-			continue
-		}
-		servers, err := pia.FetchServerList(ctx, client, ip)
-		fw.RemoveExemptions(comment)
-		if err == nil {
-			logger.Debug("Fetched server list via resolved IP %s", ip)
-			return servers, nil
-		}
-		logger.Debug("Serverlist fetch from %s failed: %v", ip, err)
-	}
-
-	return nil, &pia.ConnectivityError{Op: "serverlist", Msg: "all serverlist endpoints failed"}
 }
 
 // getToken returns a valid authentication token, using cache if fresh.
