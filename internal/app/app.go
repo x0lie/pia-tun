@@ -111,8 +111,8 @@ func (a *App) initialize(ctx context.Context) error {
 	log.StartupBanner(a.cfg.Version, a.cfg.SHA)
 	var err error
 
-	// If DNS != "none", clear /etc/resolv.conf, otherwise set it to a.cfg.DNS
-	if a.cfg.DNSMode != "none" {
+	// If DNS != "system", clear /etc/resolv.conf, otherwise set it to a.cfg.DNS
+	if a.cfg.DNSMode != "system" {
 		if err = dns.Clear(); err != nil {
 			return err
 		}

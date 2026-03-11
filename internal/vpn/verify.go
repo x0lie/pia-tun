@@ -41,8 +41,8 @@ func VerifyConnection(ctx context.Context, dnsMode string, dnsServers []string, 
 	switch dnsMode {
 	case "pia":
 		log.Success(fmt.Sprintf("DNS: PIA (%s)", strings.Join(dnsServers, ", ")))
-	case "none":
-		log.Success(fmt.Sprintf("DNS: none (%s)", strings.Join(dnsServers, ", ")))
+	case "system":
+		log.Success(fmt.Sprintf("DNS: system (%s)", strings.Join(dnsServers, ", ")))
 	default:
 		log.Success(fmt.Sprintf("DNS: %s", strings.Join(dnsServers, ", ")))
 	}

@@ -208,8 +208,8 @@ func parseDNS(dns string) (string, []string) {
 	switch dns {
 	case "pia":
 		return "pia", nil
-	case "none":
-		return "none", nil
+	case "system":
+		return "system", nil
 	default:
 		var servers []string
 		for _, s := range strings.Split(dns, ",") {

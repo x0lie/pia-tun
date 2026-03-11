@@ -96,12 +96,12 @@ See [`docs/docker-compose-examples/`](docs/docker-compose-examples/) for more ty
 
 ### Network/Firewall
 
-| Variable         | Description                                                                                                                       | Default |
-|------------------|-----------------------------------------------------------------------------------------------------------------------------------|---------|
-| `LOCAL_NETWORKS` | CIDR ranges for LAN access. Supports `auto`, IPv4 and IPv6 (e.g., `auto,192.168.1.0/24,fd00::/64`) or `all` or `none`             | `auto`  |
-| `DNS`            | `DNS=pia` (10.0.0.242/243), or a specific IP. When `DNS=pia` it will route through tunnel regardless of `LOCAL_NETWORKS` overlap. | `pia`   |
-| `IPV6_ENABLED`   | Enable IPv6 routing to VPN interface. **Note:** PIA does not yet support IPv6. See IPv6 section below.                            | `false` |
-| `IPT_BACKEND`    | iptables backend: `nft` or `legacy`. Auto-detected if not set.                                                                    | Auto    |
+| Variable         | Description                                                                                                           | Default |
+|------------------|-----------------------------------------------------------------------------------------------------------------------|---------|
+| `LOCAL_NETWORKS` | CIDR ranges for LAN access. Supports `auto`, IPv4 and IPv6 (e.g., `auto,192.168.1.0/24,fd00::/64`) or `all` or `none` | `auto`  |
+| `DNS`            | DNS servers setting. Supports `pia`, `DNS=system`, or specific IPs (e.g., `8.8.8.8,1.1.1.1`). Do53 only.              | `pia`   |
+| `IPV6_ENABLED`   | Enable IPv6 routing to VPN interface. **Note:** PIA does not yet support IPv6. See IPv6 section below.                | `false` |
+| `IPT_BACKEND`    | iptables backend: `nft` or `legacy`. Auto-detected if not set.                                                        | Auto    |
 
 ### Port Forwarding & Syncing
 
