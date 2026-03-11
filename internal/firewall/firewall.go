@@ -32,11 +32,17 @@ type Firewall struct {
 func New(backend string) (*Firewall, error) {
 	logger := log.New("firewall")
 
-	if err := checkCapNetAdmin(); err != nil {
+	netRaw, err := checkCaps(backend == "legacy")
+	if err != nil {
 		return nil, err
 	}
 
-	ipt4Cmd, ipt6Cmd := detectBackend(backend, logger)
+	if backend, err = detectBackend(backend, netRaw, logger); err != nil {
+		return nil, err
+	}
+
+	ipt4Cmd := "iptables-" + backend
+	ipt6Cmd := "ip6tables-" + backend
 
 	ipt4, err := iptables.New(iptables.IPFamily(iptables.ProtocolIPv4), iptables.Path(ipt4Cmd))
 	if err != nil {
@@ -59,30 +65,49 @@ func (fw *Firewall) Backend() string {
 // detectBackend determines the iptables backend to use. It checks IPT_BACKEND
 // first, then auto-detects by trying iptables-nft and checking for warnings
 // that indicate legacy tables are present (e.g. from Docker or the host).
-func detectBackend(backend string, logger *log.Logger) (ipt4, ipt6 string) {
+func detectBackend(backend string, netRaw bool, logger *log.Logger) (string, error) {
+	// Confirm user selected backend works
 	switch backend {
-	case "legacy":
-		logger.Debug("IPT_BACKEND=legacy, using iptables-legacy")
-		return "iptables-legacy", "ip6tables-legacy"
 	case "nft":
-		logger.Debug("IPT_BACKEND=nft, using iptables-nft")
-		return "iptables-nft", "ip6tables-nft"
+		if err := exec.Command("iptables-nft", "-L", "-n").Run(); err != nil {
+			return "", fmt.Errorf("iptables-nft not available: %w", err)
+		}
+		logger.Debug("IPT_BACKEND=legacy, using iptables-nft")
+		return "nft", nil
+	case "legacy":
+		if err := exec.Command("iptables-legacy", "-L", "-n").Run(); err != nil {
+			return "", fmt.Errorf("iptables-legacy not available: %w", err)
+		}
+		logger.Debug("IPT_BACKEND=legacy, using iptables-legacy")
+		return "legacy", nil
 	}
 
-	// Auto-detect: try nft first, check for warnings indicating legacy is needed.
-	output, err := exec.Command("iptables-nft", "-L", "-n").CombinedOutput()
-	if err != nil {
-		logger.Debug("iptables-nft failed (exit %v), using legacy", err)
-		return "iptables-legacy", "ip6tables-legacy"
+	// Auto-detect - try nft, fallback to legacy
+	output, nftErr := exec.Command("iptables-nft", "-L", "-n").CombinedOutput()
+	if nftErr != nil {
+		if err := exec.Command("iptables-legacy", "-L", "-n").Run(); err != nil {
+			return "", fmt.Errorf("neither iptables backend available: nft: %w, legacy: %s", nftErr, err)
+		}
+		if !netRaw {
+			return "", fmt.Errorf("no iptables-nft available and iptables-legacy requires CAP_NET_RAW")
+		}
+		logger.Debug("iptables-nft unavailable, using iptables-legacy")
+		return "legacy", nil
 	}
 
+	// If legacy rules exist, prefer legacy (follow system choice)
 	if strings.Contains(strings.ToLower(string(output)), "iptables-legacy") {
-		logger.Debug("iptables-nft detected exiting legacy tables rules, using legacy")
-		return "iptables-legacy", "ip6tables-legacy"
+		if netRaw {
+			logger.Debug("iptables-legacy rules detected, using iptables-legacy")
+			return "legacy", nil
+		}
+		log.Warning("iptables-legacy preferred (pre-existing rules), but no CAP_NET_RAW, using iptables-nft")
+		log.Warning("set IPT_BACKEND=nft if working or add CAP_NET_RAW for iptables-legacy auto-selection")
+		return "nft", nil
 	}
 
 	logger.Debug("iptables-nft works cleanly, using nft")
-	return "iptables-nft", "ip6tables-nft"
+	return "nft", nil
 }
 
 func (fw *Firewall) GetDropStats() (packetsIn, bytesIn, packetsOut, bytesOut int64) {
@@ -127,10 +152,14 @@ func (fw *Firewall) GetDropStats() (packetsIn, bytesIn, packetsOut, bytesOut int
 	return packetsIn, bytesIn, packetsOut, bytesOut
 }
 
-func checkCapNetAdmin() error {
+func checkCaps(legacy bool) (bool, error) {
+	const capNetAdmin = 1 << 12
+	const capNetRaw = 1 << 13
+	netRaw := false
+
 	data, err := os.ReadFile("/proc/self/status")
 	if err != nil {
-		return fmt.Errorf("cannot read /proc/self/status: %w", err)
+		return false, fmt.Errorf("cannot read /proc/self/status: %w", err)
 	}
 
 	for _, line := range strings.Split(string(data), "\n") {
@@ -138,15 +167,19 @@ func checkCapNetAdmin() error {
 			hex := strings.TrimSpace(strings.TrimPrefix(line, "CapEff:"))
 			capEff, err := strconv.ParseUint(hex, 16, 64)
 			if err != nil {
-				return fmt.Errorf("cannot parse CapEff: %w", err)
+				return netRaw, fmt.Errorf("cannot parse CapEff: %w", err)
 			}
-			const capNetAdmin = 1 << 12
 			if capEff&capNetAdmin == 0 {
-				return fmt.Errorf("missing CAP_NET_ADMIN")
+				return netRaw, fmt.Errorf("firewall requires CAP_NET_ADMIN")
 			}
-			return nil
+			if legacy && capEff&capNetRaw == 0 {
+				return netRaw, fmt.Errorf("iptables-legacy requires CAP_NET_RAW")
+			}
+			if capEff&capNetRaw != 0 {
+				netRaw = true
+			}
+			return netRaw, nil
 		}
 	}
-
-	return fmt.Errorf("CapEff not found in /proc/self/status")
+	return netRaw, fmt.Errorf("CapEff not found in /proc/self/status")
 }
