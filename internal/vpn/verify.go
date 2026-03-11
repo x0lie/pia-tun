@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -18,9 +17,10 @@ import (
 )
 
 // VerifyConnection confirms traffic routes through the VPN.
-func verifyConnection(ctx context.Context) error {
+func VerifyConnection(ctx context.Context, dnsMode string, dnsServers []string, preVPNIP string) error {
 	logger := log.New("verify")
-	timeout := 12 * time.Second
+	handshakeTimeout := 6 * time.Second
+	ipTimeout := 4 * time.Second
 	start := time.Now()
 
 	// Trigger handshake by sending packets in background
@@ -30,32 +30,33 @@ func verifyConnection(ctx context.Context) error {
 
 	// Wait for WireGuard handshake
 	logger.Debug("Waiting for handshake...")
-	err := waitForHandshake(ctx, timeout)
+	err := waitForHandshake(ctx, handshakeTimeout)
 	if err != nil {
 		return &pia.ConnectivityError{Op: "verify", Msg: "wait for handshake", Err: err}
 	}
 	log.Success(fmt.Sprintf("Handshake complete (%.1fs)", time.Since(start).Seconds()))
+	stopTrigger()
 
 	// Log DNS setting
-	dnsIP := getPrimaryDNS()
-	dns := formatDNS(dnsIP)
-	log.Success(fmt.Sprintf("DNS: %s", dns))
+	switch dnsMode {
+	case "pia":
+		log.Success(fmt.Sprintf("DNS: PIA (%s)", strings.Join(dnsServers, ", ")))
+	case "none":
+		log.Success(fmt.Sprintf("DNS: none (%s)", strings.Join(dnsServers, ", ")))
+	default:
+		log.Success(fmt.Sprintf("DNS: %s", strings.Join(dnsServers, ", ")))
+	}
 
 	// Get public IP (parallel requests to multiple services)
 	logger.Debug("Retrieving Public IP")
-	publicIP, err := getPublicIP(ctx, 5*time.Second)
+	publicIP, err := getPublicIP(ctx, dnsServers, ipTimeout)
 	if err != nil {
-		logger.Debug("First IP check failed, retrying: %v", err)
-		time.Sleep(2 * time.Second)
-		publicIP, err = getPublicIP(ctx, 5*time.Second)
-		if err != nil {
-			log.Warning(fmt.Sprintf("Could not verify IP: %s", err))
-			return nil
-		}
+		log.Warning(fmt.Sprintf("Could not verify IP:\n    %s", err))
+		return nil // Must return, IP comparison invalid
 	}
 
 	// Show Critical Error if IP hasn't changed
-	if preVPNIP := readPreVPNIP(); preVPNIP != "" && publicIP == preVPNIP {
+	if publicIP == preVPNIP {
 		log.Error("CRITICAL: Public IP matches pre-VPN IP - possible leak!")
 		return fmt.Errorf("IP leak detected: traffic not routing through VPN!")
 	}
@@ -106,7 +107,7 @@ func waitForHandshake(ctx context.Context, timeout time.Duration) error {
 }
 
 // getPublicIP fetches public IP from multiple services in parallel.
-func getPublicIP(ctx context.Context, timeout time.Duration) (string, error) {
+func getPublicIP(ctx context.Context, dnsServers []string, timeout time.Duration) (string, error) {
 	services := []string{
 		"https://api.ipify.org",
 		"https://ifconfig.me/ip",
@@ -122,10 +123,20 @@ func getPublicIP(ctx context.Context, timeout time.Duration) (string, error) {
 		err error
 	}
 
+	dialer := &net.Dialer{Timeout: timeout}
+	if len(dnsServers) > 0 {
+		dialer.Resolver = &net.Resolver{
+			PreferGo: true,
+			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+				d := net.Dialer{Timeout: timeout}
+				return d.DialContext(ctx, "udp", net.JoinHostPort(dnsServers[0], "53"))
+			},
+		}
+	}
+	transport := &http.Transport{DialContext: dialer.DialContext}
+	client := &http.Client{Timeout: timeout, Transport: transport}
 	results := make(chan result, len(services))
 	var wg sync.WaitGroup
-
-	client := &http.Client{Timeout: timeout, Transport: &http.Transport{}}
 
 	for _, svc := range services {
 		wg.Add(1)
@@ -171,43 +182,14 @@ func getPublicIP(ctx context.Context, timeout time.Duration) (string, error) {
 	}()
 
 	// Return first valid IP
+	lastErr := fmt.Errorf("no valid IP from any service")
 	for r := range results {
 		if r.ip != "" {
 			return r.ip, nil
 		}
-	}
-
-	return "", fmt.Errorf("Could not determine IP - DNS Misconfigured?")
-}
-
-func readPreVPNIP() string {
-	data, err := os.ReadFile("/tmp/real_ip")
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
-
-func getPrimaryDNS() string {
-	data, err := os.ReadFile("/etc/resolv.conf")
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "nameserver ") {
-			return strings.TrimPrefix(line, "nameserver ")
+		if r.err != nil {
+			lastErr = r.err
 		}
 	}
-	return ""
-}
-
-func formatDNS(ip string) string {
-	switch ip {
-	case "10.0.0.243", "10.0.0.242":
-		return fmt.Sprintf("PIA (%s)", ip)
-	case "209.222.18.222", "209.222.18.218":
-		return fmt.Sprintf("PIA (%s)", ip)
-	default:
-		return ip
-	}
+	return "", lastErr
 }

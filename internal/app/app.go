@@ -4,14 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/api"
 	"github.com/x0lie/pia-tun/internal/apperrors"
 	"github.com/x0lie/pia-tun/internal/cacher"
+	"github.com/x0lie/pia-tun/internal/dns"
 	"github.com/x0lie/pia-tun/internal/firewall"
 	"github.com/x0lie/pia-tun/internal/log"
 	"github.com/x0lie/pia-tun/internal/metrics"
@@ -39,10 +38,11 @@ type App struct {
 	exitedCleanly bool
 	metrics       *metrics.Metrics
 	api           *api.Server
+	preVPNIP      string
 
 	// Infrastructure
 	log      *log.Logger
-	resolver *pia.Resolver
+	resolver *dns.Resolver
 	wan      *wan.Checker
 }
 
@@ -109,16 +109,28 @@ func Run(ctx context.Context) error {
 // initialize validates config, clears stale state, sets up the killswitch, and configures DNS.
 func (a *App) initialize(ctx context.Context) error {
 	log.StartupBanner(a.cfg.Version, a.cfg.SHA)
+	var err error
+
+	// If DNS != "none", clear /etc/resolv.conf, otherwise set it to a.cfg.DNS
+	if a.cfg.DNSMode != "none" {
+		if err = dns.Clear(); err != nil {
+			return err
+		}
+		a.log.Debug("/etc/resolv.conf cleared")
+	} else {
+		if a.cfg.DNS, err = dns.Read(); err != nil {
+			return err
+		}
+	}
 
 	// Initialize firewall
-	fw, err := firewall.New(a.cfg.FW.Backend)
+	a.fw, err = firewall.New(a.cfg.FW.Backend)
 	if err != nil {
 		return err
 	}
-	a.fw = fw
 
 	// Setup Killswitch
-	if err := a.fw.Setup(firewall.KillswitchConfig{LANs: a.cfg.FW.LANs, IPv6Enabled: a.cfg.VPN.IPv6Enabled, DNS: a.cfg.FW.DNS}); err != nil {
+	if err = a.fw.Setup(firewall.KillswitchConfig{LANs: a.cfg.FW.LANs, IPv6Enabled: a.cfg.VPN.IPv6Enabled}); err != nil {
 		return err
 	}
 
@@ -135,19 +147,24 @@ func (a *App) initialize(ctx context.Context) error {
 	// Start Proxy server
 	if a.cfg.Proxy.Enabled {
 		go func() {
-			if err := proxy.Run(ctx, a.cfg.Proxy); err != nil {
+			if err = proxy.Run(ctx, a.cfg.Proxy); err != nil {
 				log.Error(fmt.Sprintf("Proxy server error: %v", err))
 			}
 		}()
 	}
 
 	a.wan = &wan.Checker{}
-	a.resolver = pia.NewResolver(fw, a.log)
+	a.resolver = dns.NewResolver(a.fw)
 
-	a.writeDNS()
+	// Write custom DNS
+	if a.cfg.DNSMode == "custom" {
+		if err = dns.Write(a.cfg.DNS); err != nil {
+			return err
+		}
+	}
 
 	// Non-fatal: capture pre-VPN IP for leak detection
-	a.captureRealIP(ctx)
+	a.preVPNIP = a.captureRealIP(ctx)
 
 	return nil
 }
@@ -175,6 +192,23 @@ func (a *App) connect(ctx context.Context) error {
 	a.log.Debug("Connected to %s (%s) in %s, latency %dms",
 		connInfo.ServerCN, connInfo.ServerIP, connInfo.Location, connInfo.Latency.Milliseconds())
 	a.metrics.RecordNewConnection(connInfo.ServerCN, connInfo.ServerIP)
+
+	// Write PIA DNS if enabled
+	if a.cfg.DNSMode == "pia" {
+		a.cfg.DNS = a.connInfo.DNS
+		if err := dns.Write(a.cfg.DNS); err != nil {
+			return err
+		}
+		if err := a.fw.AddPIADNSRoutes(a.cfg.DNS); err != nil {
+			return err
+		}
+	}
+
+	// Verify connection
+	log.Step("Verifying connection...")
+	if err := vpn.VerifyConnection(ctx, a.cfg.DNSMode, a.cfg.DNS, a.preVPNIP); err != nil {
+		return err
+	}
 
 	// Signal success
 	a.connectionUp.Store(true)
@@ -280,6 +314,13 @@ func (a *App) runServices(ctx context.Context) error {
 	a.connectionUp.Store(false)
 	a.metrics.UpdateConnectionStatus(false)
 
+	// Clear PIA DNS if enabled
+	if a.cfg.DNSMode == "pia" {
+		if err := dns.Clear(); err != nil {
+			log.Warning(fmt.Sprintf("Failed to clear resolv.conf: %v", err))
+		}
+	}
+
 	return err
 }
 
@@ -318,52 +359,14 @@ func (a *App) cleanup() {
 	a.api.Shutdown()
 	wg.Down(context.Background(), a.log)
 
+	if a.cfg.DNSMode == "pia" && a.connInfo != nil {
+		dns.Clear()
+	}
+
 	if a.exitedCleanly {
 		a.fw.Cleanup()
 	} else {
 		log.Warning("Killswitch preserved due to error exit")
 	}
 	log.Success("Cleanup complete")
-}
-
-// PIA DNS servers (used when DNS="pia" or empty)
-var piaDNSServers = []string{"10.0.0.243", "10.0.0.242"}
-
-// writeDNS writes /etc/resolv.conf based on the DNS configuration.
-func (a *App) writeDNS() {
-	dns := a.cfg.FW.DNS
-	if dns == "none" {
-		a.log.Debug("DNS disabled (DNS=none)")
-		return
-	}
-
-	var servers []string
-	if dns == "" || dns == "pia" {
-		servers = piaDNSServers
-		a.log.Debug("Using PIA DNS: %v", servers)
-	} else {
-		for _, s := range strings.Split(dns, ",") {
-			s = strings.TrimSpace(s)
-			if s != "" {
-				servers = append(servers, s)
-			}
-		}
-		a.log.Debug("Using custom DNS: %v", servers)
-	}
-
-	if len(servers) == 0 {
-		return
-	}
-
-	var buf strings.Builder
-	buf.WriteString("# Set by pia-tun\n")
-	for _, s := range servers {
-		buf.WriteString("nameserver ")
-		buf.WriteString(s)
-		buf.WriteString("\n")
-	}
-
-	if err := os.WriteFile("/etc/resolv.conf", []byte(buf.String()), 0644); err != nil {
-		a.log.Debug("Failed to write /etc/resolv.conf: %v", err)
-	}
 }

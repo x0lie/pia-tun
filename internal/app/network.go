@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -26,7 +25,7 @@ const ipFetchTimeout = 5 * time.Second
 
 // captureRealIP fetches the external IP address before VPN connection.
 // This is used later by vpn.verifyConnection to confirm the VPN is working.
-func (a *App) captureRealIP(ctx context.Context) {
+func (a *App) captureRealIP(ctx context.Context) string {
 	log.Step("Capturing pre-VPN IP address...")
 
 	type target struct {
@@ -38,7 +37,7 @@ func (a *App) captureRealIP(ctx context.Context) {
 	resolved, _ := a.resolver.ResolveAll(ctx, ipServices)
 	if len(resolved) == 0 {
 		log.Error("Cannot resolve ip retrievers")
-		return
+		return ""
 	}
 
 	// Batch Exemptions
@@ -84,18 +83,15 @@ func (a *App) captureRealIP(ctx context.Context) {
 	res, ok := <-resultCh
 	if !ok {
 		log.Error("Cannot fetch external IP from any service")
-		return
+		return ""
 	}
 	cancel() // Cancel remaining requests
 
 	a.log.Debug("Got IP %s from %s", res.ip, res.src)
 
-	// Write to /tmp/real_ip for vpn.verifyConnection
-	if err := os.WriteFile("/tmp/real_ip", []byte(res.ip), 0644); err != nil {
-		a.log.Debug("Failed to write /tmp/real_ip: %v", err)
-	}
-
 	log.Success("Real IP captured: " + res.ip)
+
+	return res.ip
 }
 
 // fetchExternalIP makes an HTTPS request to get the external IP.

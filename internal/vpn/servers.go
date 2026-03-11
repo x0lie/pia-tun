@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/cacher"
+	"github.com/x0lie/pia-tun/internal/dns"
 	"github.com/x0lie/pia-tun/internal/firewall"
 	"github.com/x0lie/pia-tun/internal/log"
 	"github.com/x0lie/pia-tun/internal/pia"
@@ -18,7 +19,7 @@ const latencyTestTimeout = 2 * time.Second
 
 // selectServer fetches the server list, merges with cache, and selects by latency.
 // Flow: fetch fresh (cached IP or DNS) → merge with cache → filter → latency test
-func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *pia.Resolver, logger *log.Logger) (pia.Server, time.Duration, error) {
+func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *dns.Resolver, logger *log.Logger) (pia.Server, time.Duration, error) {
 	log.Step(fmt.Sprintf("Selecting server across %s...", cfg.Location))
 
 	// If no cached ips, resolve

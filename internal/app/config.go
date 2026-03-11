@@ -19,6 +19,8 @@ type Config struct {
 	Version  string
 	LogLevel string
 	SHA      string
+	DNS      []string
+	DNSMode  string
 
 	PIA     PIA
 	VPN     VPN
@@ -47,17 +49,19 @@ type VPN struct {
 type FW struct {
 	Backend string
 	LANs    string
-	DNS     string
 }
 
 func LoadConfig() Config {
 	setupAutoEnable()
+	dnsMode, dns := parseDNS(getEnv("DNS", "pia"))
 	log.Level = parseLogLevel(getEnv("LOG_LEVEL", "info"))
 
 	return Config{
 		Version:  getEnv("VERSION", "local"),
 		LogLevel: getEnv("LOG_LEVEL", "info"),
 		SHA:      getEnv("SHA", ""),
+		DNS:      dns,
+		DNSMode:  dnsMode,
 
 		PIA:     loadPIAConfig(),
 		VPN:     loadVPNConfig(),
@@ -92,7 +96,6 @@ func loadFWConfig() FW {
 	return FW{
 		Backend: getEnv("IPT_BACKEND", ""),
 		LANs:    getEnv("LOCAL_NETWORKS", ""),
-		DNS:     getEnv("DNS", "pia"),
 	}
 }
 
@@ -201,6 +204,24 @@ func parseLogLevel(level string) int {
 	}
 }
 
+func parseDNS(dns string) (string, []string) {
+	switch dns {
+	case "pia":
+		return "pia", nil
+	case "none":
+		return "none", nil
+	default:
+		var servers []string
+		for _, s := range strings.Split(dns, ",") {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				servers = append(servers, s)
+			}
+		}
+		return "custom", servers
+	}
+}
+
 func setupAutoEnable() {
 	if os.Getenv("PS_CLIENT") != "" || os.Getenv("PS_SCRIPT") != "" {
 		os.Setenv("PF_ENABLED", "true")
@@ -213,7 +234,7 @@ func (a *App) logConfig() {
 	a.log.Debug("  LOG_LEVEL=%s", a.cfg.LogLevel)
 	a.log.Debug("  IPV6_ENABLED=%v", a.cfg.VPN.IPv6Enabled)
 	a.log.Debug("  LOCAL_NETWORKS=%s", a.cfg.FW.LANs)
-	a.log.Debug("  DNS=%s", a.cfg.FW.DNS)
+	a.log.Debug("  DNS=%v", strings.Join(a.cfg.DNS, ", "))
 	a.log.Debug("  MTU=%d", a.cfg.VPN.MTU)
 	a.log.Debug("  WG_BACKEND=%s", a.cfg.VPN.Backend)
 	a.log.Debug("  IPT_BACKEND=%s", a.cfg.FW.Backend)
