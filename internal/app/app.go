@@ -189,8 +189,6 @@ func (a *App) connect(ctx context.Context) error {
 		return err // Error type (AuthError/ConnectivityError) preserved for connectLoop
 	}
 	a.connInfo = connInfo
-	a.log.Debug("Connected to %s (%s) in %s, latency %dms",
-		connInfo.ServerCN, connInfo.ServerIP, connInfo.Location, connInfo.Latency.Milliseconds())
 	a.metrics.RecordNewConnection(connInfo.ServerCN, connInfo.ServerIP)
 
 	// Write PIA DNS if enabled
@@ -357,7 +355,7 @@ func (a *App) showProxyStatus() {
 func (a *App) cleanup() {
 	log.Step("Shutting down...")
 	a.api.Shutdown()
-	wg.Down(context.Background(), a.log)
+	wg.Down(context.Background())
 
 	if a.cfg.DNSMode == "pia" && a.connInfo != nil {
 		dns.Clear()

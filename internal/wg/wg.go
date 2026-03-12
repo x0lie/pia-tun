@@ -27,31 +27,28 @@ const (
 	wgGoWaitInterval = 100 * time.Millisecond
 )
 
+var logger = log.New("wireguard")
+
 type Config struct {
 	PrivateKey    string
 	PeerPublicKey string
 	Endpoint      string
 	PeerIP        string
 	MTU           int
-	AllowedIPs    string
+	IPv6Enabled   bool
 	Backend       string
-}
-
-// Interface represents a running WireGuard tunnel.
-type Interface struct {
-	Name    string
-	Backend string
 }
 
 // GenerateKeyPair generates a WireGuard private/public key pair.
 func GenerateKeyPair(ctx context.Context) (privateKey, publicKey string, err error) {
-	privBytes, err := output(ctx, "wg", "genkey")
+	cmd := exec.CommandContext(ctx, "wg", "genkey")
+	privBytes, err := cmd.Output()
 	if err != nil {
 		return "", "", fmt.Errorf("generate private key: %w", err)
 	}
 	privateKey = strings.TrimSpace(string(privBytes))
 
-	cmd := exec.CommandContext(ctx, "wg", "pubkey")
+	cmd = exec.CommandContext(ctx, "wg", "pubkey")
 	cmd.Stdin = strings.NewReader(privateKey)
 	pubBytes, err := cmd.Output()
 	if err != nil {
@@ -62,19 +59,23 @@ func GenerateKeyPair(ctx context.Context) (privateKey, publicKey string, err err
 	return privateKey, publicKey, nil
 }
 
-// Up creates and configures a WireGuard interface with routing.
-// The caller handles firewall (AddVPN) and DNS setup separately.
-func Up(ctx context.Context, cfg Config, logger *log.Logger) (iface *Interface, err error) {
-	mode, err := createInterface(ctx, cfg.Backend, logger)
+// Up creates and configures a WireGuard interface and routing rules.
+func Up(ctx context.Context, cfg Config) (string, error) {
+	// Defensive cleanup
+	Down(ctx)
+
+	// Detects backend and creates interface (prefers kernel)
+	backend, err := createInterface(ctx, cfg.Backend)
 	if err != nil {
-		return nil, fmt.Errorf("create interface: %w", err)
+		return "", fmt.Errorf("create interface: %w", err)
 	}
+	logger.Debug("Interface created (%s)", ifaceName)
 
 	// Clean up on any subsequent failure
 	defer func() {
 		if err != nil {
 			logger.Debug("Up failed, cleaning up partial state")
-			Down(ctx, logger)
+			Down(ctx)
 		}
 	}()
 
@@ -83,24 +84,25 @@ func Up(ctx context.Context, cfg Config, logger *log.Logger) (iface *Interface, 
 	setKeyCmd.Stdin = strings.NewReader(cfg.PrivateKey)
 	var setKeyStderr bytes.Buffer
 	setKeyCmd.Stderr = &setKeyStderr
-	logger.Debug("exec: wg set %s private-key /dev/stdin", ifaceName)
 	if err := setKeyCmd.Run(); err != nil {
 		msg := strings.TrimSpace(setKeyStderr.String())
 		if msg != "" {
-			return nil, fmt.Errorf("set private key: %w (%s)", err, msg)
+			return "", fmt.Errorf("set private key: %w (%s)", err, msg)
 		}
-		return nil, fmt.Errorf("set private key: %w", err)
+		return "", fmt.Errorf("set private key: %w", err)
 	}
+	logger.Debug("Private key set")
 
 	// Configure address
-	if err := run(ctx, logger, "ip", "address", "add", cfg.PeerIP+"/32", "dev", ifaceName); err != nil {
-		return nil, fmt.Errorf("add address: %w", err)
+	if err := run(ctx, "ip", "address", "add", cfg.PeerIP+"/32", "dev", ifaceName); err != nil {
+		return "", fmt.Errorf("add address: %w", err)
 	}
+	logger.Debug("Address configured: %s", cfg.PeerIP)
 
 	// Set MTU
 	mtu := max(cfg.MTU, 1280)
-	if err := run(ctx, logger, "ip", "link", "set", "mtu", strconv.Itoa(mtu), "dev", ifaceName); err != nil {
-		return nil, fmt.Errorf("set MTU: %w", err)
+	if err := run(ctx, "ip", "link", "set", "mtu", strconv.Itoa(mtu), "dev", ifaceName); err != nil {
+		return "", fmt.Errorf("set MTU: %w", err)
 	}
 	logger.Debug("MTU set (%v)", mtu)
 	if mtu == 1280 {
@@ -111,84 +113,96 @@ func Up(ctx context.Context, cfg Config, logger *log.Logger) (iface *Interface, 
 
 	// Set fwmark BEFORE peer config to prevent routing loops
 	fwmarkStr := strconv.Itoa(fwmark)
-	if err := run(ctx, logger, "wg", "set", ifaceName, "fwmark", fwmarkStr); err != nil {
-		return nil, fmt.Errorf("set fwmark: %w", err)
+	if err := run(ctx, "wg", "set", ifaceName, "fwmark", fwmarkStr); err != nil {
+		return "", fmt.Errorf("set fwmark: %w", err)
 	}
+	logger.Debug("Fwmark set (%d)", fwmark)
 
 	// Configure peer
-	if err := run(ctx, logger, "wg", "set", ifaceName,
+	allowedIPs := "0.0.0.0/0"
+	if cfg.IPv6Enabled {
+		allowedIPs = "0.0.0.0/0, ::/0"
+	}
+	if err := run(ctx, "wg", "set", ifaceName,
 		"peer", cfg.PeerPublicKey,
 		"endpoint", cfg.Endpoint,
-		"allowed-ips", cfg.AllowedIPs,
+		"allowed-ips", allowedIPs,
 		"persistent-keepalive", strconv.Itoa(persistentKeepalive),
 	); err != nil {
-		return nil, fmt.Errorf("configure peer: %w", err)
+		return "", fmt.Errorf("configure peer: %w", err)
 	}
+	logger.Debug("Peer configured: endpoint: %s", cfg.Endpoint)
 
 	// Bring interface up
-	if err := run(ctx, logger, "ip", "link", "set", ifaceName, "up"); err != nil {
-		return nil, fmt.Errorf("bring up interface: %w", err)
+	if err := run(ctx, "ip", "link", "set", ifaceName, "up"); err != nil {
+		return "", fmt.Errorf("bring up interface: %w", err)
 	}
+	logger.Debug("%s set up", ifaceName)
 
 	// Add VPN route to separate table
 	tableStr := strconv.Itoa(routingTable)
-	if err := run(ctx, logger, "ip", "route", "add", "0.0.0.0/0", "dev", ifaceName, "table", tableStr); err != nil {
-		return nil, fmt.Errorf("add VPN route: %w", err)
+	if err := run(ctx, "ip", "route", "add", "0.0.0.0/0", "dev", ifaceName, "table", tableStr); err != nil {
+		return "", fmt.Errorf("add VPN route: %w", err)
 	}
+	logger.Debug("Added VPN route to table %d", routingTable)
 
 	// Add VPN routing rules
-	if err := run(ctx, logger, "ip", "rule", "add", "not", "fwmark", fwmarkStr, "table", tableStr, "priority", strconv.Itoa(priorityVPN)); err != nil {
-		return nil, fmt.Errorf("add VPN routing rule: %w", err)
+	if err := run(ctx, "ip", "rule", "add", "not", "fwmark", fwmarkStr, "table", tableStr, "priority", strconv.Itoa(priorityVPN)); err != nil {
+		return "", fmt.Errorf("add VPN routing rule: %w", err)
 	}
-	if err := run(ctx, logger, "ip", "rule", "add", "table", "main", "suppress_prefixlength", "0", "priority", strconv.Itoa(prioritySuppress)); err != nil {
-		return nil, fmt.Errorf("add suppress rule: %w", err)
+	logger.Debug("Added VPN routing at priority %d", priorityVPN)
+	if err := run(ctx, "ip", "rule", "add", "table", "main", "suppress_prefixlength", "0", "priority", strconv.Itoa(prioritySuppress)); err != nil {
+		return "", fmt.Errorf("add suppress rule: %w", err)
 	}
+	logger.Debug("Added VPN suppression rule at priority %d", prioritySuppress)
 
-	return &Interface{Name: ifaceName, Backend: mode}, nil
+	return backend, nil
 }
 
 // Down tears down the WireGuard interface, cleans up routing rules, and
 // kills any userspace wireguard-go process. Safe to call even if Up was
 // never called or failed partway through. All operations are best-effort.
-func Down(ctx context.Context, logger *log.Logger) {
-	run(ctx, logger, "ip", "link", "set", ifaceName, "down")
-	run(ctx, logger, "ip", "link", "del", ifaceName)
+func Down(ctx context.Context) {
+	run(ctx, "ip", "link", "set", ifaceName, "down")
+	logger.Debug("%s set down", ifaceName)
+	run(ctx, "ip", "link", "del", ifaceName)
+	logger.Debug("%s deleted", ifaceName)
 
 	// Kill wireguard-go if running (userspace mode)
 	exec.CommandContext(ctx, "pkill", "-f", "wireguard-go "+ifaceName).Run()
 	os.Remove("/var/run/wireguard/" + ifaceName + ".sock")
 
-	cleanupRoutingRules(ctx, logger)
+	cleanupRoutingRules(ctx)
 }
 
 // createInterface creates the WireGuard network interface using kernel
 // module or wireguard-go, depending on the backend setting.
-func createInterface(ctx context.Context, backend string, logger *log.Logger) (string, error) {
+func createInterface(ctx context.Context, backend string) (string, error) {
 	switch backend {
 	case "kernel":
-		if err := run(ctx, logger, "ip", "link", "add", ifaceName, "type", "wireguard"); err != nil {
-			return "", fmt.Errorf("kernel WireGuard unavailable (WG_BACKEND=kernel)")
+		if err := run(ctx, "ip", "link", "add", ifaceName, "type", "wireguard"); err != nil {
+			return "", fmt.Errorf("kernel WireGuard unavailable (WG_BACKEND=kernel): %w", err)
 		}
 		logger.Debug("Using kernel WireGuard")
 		return "kernel", nil
 
 	case "userspace":
 		logger.Debug("WG_BACKEND=userspace, skipping kernel WireGuard")
-		return startUserspace(ctx, logger)
+		return startUserspace(ctx)
 
 	default:
 		// Auto-detect: try kernel first
-		if err := run(ctx, nil, "ip", "link", "add", ifaceName, "type", "wireguard"); err == nil {
+		if err := run(ctx, "ip", "link", "add", ifaceName, "type", "wireguard"); err == nil {
 			logger.Debug("Using kernel WireGuard")
 			return "kernel", nil
 		}
 		logger.Debug("Kernel WireGuard unavailable, trying userspace")
-		return startUserspace(ctx, logger)
+		return startUserspace(ctx)
 	}
 }
 
 // startUserspace launches wireguard-go and waits for the interface to appear.
-func startUserspace(ctx context.Context, logger *log.Logger) (string, error) {
+func startUserspace(ctx context.Context) (string, error) {
 	if err := ensureTUN(); err != nil {
 		return "", err
 	}
@@ -239,6 +253,7 @@ func waitForInterface(ctx context.Context, name string) error {
 	deadline := time.After(wgGoWaitTimeout)
 	for {
 		if exec.CommandContext(ctx, "ip", "link", "show", name).Run() == nil {
+			logger.Debug("wireguard-go interface detected")
 			return nil
 		}
 		select {
@@ -252,11 +267,11 @@ func waitForInterface(ctx context.Context, name string) error {
 }
 
 // cleanupRoutingRules removes VPN routing rules at priorities 200 and 300.
-func cleanupRoutingRules(ctx context.Context, logger *log.Logger) {
+func cleanupRoutingRules(ctx context.Context) {
 	for _, p := range []int{priorityVPN, prioritySuppress} {
 		ps := strconv.Itoa(p)
 		for {
-			if run(ctx, nil, "ip", "rule", "del", "priority", ps) != nil {
+			if run(ctx, "ip", "rule", "del", "priority", ps) != nil {
 				break
 			}
 			logger.Debug("Removed routing rule at priority %d", p)
@@ -264,12 +279,8 @@ func cleanupRoutingRules(ctx context.Context, logger *log.Logger) {
 	}
 }
 
-// run executes a command, logging it at debug level. On failure, stderr
-// is included in the error. Pass nil logger to suppress logging.
-func run(ctx context.Context, logger *log.Logger, name string, args ...string) error {
-	if logger != nil {
-		logger.Debug("exec: %s %s", name, strings.Join(args, " "))
-	}
+// run executes a command. On failure, stderr is included in the error.
+func run(ctx context.Context, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -280,21 +291,6 @@ func run(ctx context.Context, logger *log.Logger, name string, args ...string) e
 		return fmt.Errorf("%s: %w", name, err)
 	}
 	return nil
-}
-
-// output executes a command and returns its stdout.
-func output(ctx context.Context, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		if stderr.Len() > 0 {
-			return nil, fmt.Errorf("%s: %w (%s)", name, err, strings.TrimSpace(stderr.String()))
-		}
-		return nil, fmt.Errorf("%s: %w", name, err)
-	}
-	return out, nil
 }
 
 func GetTransferBytes() (rx, tx int64, err error) {

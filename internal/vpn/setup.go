@@ -33,15 +33,11 @@ type Config struct {
 // Populated by Setup() and consumed by monitor (metrics), port forwarding,
 // and the orchestrator.
 type ConnectionInfo struct {
-	ServerIP     string
-	ServerCN     string
-	ClientIP     string
-	PFGateway    string
-	DNS          []string
-	Location     string
-	LocationName string
-	Latency      time.Duration
-	WGMode       string
+	ServerIP  string
+	ServerCN  string
+	ClientIP  string
+	PFGateway string
+	DNS       []string
 }
 
 // Setup establishes a VPN connection and returns connection info.
@@ -49,9 +45,6 @@ type ConnectionInfo struct {
 // Returns *pia.ConnectivityError for network failures (retry with WAN check).
 func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *dns.Resolver) (*ConnectionInfo, error) {
 	logger := log.New("vpn")
-
-	// Defensive cleanup
-	wg.Down(ctx, logger)
 
 	// Step 1: Select server and authenticate
 	var serverIP, serverCN, region string
@@ -111,35 +104,28 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher
 	log.Success("Auth token accepted")
 
 	// Step 4: Bring up WireGuard tunnel
-	allowedIPs := "0.0.0.0/0"
-	if cfg.IPv6 {
-		allowedIPs = "0.0.0.0/0, ::/0"
-	}
 	wgCfg := wg.Config{
 		PrivateKey:    privateKey,
 		PeerPublicKey: addKeyResp.ServerKey,
 		Endpoint:      fmt.Sprintf("%s:%d", serverIP, addKeyResp.ServerPort),
 		PeerIP:        addKeyResp.PeerIP,
 		MTU:           cfg.MTU,
-		AllowedIPs:    allowedIPs,
+		IPv6Enabled:   cfg.IPv6,
 		Backend:       cfg.WGBackend,
 	}
-	iface, err := wg.Up(ctx, wgCfg, logger)
+	backend, err := wg.Up(ctx, wgCfg)
 	if err != nil {
 		return nil, &pia.ConnectivityError{Op: "wireguard", Msg: "bring up tunnel", Err: err}
 	}
-	log.Success(fmt.Sprintf("WG tunnel configured (%s)", iface.Backend))
+	log.Success(fmt.Sprintf("Tunnel configured (%s)", backend))
+	logger.Debug("Connected to %s (%s) in %s, latency %dms", serverCN, serverIP, region, latency.Milliseconds())
 
 	return &ConnectionInfo{
-		ServerIP:     serverIP,
-		ServerCN:     serverCN,
-		ClientIP:     addKeyResp.PeerIP,
-		PFGateway:    addKeyResp.ServerVIP,
-		DNS:          addKeyResp.DNSServers,
-		Location:     region,
-		LocationName: region, // TODO: look up human-readable name if needed
-		Latency:      latency,
-		WGMode:       iface.Backend,
+		ServerIP:  serverIP,
+		ServerCN:  serverCN,
+		ClientIP:  addKeyResp.PeerIP,
+		PFGateway: addKeyResp.ServerVIP,
+		DNS:       addKeyResp.DNSServers,
 	}, nil
 }
 
