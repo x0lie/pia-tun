@@ -90,7 +90,6 @@ LABEL org.opencontainers.image.title="pia-tun" \
       org.opencontainers.image.vendor="x0lie"
 
 ENV LOG_LEVEL=info \
-    IPV6_ENABLED=false \
     LOCAL_NETWORKS="auto" \
     DNS="pia" \
     MTU="1420" \

@@ -100,7 +100,6 @@ See [`docs/docker-compose-examples/`](docs/docker-compose-examples/) for more ty
 |------------------|--------------------------------------------------------------------------------------------------------------------------|---------|
 | `LOCAL_NETWORKS` | CIDR ranges for tunnel bypass. Supports `auto`, IPv4 and IPv6 (e.g., `auto,192.168.1.0/24,fd00::/64`) or `all` or `none` | `auto`  |
 | `DNS`            | DNS servers setting. Supports `pia`, `DNS=system`, or specific IPs (e.g., `8.8.8.8,1.1.1.1`). Do53 only.                 | `pia`   |
-| `IPV6_ENABLED`   | Enable IPv6 routing to VPN interface. **Note:** PIA does not yet support IPv6. See IPv6 section below.                   | `false` |
 | `IPT_BACKEND`    | iptables backend: `nft` or `legacy`. Auto-detected if not set.                                                           | Auto    |
 
 ### Port Forwarding & Syncing
@@ -146,11 +145,6 @@ See [`docs/docker-compose-examples/`](docs/docker-compose-examples/) for more ty
 - For many setups you will need something like `LOCAL_NETWORKS=auto,192.168.1.0/24` to access dependent web UI.
 - `LOCAL_NETWORKS` accepts both private/public and IPv4/IPv6 CIDRs (single addresses need /32).
 - If `DNS=pia` and `LOCAL_NETWORKS` includes PIA's DNS, DNS routes take priority (routes through tunnel).
-
-#### IPv6 Notes
-- PIA does not currently support IPv6. IPv6 internet traffic will not work regardless of settings
-- IPV6_ENABLED is simply future-proofing for PIA's eventual integration of IPv6 capability
-- `LOCAL_NETWORKS` accepts IPv6 ranges and addresses, and functions regardless of IPV6_ENABLED
 
 #### Port-syncing
 - **Auto-detection**: `PS_URL` defaults to "http://localhost:{8080,9091,8112}" when `PS_CLIENT` set to qbittorrent, transmission, or deluge respectively.
