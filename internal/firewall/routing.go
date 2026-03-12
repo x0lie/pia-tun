@@ -6,53 +6,6 @@ import (
 	"strconv"
 )
 
-const priorityLocalNet = 100
-
-// RFC1918 and IPv6 ULA networks that should bypass the VPN tunnel.
-var privateNetworks = []string{
-	"10.0.0.0/8",
-	"172.16.0.0/12",
-	"192.168.0.0/16",
-}
-
-var privateNetworksV6 = []string{
-	"fc00::/7",
-}
-
-// setupPrivateRoutes adds routing rules so traffic to RFC1918 and ULA
-// networks uses the main routing table instead of the VPN tunnel.
-func (fw *Firewall) setupPrivateRoutes() error {
-	for _, network := range privateNetworks {
-		args := []string{"rule", "add", "to", network, "table", "main", "priority", strconv.Itoa(priorityLocalNet)}
-		if err := exec.Command("ip", args...).Run(); err != nil {
-			return err
-		}
-		fw.log.Debug("Added private IPv4 route (%s)", network)
-	}
-	for _, network := range privateNetworksV6 {
-		args := []string{"-6", "rule", "add", "to", network, "table", "main", "priority", strconv.Itoa(priorityLocalNet)}
-		if err := exec.Command("ip", args...).Run(); err != nil {
-			return err
-		}
-		fw.log.Debug("Added private IPv6 route (%s)", network)
-	}
-	return nil
-}
-
-// cleanupPrivateRoutes removes all routing rules at priority 100 (IPv4 and IPv6).
-func (fw *Firewall) cleanupPrivateRoutes() {
-	priority := strconv.Itoa(priorityLocalNet)
-	for _, family := range [][]string{{}, {"-6"}} {
-		for {
-			args := append(family, "rule", "del", "priority", priority)
-			if err := exec.Command("ip", args...).Run(); err != nil {
-				break
-			}
-			fw.log.Debug("Removed routing rule at priority %d", priorityLocalNet)
-		}
-	}
-}
-
 const priorityPIAGuard = 76
 const priorityPIA = 75
 

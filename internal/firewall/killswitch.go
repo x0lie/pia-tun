@@ -25,13 +25,13 @@ func (fw *Firewall) Setup(cfg KillswitchConfig) error {
 	}
 	log.Success(fmt.Sprintf("Baseline established (%s)", fw.ipt4Cmd))
 
-	// Resolve LOCAL_NETWORKS keywords into CIDRs and add them to chains if != "none"
+	// Set up LOCAL_NETWORKS routes and rules if LOCAL_NETWORKS != "none"
 	if cfg.LANs != "none" {
-		fw.localNetworksV4, fw.localNetworksV6 = resolveLocalNetworks(cfg.LANs)
-		fw.log.Debug("Local networks v4=%v v6=%v", fw.localNetworksV4, fw.localNetworksV6)
-		if err := fw.setupLocalNetworks(); err != nil {
-			return fmt.Errorf("failed to setup input chain: %w", err)
+		lans, err := fw.setupLocalNetworks(cfg.LANs)
+		if err != nil {
+			return fmt.Errorf("failed to setup local networks: %w", err)
 		}
+		log.Success(fmt.Sprintf("Local networks: %s", lans))
 	}
 
 	// Add VPN to killswitch - Must be present for handshake initiation packet
@@ -67,18 +67,13 @@ func (fw *Firewall) Setup(cfg KillswitchConfig) error {
 	fw.active = true
 	log.Success("DROP Rule on all VPN chains")
 
-	// Set up RFC1918/ULA bypass routes so LOCAL_NETWORKS traffic uses default gateway, not pia0
-	if err := fw.setupPrivateRoutes(); err != nil {
-		return fmt.Errorf("failed to setup private network routes: %w", err)
-	}
-
 	return nil
 }
 
 // Cleanup removes all killswitch chains, bypass routes, and MSS clamping rules.
 func (fw *Firewall) Cleanup() {
 	fw.RemovePIARoutes()
-	fw.cleanupPrivateRoutes()
+	fw.cleanupLocalRoutes()
 	fw.cleanupMSSClamping()
 	fw.cleanupBypassRoutes()
 	fw.cleanupChains()

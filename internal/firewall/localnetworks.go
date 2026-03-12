@@ -4,42 +4,92 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/x0lie/pia-tun/internal/log"
 )
 
-// setupLocalNetworks inserts local network ACCEPT rules before DROP in all 4 chains.
+const priorityLocalNet = 100
+
+// setupLocalNetworks orchestrates the rules and routes creation
+// for bi-directional access on LOCAL_NETWORKS
+func (fw *Firewall) setupLocalNetworks(localNetworks string) (string, error) {
+	lansV4, lansV6 := resolveLocalNetworks(localNetworks)
+	lans := formatNetworks(lansV4, lansV6)
+	fw.log.Debug("Resolved local networks: %s", lans)
+
+	if err := setupLocalRoutes(lansV4, lansV6); err != nil {
+		return "", fmt.Errorf("failed to setup routes: %w", err)
+	}
+	fw.log.Debug("Added routes for %s", lans)
+
+	if err := fw.setupLocalRules(lansV4, lansV6); err != nil {
+		return "", fmt.Errorf("failed to setup input chain: %w", err)
+	}
+	fw.log.Debug("Added rules for %s", lans)
+
+	return lans, nil
+}
+
+// setupLocalRoutes adds routing rules so traffic to LOCAL_NETWORKS
+// uses the main routing table instead of the VPN tunnel.
+func setupLocalRoutes(lansV4, lansV6 []string) error {
+	priority := strconv.Itoa(priorityLocalNet)
+	for _, network := range lansV4 {
+		args := []string{"rule", "add", "to", network, "table", "main", "priority", priority}
+		if err := exec.Command("ip", args...).Run(); err != nil {
+			return fmt.Errorf("add route %s: %w", network, err)
+		}
+	}
+	for _, network := range lansV6 {
+		args := []string{"-6", "rule", "add", "to", network, "table", "main", "priority", priority}
+		if err := exec.Command("ip", args...).Run(); err != nil {
+			return fmt.Errorf("add route %s: %w", network, err)
+		}
+	}
+	return nil
+}
+
+// cleanupLocalRoutes removes all routing rules at priority 100 (IPv4 and IPv6).
+func (fw *Firewall) cleanupLocalRoutes() {
+	priority := strconv.Itoa(priorityLocalNet)
+	for _, family := range [][]string{{}, {"-6"}} {
+		args := append(family, "rule", "del", "priority", priority)
+		for {
+			if err := exec.Command("ip", args...).Run(); err != nil {
+				break
+			}
+			fw.log.Debug("Removed routing rule at priority %d", priorityLocalNet)
+		}
+	}
+}
+
+// setupLocalRules inserts local network ACCEPT rules before DROP in all 4 chains.
 // INPUT chains get -s (source) rules, OUTPUT chains get -d (destination) rules.
-func (fw *Firewall) setupLocalNetworks() error {
+func (fw *Firewall) setupLocalRules(lansV4, lansV6 []string) error {
 	// IPv4 local networks → VPN_IN and VPN_OUT
-	if len(fw.localNetworksV4) > 0 {
-		fw.log.Debug("Adding local network rules to VPN_IN and VPN_OUT")
-		for _, network := range fw.localNetworksV4 {
+	if len(lansV4) > 0 {
+		for _, network := range lansV4 {
 			if err := fw.insertBeforeDrop(fw.ipt4, chainIn, "-s", network, "-j", "ACCEPT"); err != nil {
-				return fmt.Errorf("VPN_IN local network %s: %w", network, err)
+				return fmt.Errorf("%s local network %s: %w", chainIn, network, err)
 			}
 			if err := fw.insertBeforeDrop(fw.ipt4, chainOut, "-d", network, "-j", "ACCEPT"); err != nil {
-				return fmt.Errorf("VPN_OUT local network %s: %w", network, err)
+				return fmt.Errorf("%s local network %s: %w", chainOut, network, err)
 			}
 		}
 	}
 
 	// IPv6 local networks → VPN_IN6 and VPN_OUT6
-	if len(fw.localNetworksV6) > 0 {
-		fw.log.Debug("Adding local network rules to VPN_IN6 and VPN_OUT6")
-		for _, network := range fw.localNetworksV6 {
+	if len(lansV6) > 0 {
+		for _, network := range lansV6 {
 			if err := fw.insertBeforeDrop(fw.ipt6, chainIn6, "-s", network, "-j", "ACCEPT"); err != nil {
-				return fmt.Errorf("VPN_IN6 local network %s: %w", network, err)
+				return fmt.Errorf("%s local network %s: %w", chainIn6, network, err)
 			}
 			if err := fw.insertBeforeDrop(fw.ipt6, chainOut6, "-d", network, "-j", "ACCEPT"); err != nil {
-				return fmt.Errorf("VPN_OUT6 local network %s: %w", network, err)
+				return fmt.Errorf("%s local network %s: %w", chainOut6, network, err)
 			}
 		}
-	}
-
-	if len(fw.localNetworksV4) > 0 || len(fw.localNetworksV6) > 0 {
-		log.Success(fmt.Sprintf("Local networks: %s", formatNetworks(fw.localNetworksV4, fw.localNetworksV6)))
 	}
 
 	return nil
@@ -71,7 +121,7 @@ func resolveLocalNetworks(input string) (ipv4, ipv6 []string) {
 		default:
 			_, _, err := net.ParseCIDR(part)
 			if err != nil {
-				log.Warning(fmt.Sprintf("Skipping %s (invalid CIDR)", part))
+				log.Warning(fmt.Sprintf("Skipping local network: %s (invalid CIDR)", part))
 				continue
 			}
 			if strings.Contains(part, ":") {
