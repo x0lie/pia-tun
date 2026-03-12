@@ -89,7 +89,7 @@ type Metrics struct {
 func New(cfg Config, version string) *Metrics {
 	m := &Metrics{
 		Config:      &cfg,
-		log:         log.New("Metrics"),
+		log:         log.New("metrics"),
 		Version:     version,
 		WANUp:       true,
 		UptimeStart: time.Now(),
