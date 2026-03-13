@@ -5,11 +5,11 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/firewall"
 	"github.com/x0lie/pia-tun/internal/log"
-	"github.com/x0lie/pia-tun/internal/pia"
 )
 
 type dnsServer struct {
@@ -38,7 +38,6 @@ func NewResolver(fw *firewall.Firewall) *Resolver {
 
 // Resolve resolves a hostname to IPv4 addresses using Quad9 DNS-over-TLS.
 // Tries 9.9.9.9 first, falls back to 9.9.9.11.
-// Returns pia.ConnectivityError if all servers fail.
 func (r *Resolver) Resolve(ctx context.Context, hostname string) ([]string, error) {
 	for _, srv := range dnsServers {
 		m, err := r.queryDoT(ctx, []string{hostname}, srv)
@@ -48,7 +47,7 @@ func (r *Resolver) Resolve(ctx context.Context, hostname string) ([]string, erro
 			}
 		}
 	}
-	return nil, &pia.ConnectivityError{Op: "dns", Msg: "failed to resolve " + hostname}
+	return nil, fmt.Errorf("failed to resolve %s", hostname)
 }
 
 // ResolveAll resolves multiple hostnames in parallel under one exemption — used by captureRealIP
@@ -59,7 +58,7 @@ func (r *Resolver) ResolveAll(ctx context.Context, hostnames []string) (map[stri
 			return m, nil
 		}
 	}
-	return nil, &pia.ConnectivityError{Op: "dns", Msg: "failed to resolve hostnames"}
+	return nil, fmt.Errorf("failed to resolve %s", strings.Join(hostnames, ", "))
 }
 
 // queryDoT performs a single DNS-over-TLS lookup against one Quad9 server.

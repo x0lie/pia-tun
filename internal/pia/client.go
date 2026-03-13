@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"os"
 	"time"
+
+	"github.com/x0lie/pia-tun/internal/apperrors"
 )
 
 const (
@@ -26,7 +28,7 @@ const authHostname = "www.privateinternetaccess.com"
 
 // GenerateToken authenticates with PIA and returns a login token.
 // ip is the server IP to connect to. The hostname is used for TLS SNI.
-// Returns *AuthError for invalid credentials, *ConnectivityError for network failures.
+// Returns ErrFatal for invalid credentials
 func GenerateToken(ctx context.Context, client *http.Client, ip, user, pass string) (string, error) {
 	// Use hostname in URL for correct Host header, but connect to IP
 	reqURL := fmt.Sprintf("https://%s%s", authHostname, authPath)
@@ -42,23 +44,20 @@ func GenerateToken(ctx context.Context, client *http.Client, ip, user, pass stri
 
 	resp, err := authClient.Do(req)
 	if err != nil {
-		return "", &ConnectivityError{Op: "auth", Msg: "request failed", Err: err}
+		return "", fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", &ConnectivityError{Op: "auth", Msg: "read response", Err: err}
+		return "", fmt.Errorf("read response: %w", err)
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return "", &AuthError{Msg: "invalid credentials"}
+		return "", fmt.Errorf("%w: invalid credentials (HTTP %d)", apperrors.ErrFatal, resp.StatusCode)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", &ConnectivityError{
-			Op:  "auth",
-			Msg: fmt.Sprintf("HTTP %d", resp.StatusCode),
-		}
+		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
 	var result struct {
@@ -66,15 +65,15 @@ func GenerateToken(ctx context.Context, client *http.Client, ip, user, pass stri
 		Message string `json:"message"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", &ConnectivityError{Op: "auth", Msg: "parse response", Err: err}
+		return "", fmt.Errorf("parse response: %w", err)
 	}
 
 	// PIA can return 200 with an error message for some auth failures.
 	if result.Message == "authentication failed" {
-		return "", &AuthError{Msg: "invalid credentials"}
+		return "", fmt.Errorf("%w: invalid credentials (%s)", apperrors.ErrFatal, result.Message)
 	}
 	if result.Token == "" {
-		return "", &ConnectivityError{Op: "auth", Msg: "empty token in response"}
+		return "", fmt.Errorf("empty token in response")
 	}
 
 	return result.Token, nil
@@ -85,7 +84,6 @@ const serverlistHostname = "serverlist.piaservers.net"
 
 // FetchServerList fetches the PIA server list.
 // ip is the server IP to connect to. The hostname is used for TLS SNI.
-// Returns *ConnectivityError for network failures.
 func FetchServerList(ctx context.Context, client *http.Client, ip string) ([]Server, error) {
 	// Use hostname in URL for correct Host header, but connect to IP
 	reqURL := fmt.Sprintf("https://%s%s", serverlistHostname, serverListPath)
@@ -100,20 +98,17 @@ func FetchServerList(ctx context.Context, client *http.Client, ip string) ([]Ser
 
 	resp, err := serverlistClient.Do(req)
 	if err != nil {
-		return nil, &ConnectivityError{Op: "serverlist", Msg: "request failed", Err: err}
+		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &ConnectivityError{
-			Op:  "serverlist",
-			Msg: fmt.Sprintf("HTTP %d", resp.StatusCode),
-		}
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &ConnectivityError{Op: "serverlist", Msg: "read response", Err: err}
+		return nil, fmt.Errorf("read response: %w", err)
 	}
 
 	// PIA appends a signature after the JSON object; trim it.
@@ -125,7 +120,7 @@ func FetchServerList(ctx context.Context, client *http.Client, ip string) ([]Ser
 		Regions []region `json:"regions"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, &ConnectivityError{Op: "serverlist", Msg: "parse response", Err: err}
+		return nil, fmt.Errorf("parse response: %w", err)
 	}
 
 	flatRegions := flattenRegions(result.Regions)
@@ -154,8 +149,6 @@ func flattenRegions(regions []region) []Server {
 // serverIP is the actual server IP to connect to, cn is the server's certificate
 // name used for both TLS verification and the URL hostname. The request is verified
 // against PIA's CA certificate.
-// Returns *AuthError if the token is rejected (status != "OK").
-// Returns *ConnectivityError for network failures.
 func AddKey(ctx context.Context, serverIP, cn, token, pubkey string) (*AddKeyResponse, error) {
 	client, err := newAddKeyClient(serverIP, cn)
 	if err != nil {
@@ -174,32 +167,29 @@ func AddKey(ctx context.Context, serverIP, cn, token, pubkey string) (*AddKeyRes
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, &ConnectivityError{Op: "addkey", Msg: "request failed", Err: err}
+		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, &TokenRejectedError{Msg: fmt.Sprintf("HTTP %d", resp.StatusCode)}
+			return nil, fmt.Errorf("token rejected (HTTP %d)", resp.StatusCode)
 		}
-		return nil, &ConnectivityError{
-			Op:  "addkey",
-			Msg: fmt.Sprintf("HTTP %d", resp.StatusCode),
-		}
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &ConnectivityError{Op: "addkey", Msg: "read response", Err: err}
+		return nil, fmt.Errorf("read response: %w", err)
 	}
 
 	var result AddKeyResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, &ConnectivityError{Op: "addkey", Msg: "parse response", Err: err}
+		return nil, fmt.Errorf("parse response: %w", err)
 	}
 
 	if result.Status != "OK" {
-		return nil, &TokenRejectedError{Msg: fmt.Sprintf("status: %s", result.Status)}
+		return nil, fmt.Errorf("token rejected (status: %s)", result.Status)
 	}
 
 	return &result, nil

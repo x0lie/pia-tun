@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/log"
-	"github.com/x0lie/pia-tun/internal/pia"
 )
 
 // VerifyConnection confirms traffic routes through the VPN.
@@ -32,7 +31,7 @@ func VerifyConnection(ctx context.Context, dnsMode string, dnsServers []string, 
 	logger.Debug("Waiting for handshake...")
 	err := waitForHandshake(ctx, handshakeTimeout)
 	if err != nil {
-		return &pia.ConnectivityError{Op: "verify", Msg: "wait for handshake", Err: err}
+		return fmt.Errorf("waiting for handshake: %w", err)
 	}
 	log.Success(fmt.Sprintf("Handshake complete (%.1fs)", time.Since(start).Seconds()))
 	stopTrigger()

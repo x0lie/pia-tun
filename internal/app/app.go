@@ -15,7 +15,6 @@ import (
 	"github.com/x0lie/pia-tun/internal/log"
 	"github.com/x0lie/pia-tun/internal/metrics"
 	"github.com/x0lie/pia-tun/internal/monitor"
-	"github.com/x0lie/pia-tun/internal/pia"
 	"github.com/x0lie/pia-tun/internal/portforward"
 	"github.com/x0lie/pia-tun/internal/portsync"
 	"github.com/x0lie/pia-tun/internal/proxy"
@@ -217,7 +216,7 @@ func (a *App) connect(ctx context.Context) error {
 }
 
 // connectLoop retries connect() with exponential backoff until it succeeds or the context is cancelled.
-// Returns immediately on AuthError and LocationError (bad config - fatal).
+// ErrFatal causes exit, all other errors logged and retried
 func (a *App) connectLoop(ctx context.Context) error {
 	delay := 5 * time.Second
 	const maxDelay = 60 * time.Second
@@ -232,19 +231,13 @@ func (a *App) connectLoop(ctx context.Context) error {
 			return ctx.Err()
 		}
 
-		// AuthError is fatal - bad credentials, don't retry
-		if _, isAuth := err.(*pia.AuthError); isAuth {
-			log.Warning("Check PIA_USER/PASS or secrets pia_user/pass")
+		// Fatal errors
+		if errors.Is(err, apperrors.ErrFatal) {
 			return err
 		}
 
-		// LocationError is fatal - no servers available, don't retry
-		if _, isLocation := err.(*pia.LocationError); isLocation {
-			return err
-		}
-
-		// ConnectivityError is nonfatal - wait for wan or retry with backoff
-		log.Error(fmt.Sprintf("%v", err))
+		// Non-fatal errors
+		log.Warning(err.Error())
 		if !a.wan.Check(ctx) {
 			a.wan.WaitForUp(ctx, a.metrics)
 			delay = 5 * time.Second

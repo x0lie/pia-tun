@@ -2,10 +2,12 @@ package vpn
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
+	"github.com/x0lie/pia-tun/internal/apperrors"
 	"github.com/x0lie/pia-tun/internal/cacher"
 	"github.com/x0lie/pia-tun/internal/dns"
 	"github.com/x0lie/pia-tun/internal/firewall"
@@ -41,8 +43,8 @@ type ConnectionInfo struct {
 }
 
 // Setup establishes a VPN connection and returns connection info.
-// Returns *pia.AuthError for credential failures (fatal).
-// Returns *pia.ConnectivityError for network failures (retry with WAN check).
+// Returns apperrors.ErrFatal on fatal errors (exit program),
+// all other error returns are retried in app.connectLoop()
 func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *dns.Resolver) (*ConnectionInfo, error) {
 	logger := log.New("vpn")
 
@@ -82,7 +84,7 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher
 	log.Step(fmt.Sprintf("Establishing connection to %s...", serverCN))
 	privateKey, publicKey, err := wg.GenerateKeyPair(ctx)
 	if err != nil {
-		return nil, &pia.ConnectivityError{Op: "keygen", Msg: "generate WireGuard keys", Err: err}
+		return nil, fmt.Errorf("%w: failed to generate WG keypair: %s", apperrors.ErrFatal, err)
 	}
 	logger.Debug("Generated WireGuard key pair")
 
@@ -90,14 +92,12 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher
 	comment := "addkey"
 	logger.Debug("Registering public key with %s", serverCN)
 	if err = fw.AddExemption(serverIP, "1337", "tcp", comment); err != nil {
-		return nil, &pia.ConnectivityError{Op: "addkey", Msg: "add firewall exemption", Err: err}
+		return nil, fmt.Errorf("addkey: %w", err)
 	}
 	addKeyResp, err := pia.AddKey(ctx, serverIP, serverCN, token, publicKey)
 	fw.RemoveExemptions(comment)
 	if err != nil {
-		if _, isTokenRejected := err.(*pia.TokenRejectedError); isTokenRejected {
-			cache.ClearToken()
-		}
+		cache.ClearToken()
 		return nil, err
 	}
 	logger.Debug("Server accepted public key, peer IP: %s", addKeyResp.PeerIP)
@@ -115,7 +115,7 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher
 	}
 	backend, err := wg.Up(ctx, wgCfg)
 	if err != nil {
-		return nil, &pia.ConnectivityError{Op: "wireguard", Msg: "bring up tunnel", Err: err}
+		return nil, fmt.Errorf("%w: failed to bring up wireguard: %s", apperrors.ErrFatal, err)
 	}
 	log.Success(fmt.Sprintf("Tunnel configured (%s)", backend))
 	logger.Debug("Connected to %s (%s) in %s, latency %dms", serverCN, serverIP, region, latency.Milliseconds())
@@ -161,8 +161,8 @@ func authenticate(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 			return token, nil
 		}
 		// Check for auth errors (fatal, don't retry)
-		if _, isAuth := err.(*pia.AuthError); isAuth {
-			return "", err
+		if errors.Is(err, apperrors.ErrFatal) {
+			return "", fmt.Errorf("%w\n    Check PIA_USER/PASS or secrets pia_user/pass", err)
 		}
 		logger.Debug("Auth via %s failed: %v", ip, err)
 	}
@@ -181,13 +181,14 @@ func authenticate(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 		if err == nil {
 			return token, nil
 		}
-		if _, isAuth := err.(*pia.AuthError); isAuth {
-			return "", err
+		// Check for auth errors (fatal, don't retry)
+		if errors.Is(err, apperrors.ErrFatal) {
+			return "", fmt.Errorf("%w\n    Check PIA_USER/PASS or secrets pia_user/pass", err)
 		}
 		logger.Debug("Auth via %s failed: %v", ip, err)
 	}
 
-	return "", &pia.ConnectivityError{Op: "auth", Msg: "all auth endpoints failed"}
+	return "", fmt.Errorf("auth: all endpoints failed")
 }
 
 // tryAuth attempts authentication with a single IP.
@@ -195,7 +196,7 @@ func tryAuth(ctx context.Context, client *http.Client, ip, user, pass string, fw
 	comment := "auth"
 	err := fw.AddExemption(ip, "443", "tcp", comment)
 	if err != nil {
-		return "", &pia.ConnectivityError{Op: "auth", Msg: "add firewall exemption", Err: err}
+		return "", fmt.Errorf("auth: %w", err)
 	}
 	defer fw.RemoveExemptions(comment)
 

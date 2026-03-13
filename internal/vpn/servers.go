@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/x0lie/pia-tun/internal/apperrors"
 	"github.com/x0lie/pia-tun/internal/cacher"
 	"github.com/x0lie/pia-tun/internal/dns"
 	"github.com/x0lie/pia-tun/internal/firewall"
@@ -26,7 +28,7 @@ func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 	if cache.ServerListIPs == nil {
 		ips, err := resolver.Resolve(ctx, "serverlist.piaservers.net")
 		if err != nil {
-			return pia.Server{}, 0, &pia.ConnectivityError{Op: "serverlist", Msg: "could not resolve serverlist.piaservers.net"}
+			return pia.Server{}, 0, err
 		}
 		cache.MergeServerListIPs(ips)
 	}
@@ -34,6 +36,7 @@ func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 	// Gather and cache servers, clear IPs if failure
 	servers, err := tryServerListIPs(ctx, cache.ServerListIPs, fw, logger)
 	if err != nil {
+		log.Warning("Cleared cached serverlist IPs")
 		cache.ClearServerListIPs()
 		return pia.Server{}, 0, err
 	}
@@ -42,7 +45,8 @@ func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 	// Check if Region exists
 	allInRegion := filterServers(cache.Servers, cfg.Location, false)
 	if len(allInRegion) == 0 {
-		return pia.Server{}, 0, &pia.LocationError{Msg: "region not found", Location: cfg.Location}
+		return pia.Server{}, 0, fmt.Errorf("%w: PIA_LOCATION not found: %s\n\n    Available regions:\n    %s",
+			apperrors.ErrFatal, cfg.Location, regionList(cache.Servers, false))
 	}
 
 	// If required, Check if port forwarding supported
@@ -50,7 +54,8 @@ func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 	if cfg.PFRequired {
 		candidates = filterServers(cache.Servers, cfg.Location, true)
 		if len(candidates) == 0 {
-			return pia.Server{}, 0, &pia.LocationError{Msg: "does not support port forwarding", Location: cfg.Location}
+			return pia.Server{}, 0, fmt.Errorf("%w: PIA_LOCATION does not support port forwarding: %s\n\n    Available regions with port forwarding:\n      %s",
+				apperrors.ErrFatal, cfg.Location, regionList(cache.Servers, true))
 		}
 	}
 	log.Success(fmt.Sprintf("Found %d candidates", len(candidates)))
@@ -78,7 +83,7 @@ func tryServerListIPs(ctx context.Context, ips []string, fw *firewall.Firewall, 
 		}
 		logger.Debug("Serverlist fetch from %s failed: %v", ip, err)
 	}
-	return nil, &pia.ConnectivityError{Op: "serverlist", Msg: "all serverlist endpoints failed"}
+	return nil, fmt.Errorf("failed to obtain serverlist from all endpoints")
 }
 
 // filterServers returns servers matching any of the given locations +pf if enabled
@@ -188,4 +193,30 @@ func measureLatency(ctx context.Context, ip string, timeout time.Duration) time.
 	conn.Close()
 
 	return time.Since(start)
+}
+
+func regionList(servers []pia.Server, pfOnly bool) string {
+	if servers == nil {
+		return "serverlist empty"
+	}
+	seen := make(map[string]bool)
+	var regions []string
+	for _, srv := range servers {
+		if pfOnly && !srv.PF {
+			continue
+		}
+		if !seen[srv.Region] {
+			seen[srv.Region] = true
+			regions = append(regions, srv.Region)
+		}
+	}
+	sort.Strings(regions)
+
+	const perLine = 5
+	var lines []string
+	for i := 0; i < len(regions); i += perLine {
+		end := min(i+perLine, len(regions))
+		lines = append(lines, strings.Join(regions[i:end], ", "))
+	}
+	return strings.Join(lines, "\n      ")
 }
