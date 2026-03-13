@@ -47,10 +47,12 @@ func (a *App) captureRealIP(ctx context.Context) string {
 		targets = append(targets, target{hostname: hostname, ip: ips[0]})
 		specs = append(specs, firewall.Exemption{IP: ips[0], Port: "443", Proto: "tcp", Comment: hostname})
 	}
-	comments := a.fw.AddExemptions(specs...)
+	if err := a.fw.AddExemptions(specs...); err != nil {
+		a.log.Debug("captureRealIP: %s", err)
+	}
 
 	// Clean up all exemptions when done
-	defer a.fw.RemoveExemptions(comments...)
+	defer a.fw.RemoveExemptions()
 
 	// Fetch IP in parallel, first success wins
 	ctx, cancel := context.WithTimeout(ctx, ipFetchTimeout)

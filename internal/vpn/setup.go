@@ -89,13 +89,12 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher
 	logger.Debug("Generated WireGuard key pair")
 
 	// Step 3: Register public key with PIA server
-	comment := "addkey"
 	logger.Debug("Registering public key with %s", serverCN)
-	if err = fw.AddExemption(serverIP, "1337", "tcp", comment); err != nil {
+	if err = fw.AddExemption(serverIP, "1337", "tcp", "addkey"); err != nil {
 		return nil, fmt.Errorf("addkey: %w", err)
 	}
 	addKeyResp, err := pia.AddKey(ctx, serverIP, serverCN, token, publicKey)
-	fw.RemoveExemptions(comment)
+	fw.RemoveExemptions()
 	if err != nil {
 		cache.ClearToken()
 		return nil, err
@@ -198,7 +197,7 @@ func tryAuth(ctx context.Context, client *http.Client, ip, user, pass string, fw
 	if err != nil {
 		return "", fmt.Errorf("auth: %w", err)
 	}
-	defer fw.RemoveExemptions(comment)
+	defer fw.RemoveExemptions()
 
 	return pia.GenerateToken(ctx, client, ip, user, pass)
 }

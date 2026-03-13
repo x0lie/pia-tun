@@ -68,20 +68,19 @@ func tryServerListIPs(ctx context.Context, ips []string, fw *firewall.Firewall, 
 	client := pia.NewDirectClient(apiTimeout)
 
 	for _, ip := range ips {
-		comment := "pia-serverlist"
 		logger.Debug("Trying serverlist IP: %s", ip)
-		err := fw.AddExemption(ip, "443", "tcp", comment)
-		if err != nil {
+		if err := fw.AddExemption(ip, "443", "tcp", "pia-serverlist"); err != nil {
 			logger.Debug("Failed to add exemption: %v", err)
 			continue
 		}
 		servers, err := pia.FetchServerList(ctx, client, ip)
-		fw.RemoveExemptions(comment)
-		if err == nil {
-			logger.Debug("Fetched server list via IP %s", ip)
-			return servers, nil
+		fw.RemoveExemptions()
+		if err != nil {
+			logger.Debug("Serverlist fetch from %s failed: %v", ip, err)
+			continue
 		}
-		logger.Debug("Serverlist fetch from %s failed: %v", ip, err)
+		logger.Debug("Fetched server list via IP %s", ip)
+		return servers, nil
 	}
 	return nil, fmt.Errorf("failed to obtain serverlist from all endpoints")
 }
@@ -135,10 +134,12 @@ func raceServers(ctx context.Context, candidates []pia.Server, fw *firewall.Fire
 	for i, srv := range candidates {
 		specs[i] = firewall.Exemption{IP: srv.IP, Port: "443", Proto: "tcp", Comment: srv.CN}
 	}
-	comments := fw.AddExemptions(specs...)
+	if err := fw.AddExemptions(specs...); err != nil {
+		return pia.Server{}, 0, fmt.Errorf("raceServers: %w", err)
+	}
 
 	// Clean up all exemptions when done
-	defer fw.RemoveExemptions(comments...)
+	defer fw.RemoveExemptions()
 
 	// Test all candidates in parallel
 	type result struct {

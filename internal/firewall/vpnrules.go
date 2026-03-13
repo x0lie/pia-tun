@@ -14,6 +14,7 @@ const (
 	vpnInsertPos  = 3
 	portInsertPos = 3
 	tableFilter   = "filter"
+	chainExempt   = "VPN_EXEMPTIONS"
 )
 
 var portForwardComments = []string{"port_forward_tcp", "port_forward_udp"}
@@ -22,52 +23,67 @@ type Exemption struct {
 	IP, Port, Proto, Comment string
 }
 
-// Adds exemptions to VPN_OUT for required VPN setup steps
-func (fw *Firewall) AddExemption(ip, port, proto, comment string) error {
-	fw.log.Debug("Adding temporary exemption: %s:%s/%s (%s)", ip, port, proto, comment)
+func (fw *Firewall) createExemptChain() error {
+	// Create VPN_EXEMPTIONS chain
+	if err := fw.ipt4.NewChain(tableFilter, chainExempt); err != nil {
+		return fmt.Errorf("create %s: %w", chainExempt, err)
+	}
 
-	spec := []string{
+	// Wire into parent VPN_OUT
+	if err := fw.ipt4.Insert(tableFilter, chainOut, 1, "-j", chainExempt); err != nil {
+		fw.log.Debug("Failed to insert %s into %s: %s", chainExempt, chainOut, err)
+	}
+	return nil
+}
+
+func (fw *Firewall) AddExemption(ip, port, proto, comment string) error {
+	fw.log.Debug("Adding exemption: %s:%s/%s (%s)", ip, port, proto, comment)
+
+	if err := fw.createExemptChain(); err != nil {
+		return err
+	}
+
+	// Append Rule to chain
+	if err := fw.ipt4.Append(tableFilter, chainExempt,
 		"-d", ip, "-p", proto, "--dport", port,
 		"-m", "comment", "--comment", comment,
 		"-j", "ACCEPT",
-	}
-
-	if err := fw.insertBeforeDrop(fw.ipt4, chainOut, spec...); err != nil {
-		return fmt.Errorf("insert exemption %s: %w", comment, err)
+	); err != nil {
+		return fmt.Errorf("%s: append exemption: %w", chainExempt, err)
 	}
 
 	return nil
 }
 
 // Batching version of AddExemption
-func (fw *Firewall) AddExemptions(specs ...Exemption) []string {
-	pos, err := ruleCount(fw.ipt4, chainOut)
-	if err != nil {
-		fw.log.Debug("ruleCount failed: %v", err)
-		return nil
+func (fw *Firewall) AddExemptions(specs ...Exemption) error {
+	if err := fw.createExemptChain(); err != nil {
+		return err
 	}
+
 	var comments []string
 	for _, s := range specs {
-		spec := []string{"-d", s.IP, "-p", s.Proto, "--dport", s.Port,
-			"-m", "comment", "--comment", s.Comment, "-j", "ACCEPT"}
-		if err := fw.ipt4.Insert(tableFilter, chainOut, pos, spec...); err != nil {
+		if err := fw.ipt4.Append(tableFilter, chainExempt,
+			"-d", s.IP, "-p", s.Proto, "--dport", s.Port,
+			"-m", "comment", "--comment", s.Comment,
+			"-j", "ACCEPT",
+		); err != nil {
 			fw.log.Debug("Failed to add exemption %s: %v", s.Comment, err)
 		} else {
 			comments = append(comments, s.Comment)
 		}
 	}
-	fw.log.Debug("Adding exemptions: %v", comments)
-	return comments
+	fw.log.Debug("Added exemptions: %v", comments)
+	return nil
 }
 
-// Removes exemptions
-func (fw *Firewall) RemoveExemptions(comments ...string) {
-	fw.log.Debug("Removing exemptions: %s", comments)
-	fw.removeVPNRulesByComment(fw.ipt4Cmd, chainOut, comments)
+func (fw *Firewall) RemoveExemptions() {
+	fw.log.Debug("Removing exemptions")
+	fw.ipt4.Delete(tableFilter, chainOut, "-j", chainExempt)
+	fw.ipt4.ClearAndDeleteChain(tableFilter, chainExempt)
 }
 
-// AddVPN inserts VPN interface rules into the killswitch. If fwmark is non-empty
-// and not "off", a fwmark-based rule is also inserted.
+// addVPN inserts VPN interface rules into the killswitch.
 func (fw *Firewall) addVPN(ipv6Enabled bool) error {
 	ifaceComment := "vpn_interface"
 	fwmarkComment := "vpn_fwmark"

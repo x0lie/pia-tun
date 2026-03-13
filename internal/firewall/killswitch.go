@@ -76,6 +76,7 @@ func (fw *Firewall) Cleanup() {
 	fw.cleanupLocalRoutes()
 	fw.cleanupMSSClamping()
 	fw.cleanupBypassRoutes()
+	fw.RemoveExemptions()
 	fw.cleanupChains()
 	fw.active = false
 }

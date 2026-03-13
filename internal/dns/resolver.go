@@ -68,7 +68,7 @@ func (r *Resolver) queryDoT(ctx context.Context, hostnames []string, srv dnsServ
 	if err := r.fw.AddExemption(srv.ip, "853", "tcp", "dns_resolve"); err != nil {
 		return nil, fmt.Errorf("add exemption for %s: %w", srv.ip, err)
 	}
-	defer r.fw.RemoveExemptions("dns_resolve")
+	defer r.fw.RemoveExemptions()
 
 	type res struct {
 		hostname string
