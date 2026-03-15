@@ -370,7 +370,7 @@ test_killswitch() {
     fi
 
     # Wait for reconnect
-    wait_for_unhealthy
+    wait_for_unhealthy || return 1
 
     info "Waiting for health to recover..."
     if ! wait_for "$CONNECT_TIMEOUT" "Reconnected" curl -sf "$METRICS_URL/health"; then
@@ -502,7 +502,7 @@ emulate_wan_down() {
     dexec ip link set down pia0
     info "pia0 interface set down"
 
-    wait_for_unhealthy
+    wait_for_unhealthy  || return 1
 }
 
 test_downtime_leaks() {
@@ -559,7 +559,7 @@ summary() {
     echo -e "${CLR}║${NC}     ${YLW}Skipped:${NC} ${SKIPPED}$(printf '%*s' $spad '')${CLR}║${NC}"
     echo -e "${CLR}╚$(printf '═%.0s' $(seq 1 $W))╝${NC}"
 
-    if [ "$RESULT" = "FAIL" ]; then
+    if [ "$RESULT" = "FAIL" ];  then
         echo ""
         echo ""
         echo -e "${BLU}▶${NC} Container logs"
@@ -567,12 +567,10 @@ summary() {
         docker logs "$CONTAINER" 2>&1 || true
         echo -e "${BLU}─────────────────────────────────────────────────────────────────────────────────────────${NC}"
         return 1
-    else
-        return 0
     fi
 }
 
-main() {
+suite() {
     # initialize
     print_banner
     check_prerequisites
@@ -580,9 +578,9 @@ main() {
     start_container
 
     # wait for up
-    wait_for_ready        || { summary; exit 1; }
-    wait_for_healthy      || { summary; exit 1; }
-    wait_for_port_forward || { summary; exit 1; }
+    wait_for_ready        || return 1
+    wait_for_healthy      || return 1
+    wait_for_port_forward || return 1
 
     # test runtime state
     dump_firewall_state "Run-time"
@@ -592,22 +590,24 @@ main() {
     test_ipv6_blocked
 
     # test killswitch + reconnect
-    test_killswitch
+    test_killswitch || return 1
 
     # test (post)reconnect state
-    wait_for_port_forward || { summary; exit 1; }
+    wait_for_port_forward || return 1
     test_port_forwarding "post-reconnect"
     test_proxy
     test_metrics_endpoint
 
     # test downtime state
-    emulate_wan_down
-    wait_for_wan_down
+    emulate_wan_down || return 1
+    wait_for_wan_down || return 1
     test_downtime_leaks
     test_downtime_metrics
     dump_firewall_state "WAN-down"
+}
 
-    # summarize results
+main() {
+    suite || true
     summary
 }
 
