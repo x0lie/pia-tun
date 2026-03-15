@@ -75,9 +75,10 @@ dexec() {
 # Wait for a condition with timeout. Usage: wait_for <timeout> <description> <command...>
 wait_for() {
     local timeout=$1 desc=$2; shift 2
-    for i in $(seq 1 "$timeout"); do
+    local max=$(( timeout * 10 ))
+    for i in $(seq 1 "$max"); do
         if "$@" >/dev/null 2>&1; then
-            info "$desc (${i}s)"
+            info "$desc ($(awk "BEGIN{printf \"%.1f\", $i/10}")s)"
             return 0
         fi
         # Check container is still running
@@ -85,7 +86,7 @@ wait_for() {
             fail "$desc — container exited"
             return 1
         fi
-        sleep 1
+        sleep 0.1
     done
     fail "$desc — timed out after ${timeout}s"
     return 1
