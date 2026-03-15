@@ -73,7 +73,11 @@ func (fw *Firewall) AddExemptions(specs ...Exemption) error {
 			comments = append(comments, s.Comment)
 		}
 	}
-	fw.log.Debug("Added exemptions: %v", comments)
+	if len(comments) > 10 {
+		fw.log.Debug("Added %d exemptions", len(comments))
+	} else {
+		fw.log.Debug("Added %d exemptions: %v", len(comments), comments)
+	}
 	return nil
 }
 

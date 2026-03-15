@@ -78,7 +78,7 @@ func loadPIAConfig() PIA {
 	return PIA{
 		User:     getEnvOrSecret("PIA_USER", ""),
 		Pass:     getEnvOrSecret("PIA_PASS", ""),
-		Location: getEnv("PIA_LOCATION", ""),
+		Location: getEnv("PIA_LOCATION", "all"),
 		CN:       getEnv("PIA_CN", ""),
 		IP:       getEnv("PIA_IP", ""),
 	}
@@ -146,9 +146,6 @@ func loadMonitorConfig() monitor.Config {
 func (c *Config) validate() error {
 	if c.PIA.User == "" || c.PIA.Pass == "" {
 		return fmt.Errorf("Set PIA_USER and PIA_PASS environment variables, or use Docker secrets at /run/secrets/pia_user and pia_pass")
-	}
-	if c.PIA.Location == "" && c.PIA.CN == "" {
-		return fmt.Errorf("Set PIA_LOCATION to a region ID (e.g., 'ca_ontario', 'us_california', 'uk_london')")
 	}
 	return nil
 }

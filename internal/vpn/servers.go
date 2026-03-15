@@ -17,12 +17,14 @@ import (
 	"github.com/x0lie/pia-tun/internal/pia"
 )
 
-const latencyTestTimeout = 2 * time.Second
-
 // selectServer fetches the server list, merges with cache, and selects by latency.
 // Flow: fetch fresh (cached IP or DNS) → merge with cache → filter → latency test
 func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *dns.Resolver, logger *log.Logger) (pia.Server, time.Duration, error) {
-	log.Step(fmt.Sprintf("Selecting server across %s...", cfg.Location))
+	if cfg.Location == "all" {
+		log.Step("Selecting best server globally...")
+	} else {
+		log.Step(fmt.Sprintf("Selecting best server from %s...", cfg.Location))
+	}
 
 	// If no cached ips, resolve
 	if cache.ServerListIPs == nil {
@@ -42,25 +44,30 @@ func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 	}
 	cache.MergeServers(servers)
 
-	// Check if Region exists
-	allInRegion := filterServers(cache.Servers, cfg.Location, false)
-	if len(allInRegion) == 0 {
-		return pia.Server{}, 0, fmt.Errorf("%w: PIA_LOCATION not found: %s\n\n    Available regions:\n    %s",
-			apperrors.ErrFatal, cfg.Location, regionList(cache.Servers, false))
-	}
-
-	// If required, Check if port forwarding supported
-	candidates := allInRegion
-	if cfg.PFRequired {
-		candidates = filterServers(cache.Servers, cfg.Location, true)
-		if len(candidates) == 0 {
-			return pia.Server{}, 0, fmt.Errorf("%w: PIA_LOCATION does not support port forwarding: %s\n\n    Available regions with port forwarding:\n      %s",
-				apperrors.ErrFatal, cfg.Location, regionList(cache.Servers, true))
+	var candidates []pia.Server
+	if cfg.Location != "all" {
+		// Check if Region exists
+		allInRegion := filterServers(cache.Servers, cfg.Location, false)
+		if len(allInRegion) == 0 {
+			return pia.Server{}, 0, fmt.Errorf("%w: PIA_LOCATION not found: %s\n\n    Available regions:\n    %s",
+				apperrors.ErrFatal, cfg.Location, regionList(cache.Servers, false))
 		}
+
+		// If required, Check if port forwarding supported
+		candidates = allInRegion
+		if cfg.PFRequired {
+			candidates = filterServers(cache.Servers, cfg.Location, true)
+			if len(candidates) == 0 {
+				return pia.Server{}, 0, fmt.Errorf("%w: PIA_LOCATION does not support port forwarding: %s\n\n    Available regions with port forwarding:\n      %s",
+					apperrors.ErrFatal, cfg.Location, regionList(cache.Servers, true))
+			}
+		}
+	} else {
+		candidates = onePerRegion(filterServers(cache.Servers, cfg.Location, cfg.PFRequired))
 	}
 	log.Success(fmt.Sprintf("Found %d candidates", len(candidates)))
 
-	return raceServers(ctx, candidates, fw, latencyTestTimeout, logger)
+	return raceServers(ctx, candidates, fw, logger)
 }
 
 // tryServerListIPs fetches the server list using given ips
@@ -108,9 +115,11 @@ func filterServers(servers []pia.Server, locations string, pfRequired bool) []pi
 		return nil // No locations specified
 	}
 
+	allRegions := locationSet["all"]
+
 	var filtered []pia.Server
 	for _, srv := range servers {
-		if !locationSet[srv.Region] {
+		if !allRegions && !locationSet[srv.Region] {
 			continue
 		}
 		if pfRequired && !srv.PF {
@@ -122,12 +131,25 @@ func filterServers(servers []pia.Server, locations string, pfRequired bool) []pi
 	return filtered
 }
 
+func onePerRegion(candidates []pia.Server) []pia.Server {
+	seen := make(map[string]bool)
+	var out []pia.Server
+	for _, srv := range candidates {
+		if !seen[srv.Region] {
+			seen[srv.Region] = true
+			out = append(out, srv)
+		}
+	}
+	return out
+}
+
 // raceServers tests latency to candidates in parallel and returns the lowest-latency server.
 // Each candidate gets a temporary firewall exemption for its IP on port 443.
-func raceServers(ctx context.Context, candidates []pia.Server, fw *firewall.Firewall, dialTimeout time.Duration, logger *log.Logger) (pia.Server, time.Duration, error) {
+func raceServers(ctx context.Context, candidates []pia.Server, fw *firewall.Firewall, logger *log.Logger) (pia.Server, time.Duration, error) {
 	if len(candidates) == 0 {
 		return pia.Server{}, 0, fmt.Errorf("no server candidates")
 	}
+	logger.Debug("Testing latency to %d candidates", len(candidates))
 
 	// Add all firewall exemptions upfront
 	specs := make([]firewall.Exemption, len(candidates))
@@ -137,8 +159,6 @@ func raceServers(ctx context.Context, candidates []pia.Server, fw *firewall.Fire
 	if err := fw.AddExemptions(specs...); err != nil {
 		return pia.Server{}, 0, fmt.Errorf("raceServers: %w", err)
 	}
-
-	// Clean up all exemptions when done
 	defer fw.RemoveExemptions()
 
 	// Test all candidates in parallel
@@ -148,6 +168,13 @@ func raceServers(ctx context.Context, candidates []pia.Server, fw *firewall.Fire
 	}
 	resultCh := make(chan result, len(candidates))
 
+	const collectMax = 25
+
+	minTimer := time.NewTimer(120 * time.Millisecond)
+	maxTimer := time.NewTimer(600 * time.Millisecond)
+	defer minTimer.Stop()
+	defer maxTimer.Stop()
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -156,38 +183,63 @@ func raceServers(ctx context.Context, candidates []pia.Server, fw *firewall.Fire
 		wg.Add(1)
 		go func(idx int, ip string) {
 			defer wg.Done()
-			lat := measureLatency(ctx, ip, dialTimeout)
+			lat := measureLatency(ctx, ip)
 			resultCh <- result{idx: idx, latency: lat}
 		}(i, srv.IP)
 	}
 
-	// Close channel when all goroutines complete
 	go func() {
 		wg.Wait()
 		close(resultCh)
 	}()
 
-	// Collect result(s)
-	for r := range resultCh {
-		srv := candidates[r.idx]
-		if r.latency > 0 {
-			logger.Debug("Server %s (%s): %dms", srv.CN, srv.IP, r.latency.Milliseconds())
+	var collected []result
+
+loop:
+	for {
+		select {
+		case r, ok := <-resultCh:
+			if !ok {
+				break loop // all goroutines finished
+			}
+			if r.latency > 0 {
+				srv := candidates[r.idx]
+				logger.Debug("%-23s %-23s (%dms)", srv.CN, srv.Region, r.latency.Milliseconds())
+				collected = append(collected, r)
+				if len(collected) >= collectMax {
+					cancel()
+					break loop
+				}
+			}
+		case <-minTimer.C:
+			if len(collected) > 0 {
+				cancel()
+				break loop
+			}
+		case <-maxTimer.C:
 			cancel()
-			return srv, r.latency, nil
-		} else {
-			logger.Debug("Server %s (%s): timeout", srv.CN, srv.IP)
+			break loop
+		case <-ctx.Done():
+			break loop
 		}
 	}
 
-	log.Warning(fmt.Sprintf("All servers timed out, using fallback: %s", candidates[0].CN))
-	return candidates[0], 0, nil
+	if len(collected) == 0 {
+		log.Warning(fmt.Sprintf("All servers timed out, using fallback: %s", candidates[0].CN))
+		return candidates[0], 0, nil
+	}
+
+	sort.Slice(collected, func(i, j int) bool {
+		return collected[i].latency < collected[j].latency
+	})
+
+	best := collected[0]
+	return candidates[best.idx], best.latency, nil
 }
 
-func measureLatency(ctx context.Context, ip string, timeout time.Duration) time.Duration {
+func measureLatency(ctx context.Context, ip string) time.Duration {
 	start := time.Now()
-
-	dialer := &net.Dialer{Timeout: timeout}
-	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, "443"))
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(ip, "443"))
 	if err != nil {
 		return 0
 	}

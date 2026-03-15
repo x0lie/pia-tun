@@ -89,28 +89,32 @@ LABEL org.opencontainers.image.title="pia-tun" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.vendor="x0lie"
 
-ENV LOG_LEVEL=info \
+ENV PIA_USER="" \
+    PIA_PASS="" \
+    PIA_LOCATION="all" \
+    LOG_LEVEL=info \
+    WG_BACKEND="" \
+    MTU="1420" \
     LOCAL_NETWORKS="auto" \
     DNS="pia" \
-    MTU="1420" \
-    WG_BACKEND="" \
     IPT_BACKEND="" \
-    PORT_FILE=/run/pia-tun/port \
+    PF_ENABLED=false \
     PS_CLIENT="" \
     PS_URL="" \
     PS_USER="" \
     PS_PASS="" \
     PS_SCRIPT="" \
+    PORT_FILE=/run/pia-tun/port \
     PROXY_ENABLED=false \
-    PROXY_USER="" \
-    PROXY_PASS="" \
     SOCKS5_PORT=1080 \
     HTTP_PROXY_PORT=8888 \
+    PROXY_USER="" \
+    PROXY_PASS="" \
+    HC_INTERVAL=10 \
+    HC_FAILURE_WINDOW=30 \
     METRICS_ENABLED=true \
     METRICS_PORT=9090 \
-    INSTANCE_NAME="" \
-    HC_INTERVAL=10 \
-    HC_FAILURE_WINDOW=30
+    INSTANCE_NAME=""
 
 EXPOSE 1080 8888 9090
 

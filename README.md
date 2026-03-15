@@ -89,7 +89,7 @@ See [`docs/docker-compose-examples/`](docs/docker-compose-examples/) for more ty
 |----------------|-------------------------------------------------------------------------------------------------------|----------|
 | `PIA_USER`     | PIA username (or use `/run/secrets/pia_user`)                                                         | Required |
 | `PIA_PASS`     | PIA password (or use `/run/secrets/pia_pass`)                                                         | Required |
-| `PIA_LOCATION` | Comma-separated locations (e.g., `ca_ontario,ca_toronto`). Tests latency and selects the best server. | Required |
+| `PIA_LOCATION` | Comma-separated locations (e.g., `ca_ontario,ca_toronto`). Tests latency and selects the best server. | `all`    |
 | `LOG_LEVEL`    | Logging verbosity: `error`, `info`, `debug`, `trace`                                                  | `info`   |
 | `WG_BACKEND`   | WireGuard implementation: `kernel` (faster) or `userspace` (wireguard-go). Auto-detected if not set.  | Auto     |
 | `MTU`          | Max Packet Size for the WireGuard Interface (pia0)                                                    | 1420     |
@@ -137,6 +137,7 @@ See [`docs/docker-compose-examples/`](docs/docker-compose-examples/) for more ty
 |-------------------|--------------------------------------------------------------------------|---------|
 | `METRICS_ENABLED` | Enable Prometheus metrics endpoint (listen on localhost only by default) | `true`  |
 | `METRICS_PORT`    | Metrics server port                                                      | `9090`  |
+| `INSTANCE_NAME`   | Prometheus label for users running more than one container               | None    |
 
 ### Behavior
 
