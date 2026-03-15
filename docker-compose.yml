@@ -5,7 +5,7 @@ services:
     cap_add:
       - NET_ADMIN                                                             # Necessary
     cap_drop:
-      - all                                                                   # Highly recommended
+      - ALL                                                                   # Highly recommended
     environment:
       - PIA_LOCATION=ca_ontario,ca_ontario-so,ca_toronto,ca                   # Supports multiple options, chooses lowest latency
       - PS_CLIENT=qbittorrent

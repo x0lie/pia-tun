@@ -5,7 +5,7 @@ services:
     cap_add:
       - NET_ADMIN
     cap_drop:
-      - all
+      - ALL
     environment:
       - PIA_LOCATION=ca_ontario,ca_ontario-so,ca_toronto
       - PS_CLIENT=qbittorrent
