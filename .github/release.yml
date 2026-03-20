@@ -1,10 +1,12 @@
 # .github/release.yml
-changelog:  # Applys based on merged PR's labels
+changelog:  # Applies based on merged PR labels
   exclude:
     labels:
       - dependencies
       - chore
       - ci
+      - documentation
+      - testing
     authors:
       - dependabot
       - renovate[bot]
@@ -13,7 +15,6 @@ changelog:  # Applys based on merged PR's labels
       labels:
         - enhancement
         - feature
-        - feat
     - title: "🐛 Bug Fixes"
       labels:
         - bug
@@ -21,9 +22,6 @@ changelog:  # Applys based on merged PR's labels
     - title: "🔒 Security"
       labels:
         - security
-    - title: "🔧 Other Changes"
-      labels:
-        - "*"
     - title: "🛠 Breaking Changes"
       labels:
         - breaking-change

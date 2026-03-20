@@ -1,37 +1,14 @@
 # Auto-label PRs based on changed files
-# Aligns with .github/release.yml categories
+# Labels feed into .github/release.yml for changelog generation
+# fix, bug, security, breaking-change are applied manually
 
-# Features & Enhancements
-feature:
-  - changed-files:
-    - any-glob-to-any-file:
-      - 'cmd/**'
-      - 'internal/**'
-      - 'Dockerfile'
-
+# Features & improvements
 enhancement:
   - changed-files:
     - any-glob-to-any-file:
       - 'cmd/**'
       - 'internal/**'
-
-# Breaking changes
-breaking-change:
-  head-branch: ['^breaking/', '^major/']
-
-# Bug Fixes
-fix:
-  - head-branch: ['^fix/', '^hotfix/']
-
-bug:
-  - head-branch: ['^fix/', '^hotfix/', '^bug/']
-
-# Security
-security:
-  - changed-files:
-    - any-glob-to-any-file:
-      - 'internal/firewall/**'
-  - head-branch: ['^security/']
+      - 'Dockerfile'
 
 # CI/CD & Automation
 ci:
@@ -39,7 +16,6 @@ ci:
     - any-glob-to-any-file:
       - '.github/**'
       - 'renovate.json'
-      - '.editorconfig'
 
 # Dependencies
 dependencies:
@@ -48,7 +24,14 @@ dependencies:
       - 'go.mod'
       - 'go.sum'
 
-# Chore (non-functional changes)
+# Documentation
+documentation:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/*.md'
+      - 'docs/**'
+
+# Chore (non-functional)
 chore:
   - changed-files:
     - any-glob-to-any-file:
@@ -57,13 +40,6 @@ chore:
       - '.editorconfig'
       - '.dockerignore'
       - 'LICENSE'
-
-# Documentation
-documentation:
-  - changed-files:
-    - any-glob-to-any-file:
-      - '**/*.md'
-      - 'docs/**'
 
 # Testing
 testing:
