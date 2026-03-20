@@ -52,8 +52,9 @@ type App struct {
 func Run(ctx context.Context) error {
 	a := &App{
 		cfg:   LoadConfig(),
-		cache: &cacher.Cache{},
 		log:   log.New("app"),
+		cache: &cacher.Cache{},
+		wan:   &wan.Checker{},
 	}
 	a.logConfig()
 	if err := a.cfg.validate(); err != nil {
@@ -106,17 +107,20 @@ func Run(ctx context.Context) error {
 	}
 }
 
-// initialize validates config, clears stale state, sets up the killswitch, and configures DNS.
+// initialize performs one-time setup (killswitch, services scoped to container lifetime, etc.)
 func (a *App) initialize(ctx context.Context) error {
 	log.StartupBanner(a.cfg.Version, a.cfg.SHA)
 	var err error
 
-	// If DNS != "system", clear /etc/resolv.conf to prevent leaks to LOCAL_NETWORKS
+	// If DNS != "system", backup and clear /etc/resolv.conf to prevent leaks to LOCAL_NETWORKS
 	if a.cfg.DNSMode != "system" {
-		if err = dns.Clear(); err != nil {
+		if err = dns.Backup(); err != nil {
 			return err
 		}
-		a.log.Debug("/etc/resolv.conf cleared")
+		if err := dns.Clear(); err != nil {
+			return err
+		}
+		a.log.Debug("/etc/resolv.conf moved to /etc/resolv.bak")
 	}
 
 	// Initialize firewall
@@ -149,7 +153,6 @@ func (a *App) initialize(ctx context.Context) error {
 		}()
 	}
 
-	a.wan = &wan.Checker{}
 	a.resolver = dns.NewResolver(a.fw)
 
 	if err := a.retryWithWANCheck(ctx, a.setupDNS); err != nil {
@@ -209,23 +212,22 @@ func (a *App) connect(ctx context.Context) error {
 	return nil
 }
 
-// runServices starts services that track with vpn lifecycle. They run as goroutines managed
-// by errgroup. Services that track with container lifecycle start in initialize. Returns
-// ErrReconnect for reconnection request and nil on graceful shutdown
+// runServices starts services that track with VPN lifecycle. They run as goroutines managed
+// by errgroup. Returns ErrReconnect for reconnection request and nil on graceful shutdown
 func (a *App) runServices(ctx context.Context) error {
 	g, gCtx := errgroup.WithContext(ctx)
 
-	// Monitor - always runs (verifies tunnel working)
+	// Monitor - verifies tunnel working
 	g.Go(func() error {
 		return monitor.Run(gCtx, &a.cfg.Monitor, a.metrics, a.connInfo.ServerIP)
 	})
 
-	// Cacher - always runs (refreshes PIA login token and server list)
+	// Cacher - refreshes PIA login token and server list
 	g.Go(func() error {
 		return cacher.Run(gCtx, a.cache, a.cfg.PIA.User, a.cfg.PIA.Pass)
 	})
 
-	// Port syncer - conditional
+	// Port syncer - syncs port to desired endpoint
 	syncer := portsync.New(a.cfg.PS)
 	if a.cfg.PS.Client != "" || a.cfg.PS.Script != "" {
 		g.Go(func() error {
@@ -233,7 +235,7 @@ func (a *App) runServices(ctx context.Context) error {
 		})
 	}
 
-	// Port forwarding - conditional
+	// Port forwarding - acquires port from PIA gateway
 	if a.cfg.PF.Enabled {
 		connCfg := portforward.ConnectionConfig{
 			ClientIP:  a.connInfo.ClientIP,
@@ -303,8 +305,8 @@ func (a *App) setupDNS(ctx context.Context) error {
 	}
 }
 
-// retryWithWANCheck retries givenFunction() with exponential backoff until it succeeds or the context is cancelled.
-// ErrFatal causes exit, all other errors logged and retried
+// retryWithWANCheck retries givenFunction() with exponential backoff until it succeeds, the context is cancelled, or
+// the givenFunction() returns apperrors.ErrFatal - all other errors logged and retried
 func (a *App) retryWithWANCheck(ctx context.Context, fn func(context.Context) error) error {
 	delay := 5 * time.Second
 	const maxDelay = 60 * time.Second
@@ -381,12 +383,9 @@ func (a *App) cleanup() {
 	a.api.Shutdown()
 	wg.Down(context.Background())
 
-	if a.cfg.DNSMode != "system" {
-		dns.Clear()
-	}
-
 	if a.exitedCleanly {
 		a.fw.Cleanup()
+		dns.Restore()
 	} else {
 		log.Warning("Killswitch preserved due to error exit")
 	}

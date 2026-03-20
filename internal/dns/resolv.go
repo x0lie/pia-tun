@@ -53,3 +53,28 @@ func Clear() error {
 	}
 	return nil
 }
+
+// Backup moves /etc/resolv.conf to /etc/resolv.bak
+func Backup() error {
+	data, err := os.ReadFile("/etc/resolv.conf")
+	if err != nil {
+		return fmt.Errorf("failed to read resolv.conf for backup: %w", err)
+	}
+	if err := os.WriteFile("/etc/resolv.bak", data, 0644); err != nil {
+		return fmt.Errorf("failed to write resolv.bak: %w", err)
+	}
+	return nil
+}
+
+// Restore moves /etc/resolv.bak to /etc/resolv.conf
+func Restore() error {
+	data, err := os.ReadFile("/etc/resolv.bak")
+	if err != nil {
+		return fmt.Errorf("failed to read resolv.bak: %w", err)
+	}
+	if err := os.WriteFile("/etc/resolv.conf", data, 0644); err != nil {
+		return fmt.Errorf("failed to restore resolv.conf: %w", err)
+	}
+	os.Remove("/etc/resolv.bak")
+	return nil
+}
