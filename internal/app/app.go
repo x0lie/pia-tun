@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -24,25 +25,25 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// App holds the application state and configuration.
 type App struct {
 	// Config (set once, read-only)
 	cfg Config
 
-	// Runtime state
-	cache         *cacher.Cache
-	fw            *firewall.Firewall
+	// Connection state
 	connInfo      *vpn.ConnectionInfo
 	connectionUp  atomic.Bool
 	exitedCleanly bool
-	metrics       *metrics.Metrics
-	api           *api.Server
 	preVPNIP      string
 
 	// Infrastructure
 	log      *log.Logger
+	fw       *firewall.Firewall
+	cache    *cacher.Cache
 	resolver *dns.Resolver
+	metrics  *metrics.Metrics
 	wan      *wan.Checker
+	api      *api.Server
+	dotProxy *dns.Proxy
 }
 
 // Run is the main entry point for the orchestrated VPN client.
@@ -66,8 +67,8 @@ func Run(ctx context.Context) error {
 	}
 	defer a.cleanup()
 
-	// Initial connection with retry
-	if err := a.connectLoop(ctx); err != nil {
+	// Initial connection with wan-aware retry
+	if err := a.retryWithWANCheck(ctx, a.connect); err != nil {
 		log.Error(err.Error())
 		return err
 	}
@@ -91,7 +92,7 @@ func Run(ctx context.Context) error {
 			log.ReconnectingBanner()
 			a.wan.WaitForUp(ctx, a.metrics)
 
-			if err := a.connectLoop(ctx); err != nil {
+			if err := a.retryWithWANCheck(ctx, a.connect); err != nil {
 				log.Error(err.Error())
 				return err
 			}
@@ -110,16 +111,12 @@ func (a *App) initialize(ctx context.Context) error {
 	log.StartupBanner(a.cfg.Version, a.cfg.SHA)
 	var err error
 
-	// If DNS != "system", clear /etc/resolv.conf, otherwise set it to a.cfg.DNS
+	// If DNS != "system", clear /etc/resolv.conf to prevent leaks to LOCAL_NETWORKS
 	if a.cfg.DNSMode != "system" {
 		if err = dns.Clear(); err != nil {
 			return err
 		}
 		a.log.Debug("/etc/resolv.conf cleared")
-	} else {
-		if a.cfg.DNS, err = dns.Read(); err != nil {
-			return err
-		}
 	}
 
 	// Initialize firewall
@@ -155,11 +152,8 @@ func (a *App) initialize(ctx context.Context) error {
 	a.wan = &wan.Checker{}
 	a.resolver = dns.NewResolver(a.fw)
 
-	// Write custom DNS
-	if a.cfg.DNSMode == "custom" {
-		if err = dns.Write(a.cfg.DNS); err != nil {
-			return err
-		}
+	if err := a.retryWithWANCheck(ctx, a.setupDNS); err != nil {
+		return err
 	}
 
 	// Non-fatal: capture pre-VPN IP for leak detection
@@ -169,6 +163,7 @@ func (a *App) initialize(ctx context.Context) error {
 }
 
 // connect runs a single connection attempt using the Go VPN orchestrator.
+// Fatal errors cause exit (returns apperrors.ErrFatal)
 func (a *App) connect(ctx context.Context) error {
 	cfg := vpn.Config{
 		PIAUser:    a.cfg.PIA.User,
@@ -185,25 +180,24 @@ func (a *App) connect(ctx context.Context) error {
 	// Connect - Setup VPN
 	connInfo, err := vpn.Setup(ctx, cfg, a.fw, a.cache, a.resolver)
 	if err != nil {
-		return err // Error type (AuthError/ConnectivityError) preserved for connectLoop
+		return err
 	}
 	a.connInfo = connInfo
 	a.metrics.RecordNewConnection(connInfo.ServerCN, connInfo.ServerIP)
 
 	// Write PIA DNS if enabled
 	if a.cfg.DNSMode == "pia" {
-		a.cfg.DNS = a.connInfo.DNS
-		if err := dns.Write(a.cfg.DNS); err != nil {
+		if err := dns.Write(a.connInfo.DNS); err != nil {
 			return err
 		}
-		if err := a.fw.AddPIADNSRoutes(a.cfg.DNS); err != nil {
+		if err := a.fw.AddPIADNSRoutes(a.connInfo.DNS); err != nil {
 			return err
 		}
 	}
 
 	// Verify connection
 	log.Step("Verifying connection...")
-	if err := vpn.VerifyConnection(ctx, a.cfg.DNSMode, a.cfg.DNS, a.preVPNIP); err != nil {
+	if err := vpn.VerifyConnection(ctx, a.cfg.DNSMode, a.connInfo.DNS, a.preVPNIP); err != nil {
 		return err
 	}
 
@@ -213,49 +207,6 @@ func (a *App) connect(ctx context.Context) error {
 	log.ConnectedBanner()
 
 	return nil
-}
-
-// connectLoop retries connect() with exponential backoff until it succeeds or the context is cancelled.
-// ErrFatal causes exit, all other errors logged and retried
-func (a *App) connectLoop(ctx context.Context) error {
-	delay := 5 * time.Second
-	const maxDelay = 60 * time.Second
-
-	for {
-		err := a.connect(ctx)
-		if err == nil {
-			return nil
-		}
-
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-
-		// Fatal errors
-		if errors.Is(err, apperrors.ErrFatal) {
-			return err
-		}
-
-		// Non-fatal errors
-		log.Warning(err.Error())
-		if !a.wan.Check(ctx) {
-			a.wan.WaitForUp(ctx, a.metrics)
-			delay = 5 * time.Second
-			continue
-		}
-		log.Warning(fmt.Sprintf("Will retry in %s", delay))
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(delay):
-		}
-
-		delay *= 2
-		if delay > maxDelay {
-			delay = maxDelay
-		}
-	}
 }
 
 // runServices starts services that track with vpn lifecycle. They run as goroutines managed
@@ -305,14 +256,94 @@ func (a *App) runServices(ctx context.Context) error {
 	a.connectionUp.Store(false)
 	a.metrics.UpdateConnectionStatus(false)
 
-	// Clear PIA DNS if enabled
-	if a.cfg.DNSMode == "pia" {
+	// Clear PIA DNS or close DoT upstream connections if enabled
+	switch a.cfg.DNSMode {
+	case "pia":
 		if err := dns.Clear(); err != nil {
 			log.Warning(fmt.Sprintf("Failed to clear resolv.conf: %v", err))
+		}
+	case "dot":
+		if a.cfg.DNSMode == "dot" {
+			a.dotProxy.CloseUpstreams() // Keeps VerifyConnection from hanging on dead connections
 		}
 	}
 
 	return err
+}
+
+func (a *App) setupDNS(ctx context.Context) error {
+	switch a.cfg.DNSMode {
+	case "pia":
+		return nil
+	case "system":
+		log.Step("Continuing with system DNS:")
+		resolvServers, err := dns.Read()
+		if err != nil {
+			return fmt.Errorf("%w: %v", apperrors.ErrFatal, err)
+		}
+		log.Success(strings.Join(resolvServers, ", "))
+		return nil
+	case "do53":
+		log.Step("Writing DNS to resolv.conf...")
+		if err := dns.Write(a.cfg.DNS); err != nil {
+			return fmt.Errorf("%w: %v", apperrors.ErrFatal, err)
+		}
+		log.Success(strings.Join(a.cfg.DNS, ", "))
+		return nil
+	case "dot":
+		log.Step("Starting DoT proxy on port 53...")
+		a.dotProxy = dns.New(a.cfg.DNS, a.resolver)
+		if err := a.dotProxy.Setup(ctx); err != nil {
+			return err
+		}
+		log.Success(a.dotProxy.Display())
+		return nil
+	default:
+		return fmt.Errorf("unknown DNS mode: %s", a.cfg.DNSMode)
+	}
+}
+
+// retryWithWANCheck retries givenFunction() with exponential backoff until it succeeds or the context is cancelled.
+// ErrFatal causes exit, all other errors logged and retried
+func (a *App) retryWithWANCheck(ctx context.Context, fn func(context.Context) error) error {
+	delay := 5 * time.Second
+	const maxDelay = 60 * time.Second
+
+	for {
+		err := fn(ctx)
+		if err == nil {
+			return nil
+		}
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		// Fatal errors
+		if errors.Is(err, apperrors.ErrFatal) {
+			return err
+		}
+
+		// Non-fatal errors
+		log.Warning(err.Error())
+		if !a.wan.Check(ctx) {
+			a.wan.WaitForUp(ctx, a.metrics)
+			delay = 5 * time.Second
+			continue
+		}
+		log.Warning(fmt.Sprintf("Will retry in %s", delay))
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+
+		delay *= 2
+		if delay > maxDelay {
+			delay = maxDelay
+		}
+	}
 }
 
 func (a *App) showMonitorStatus() {
@@ -350,7 +381,7 @@ func (a *App) cleanup() {
 	a.api.Shutdown()
 	wg.Down(context.Background())
 
-	if a.cfg.DNSMode == "pia" && a.connInfo != nil {
+	if a.cfg.DNSMode != "system" {
 		dns.Clear()
 	}
 

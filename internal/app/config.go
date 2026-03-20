@@ -209,13 +209,17 @@ func parseDNS(dns string) (string, []string) {
 		return "system", nil
 	default:
 		var servers []string
+		dot := strings.Contains(dns, "tls://")
 		for _, s := range strings.Split(dns, ",") {
 			s = strings.TrimSpace(s)
 			if s != "" {
 				servers = append(servers, s)
 			}
 		}
-		return "custom", servers
+		if dot {
+			return "dot", servers
+		}
+		return "do53", servers
 	}
 }
 

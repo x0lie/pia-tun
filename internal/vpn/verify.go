@@ -36,19 +36,14 @@ func VerifyConnection(ctx context.Context, dnsMode string, dnsServers []string, 
 	log.Success(fmt.Sprintf("Handshake complete (%.1fs)", time.Since(start).Seconds()))
 	stopTrigger()
 
-	// Log DNS setting
-	switch dnsMode {
-	case "pia":
+	// Log PIA DNS if enabled
+	if dnsMode == "pia" {
 		log.Success(fmt.Sprintf("DNS: PIA (%s)", strings.Join(dnsServers, ", ")))
-	case "system":
-		log.Success(fmt.Sprintf("DNS: system (%s)", strings.Join(dnsServers, ", ")))
-	default:
-		log.Success(fmt.Sprintf("DNS: %s", strings.Join(dnsServers, ", ")))
 	}
 
 	// Get public IP (parallel requests to multiple services)
 	logger.Debug("Retrieving Public IP")
-	publicIP, err := getPublicIP(ctx, dnsServers, ipTimeout)
+	publicIP, err := getPublicIP(ctx, dnsMode, dnsServers, ipTimeout)
 	if err != nil {
 		log.Warning(fmt.Sprintf("Could not verify IP:\n    %s", err))
 		return nil // Must return, IP comparison invalid
@@ -106,7 +101,7 @@ func waitForHandshake(ctx context.Context, timeout time.Duration) error {
 }
 
 // getPublicIP fetches public IP from multiple services in parallel.
-func getPublicIP(ctx context.Context, dnsServers []string, timeout time.Duration) (string, error) {
+func getPublicIP(ctx context.Context, dnsMode string, dnsServers []string, timeout time.Duration) (string, error) {
 	services := []string{
 		"https://api.ipify.org",
 		"https://ifconfig.me/ip",
@@ -123,7 +118,7 @@ func getPublicIP(ctx context.Context, dnsServers []string, timeout time.Duration
 	}
 
 	dialer := &net.Dialer{Timeout: timeout}
-	if len(dnsServers) > 0 {
+	if dnsMode == "pia" && len(dnsServers) > 0 {
 		dialer.Resolver = &net.Resolver{
 			PreferGo: true,
 			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {

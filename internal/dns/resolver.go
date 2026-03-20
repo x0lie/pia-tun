@@ -3,6 +3,7 @@ package dns
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -17,9 +18,17 @@ type dnsServer struct {
 	tlsHost string
 }
 
-var dnsServers = []dnsServer{
+var bootstrapServers = []dnsServer{
 	{"9.9.9.9", "dns.quad9.net"},
 	{"9.9.9.11", "dns11.quad9.net"},
+}
+
+// hostResult holds the DNS lookup result for a single hostname.
+// NXDomain=true means the hostname definitively does not exist.
+// An absent map entry means a transient failure.
+type hostResult struct {
+	IPs      []string
+	NXDomain bool
 }
 
 // Resolver performs DNS-over-TLS resolution using Quad9 with temporary firewall
@@ -39,22 +48,28 @@ func NewResolver(fw *firewall.Firewall) *Resolver {
 // Resolve resolves a hostname to IPv4 addresses using Quad9 DNS-over-TLS.
 // Tries 9.9.9.9 first, falls back to 9.9.9.11.
 func (r *Resolver) Resolve(ctx context.Context, hostname string) ([]string, error) {
-	for _, srv := range dnsServers {
+	for _, srv := range bootstrapServers {
 		m, err := r.queryDoT(ctx, []string{hostname}, srv)
 		if err == nil {
-			if ips := m[hostname]; len(ips) > 0 {
-				return ips, nil
+			if result, ok := m[hostname]; ok && !result.NXDomain {
+				return result.IPs, nil
 			}
 		}
 	}
 	return nil, fmt.Errorf("failed to resolve %s", hostname)
 }
 
-// ResolveAll resolves multiple hostnames in parallel under one exemption — used by captureRealIP
-func (r *Resolver) ResolveAll(ctx context.Context, hostnames []string) (map[string][]string, error) {
-	for _, srv := range dnsServers {
+// ResolveAll resolves multiple hostnames in parallel under one exemption.
+// Returns a map of hostname to hostResult (IPs or NXDomain=true), and an
+// error if resolution failed entirely (e.g. no network).
+// Hostnames with transient failures are absent from the map.
+func (r *Resolver) ResolveAll(ctx context.Context, hostnames []string) (map[string]hostResult, error) {
+	for _, srv := range bootstrapServers {
 		m, err := r.queryDoT(ctx, hostnames, srv)
-		if err == nil && len(m) > 0 {
+		if err != nil {
+			continue
+		}
+		if len(m) > 0 {
 			return m, nil
 		}
 	}
@@ -63,8 +78,8 @@ func (r *Resolver) ResolveAll(ctx context.Context, hostnames []string) (map[stri
 
 // queryDoT performs a single DNS-over-TLS lookup against one Quad9 server.
 // A firewall exemption for port 853 is held for the duration of the query.
-// queryDoT resolves multiple hostnames in parallel under one exemption
-func (r *Resolver) queryDoT(ctx context.Context, hostnames []string, srv dnsServer) (map[string][]string, error) {
+// Resolves multiple hostnames in parallel under one exemption.
+func (r *Resolver) queryDoT(ctx context.Context, hostnames []string, srv dnsServer) (map[string]hostResult, error) {
 	if err := r.fw.AddExemption(srv.ip, "853", "tcp", "dns_resolve"); err != nil {
 		return nil, fmt.Errorf("add exemption for %s: %w", srv.ip, err)
 	}
@@ -74,6 +89,7 @@ func (r *Resolver) queryDoT(ctx context.Context, hostnames []string, srv dnsServ
 		hostname string
 		ips      []string
 		err      error
+		nxdomain bool
 	}
 	ch := make(chan res, len(hostnames))
 
@@ -92,7 +108,12 @@ func (r *Resolver) queryDoT(ctx context.Context, hostnames []string, srv dnsServ
 			addrs, err := rslv.LookupIP(ctx, "ip4", h)
 			if err != nil {
 				r.log.Debug("LookupIP %s via %s failed: %v", h, srv.ip, err)
-				ch <- res{hostname: h, err: err}
+				var dnsErr *net.DNSError
+				if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+					ch <- res{hostname: h, nxdomain: true}
+				} else {
+					ch <- res{hostname: h, err: err}
+				}
 				return
 			}
 			ips := make([]string, len(addrs))
@@ -104,12 +125,24 @@ func (r *Resolver) queryDoT(ctx context.Context, hostnames []string, srv dnsServ
 		}(h)
 	}
 
-	results := make(map[string][]string)
+	results := make(map[string]hostResult)
 	for range hostnames {
-		res := <-ch
-		if res.err == nil {
-			results[res.hostname] = res.ips
+		item := <-ch
+		switch {
+		case item.nxdomain:
+			results[item.hostname] = hostResult{NXDomain: true}
+		case item.err == nil:
+			results[item.hostname] = hostResult{IPs: item.ips}
 		}
 	}
 	return results, nil
+}
+
+func isBootstrapIP(ip string) bool {
+	for _, srv := range bootstrapServers {
+		if ip == srv.ip {
+			return true
+		}
+	}
+	return false
 }

@@ -43,9 +43,12 @@ func (a *App) captureRealIP(ctx context.Context) string {
 	// Batch Exemptions
 	var targets []target
 	specs := make([]firewall.Exemption, 0, len(ipServices))
-	for hostname, ips := range resolved {
-		targets = append(targets, target{hostname: hostname, ip: ips[0]})
-		specs = append(specs, firewall.Exemption{IP: ips[0], Port: "443", Proto: "tcp", Comment: hostname})
+	for hostname, result := range resolved {
+		if result.NXDomain {
+			continue
+		}
+		targets = append(targets, target{hostname: hostname, ip: result.IPs[0]})
+		specs = append(specs, firewall.Exemption{IP: result.IPs[0], Port: "443", Proto: "tcp", Comment: hostname})
 	}
 	if err := a.fw.AddExemptions(specs...); err != nil {
 		a.log.Debug("captureRealIP: %s", err)

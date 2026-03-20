@@ -53,8 +53,6 @@ services:
       - NET_ADMIN
     cap_drop:
       - ALL
-    environment:
-      - PIA_LOCATION=ca_ontario
     secrets:
       - pia_user
       - pia_pass
@@ -74,12 +72,12 @@ See [`docs/docker-compose-examples/`](docs/docker-compose-examples/) for more ty
 
 ### TL;DR Critical Points
 
-- Do NOT use 9.9.9.9:853 or 9.9.9.11:853 in dependent DNS settings
+- Do NOT use 9.9.9.9:853 or 9.9.9.11:853 (DoT) in dependent settings
 - Do NOT use health-based restart policies
 - Use `network_mode: "service:pia-tun"` for dependents
 - Use `depends_on: pia-tun` for dependents
 - Use `PS_CLIENT` for easy port syncing to dependents or `PS_SCRIPT` for custom endpoints
-- Access from containers + LAN usually requires `LOCAL_NETWORKS=auto,192.168.1.0/24` or similar
+- Access from containers + LAN often requires `LOCAL_NETWORKS=auto,192.168.1.0/24` or similar
 
 ## Configuration
 
@@ -96,11 +94,11 @@ See [`docs/docker-compose-examples/`](docs/docker-compose-examples/) for more ty
 
 ### Network/Firewall
 
-| Variable         | Description                                                                                                              | Default |
-|------------------|--------------------------------------------------------------------------------------------------------------------------|---------|
-| `LOCAL_NETWORKS` | CIDR ranges for tunnel bypass. Supports `auto`, IPv4 and IPv6 (e.g., `auto,192.168.1.0/24,fd00::/64`) or `all` or `none` | `auto`  |
-| `DNS`            | DNS servers setting. Supports `pia`, `DNS=system`, or specific IPs (e.g., `8.8.8.8,1.1.1.1`). Do53 only.                 | `pia`   |
-| `IPT_BACKEND`    | iptables backend: `nft` or `legacy`. Auto-detected if not set.                                                           | Auto    |
+| Variable         | Description                                                                                                                    | Default |
+|------------------|--------------------------------------------------------------------------------------------------------------------------------|---------|
+| `LOCAL_NETWORKS` | CIDR ranges for tunnel bypass. Supports `auto`, IPv4 and IPv6 (e.g., `auto,192.168.1.0/24,fd00::/64`) or `all` or `none`       | `auto`  |
+| `DNS`            | Supports `pia`, `system`, DoT (e.g., `tls://one.one.one.one,dns.mullvad.net`), or Do53 (e.g., `1.1.1.1,8.8.8.8`). Round-robin. | `pia`   |
+| `IPT_BACKEND`    | iptables backend: `nft` or `legacy`. Auto-detected if not set.                                                                 | Auto    |
 
 ### Port Forwarding & Syncing
 
