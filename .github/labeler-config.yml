@@ -1,31 +1,20 @@
 # Auto-label PRs based on changed files
 # Labels feed into .github/release.yml for changelog generation
-# fix, bug, security, breaking-change are applied manually
-
-# Features & improvements
-enhancement:
-  - changed-files:
-    - any-glob-to-any-file:
-      - 'cmd/**'
-      - 'internal/**'
-      - 'Dockerfile'
-
 # CI/CD & Automation
+
 ci:
   - changed-files:
     - any-glob-to-any-file:
       - '.github/**'
       - 'renovate.json'
 
-# Dependencies
 dependencies:
   - changed-files:
     - any-glob-to-any-file:
       - 'go.mod'
       - 'go.sum'
 
-# Documentation
-documentation:
+docs:
   - changed-files:
     - any-glob-to-any-file:
       - '**/*.md'
@@ -41,9 +30,7 @@ chore:
       - '.dockerignore'
       - 'LICENSE'
 
-# Testing
 testing:
   - changed-files:
     - any-glob-to-any-file:
       - 'testing/**'
-      - '**/*_test.go'

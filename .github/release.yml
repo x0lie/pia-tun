@@ -5,16 +5,17 @@ changelog:  # Applies based on merged PR labels
       - dependencies
       - chore
       - ci
-      - documentation
+      - docs
       - testing
+      - refactor
     authors:
       - dependabot
       - renovate[bot]
   categories:
     - title: "🚀 Features & Improvements"
       labels:
-        - enhancement
-        - feature
+        - feat
+        - perf
     - title: "🐛 Bug Fixes"
       labels:
         - bug
