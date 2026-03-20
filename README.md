@@ -2,7 +2,7 @@
 
 A feature-rich Docker container for Wireguard + Private Internet Access (PIA) VPN connectivity. Designed for security, reliability, and throughput.
 
-<img src="img/pia-tun-image.png" alt="Title image" width="65%">
+<img src="https://raw.githubusercontent.com/x0lie/pia-tun/main/img/pia-tun-image.png" alt="Title image" width="65%">
 
 ## Features
 
@@ -66,9 +66,9 @@ secrets:
 
 ### More Examples
 
-See [`docs/docker-compose-examples/`](docs/docker-compose-examples/) for more typical configurations:
-- **[qbittorrent.yml](docs/docker-compose-examples/qbittorrent.yml)** - qBittorrent with automatic port forwarding
-- **[traefik.yml](docs/docker-compose-examples/traefik.yml)** - Basic Traefik reverse proxy setup
+See [`docs/docker-compose-examples/`](https://github.com/x0lie/pia-tun/tree/main/docs/docker-compose-examples/) for more typical configurations:
+- **[qbittorrent.yml](https://github.com/x0lie/pia-tun/blob/main/docs/docker-compose-examples/qbittorrent.yml)** - qBittorrent with automatic port forwarding
+- **[traefik.yml](https://github.com/x0lie/pia-tun/blob/main/docs/docker-compose-examples/traefik.yml)** - Basic Traefik reverse proxy setup
 
 ### TL;DR Critical Points
 
@@ -167,7 +167,7 @@ This container implements a strict firewall to prevent any traffic from leaking 
 
 **Critical:** Do NOT set your dependent services to use 9.9.9.9 or 9.9.9.11 on tcp port 853 for the above reasons
 
-For more details see [docs/firewall.md](docs/firewall.md).
+For more details see [docs/firewall.md](https://github.com/x0lie/pia-tun/blob/main/docs/firewall.md).
 
 #### Secrets Management
 
@@ -178,7 +178,7 @@ Secrets are read from `/run/secrets/` and never logged.
 
 #### Coordinating with Dependent Services
 
-Some dependent services may not handle live port updates well. If your dependent is older or more brittle, several methods are available for restarting on port changes - see [`docs/dependent-restarts.md`](docs/dependent-restarts.md) for potential solutions.
+Some dependent services may not handle live port updates well. If your dependent is older or more brittle, several methods are available for restarting on port changes - see [`docs/dependent-restarts.md`](https://github.com/x0lie/pia-tun/blob/main/docs/dependent-restarts.md) for potential solutions.
 
 For coordinating initial startup and shutdown ordering:
 ```yaml
@@ -208,11 +208,11 @@ volumes:
 
 ## Troubleshooting
 
-See [`docs/troubleshooting.md`](docs/troubleshooting.md) for common issues and solutions.
+See [`docs/troubleshooting.md`](https://github.com/x0lie/pia-tun/blob/main/docs/troubleshooting.md) for common issues and solutions.
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) for details
+MIT License - See [LICENSE](https://github.com/x0lie/pia-tun/blob/main/LICENSE) for details
 
 ## Support
 
