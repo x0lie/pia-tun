@@ -42,7 +42,7 @@ func (l *Logger) Trace(format string, args ...any) {
 	if Level < 3 {
 		return
 	}
-	timestamp := time.Now().Format("15:04:05")
+	timestamp := time.Now().Format("15:04:05.000")
 	msg := fmt.Sprintf(format, args...)
 	fmt.Printf("    %s[TRACE]%s %s - %-12s %s\n", ColorYellow, ColorReset, timestamp, l.Prefix+":", msg)
 }
