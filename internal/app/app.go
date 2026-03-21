@@ -196,6 +196,7 @@ func (a *App) connect(ctx context.Context) error {
 		if err := a.fw.AddPIADNSRoutes(a.connInfo.DNS); err != nil {
 			return err
 		}
+		log.Success("DNS: %s (PIA)", strings.Join(a.connInfo.DNS, ", "))
 	}
 
 	// Verify connection

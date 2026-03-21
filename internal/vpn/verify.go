@@ -36,11 +36,6 @@ func VerifyConnection(ctx context.Context, dnsMode string, dnsServers []string, 
 	log.Success("Handshake complete (%.1fs)", time.Since(start).Seconds())
 	stopTrigger()
 
-	// Log PIA DNS if enabled
-	if dnsMode == "pia" {
-		log.Success("DNS: PIA (%s)", strings.Join(dnsServers, ", "))
-	}
-
 	// Get public IP (parallel requests to multiple services)
 	logger.Debug("Retrieving Public IP")
 	publicIP, err := getPublicIP(ctx, dnsMode, dnsServers, ipTimeout)
