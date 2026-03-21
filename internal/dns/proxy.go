@@ -34,11 +34,11 @@ type Proxy struct {
 	rawServers []string
 	upstreams  []*upstream
 	resolver   *Resolver
-	logger     *log.Logger
+	log        *log.Logger
 }
 
 func New(rawServers []string, r *Resolver) *Proxy {
-	return &Proxy{rawServers: rawServers, resolver: r, logger: log.New("dotproxy")}
+	return &Proxy{rawServers: rawServers, resolver: r, log: log.New("dotproxy")}
 }
 
 func (p *Proxy) Setup(ctx context.Context) error {
@@ -84,7 +84,7 @@ func (p *Proxy) start(ctx context.Context) error {
 		p.CloseUpstreams()
 		return fmt.Errorf("write resolv.conf: %w", err)
 	}
-	p.logger.Debug("Listening on %s (UDP+TCP)", proxyAddr)
+	p.log.Debug("Listening on %s (UDP+TCP)", proxyAddr)
 
 	go func() {
 		defer p.CloseUpstreams()
@@ -227,7 +227,7 @@ func (p *Proxy) dispatch(upstreams []*upstream, idx *atomic.Uint64, query []byte
 		u := upstreams[(start+i)%n]
 		resp, err := u.forwardDoT(query)
 		if err != nil {
-			p.logger.Trace("Upstream %s failed: %v", u.addr, err)
+			p.log.Trace("Upstream %s failed: %v", u.addr, err)
 			continue
 		}
 		return resp
@@ -337,7 +337,7 @@ func (p *Proxy) resolveHostnames(ctx context.Context, hostnames []string) error 
 		}
 		for _, ip := range result.IPs {
 			if isBootstrapIP(ip) {
-				p.logger.Debug("Cannot use %s from %s (bootstrap DNS), skipping", ip, h)
+				p.log.Debug("Cannot use %s from %s (bootstrap DNS), skipping", ip, h)
 				continue
 			}
 			p.upstreams = append(p.upstreams, &upstream{
