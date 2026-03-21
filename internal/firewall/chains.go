@@ -32,6 +32,8 @@ func (fw *Firewall) chainDefs() []chainDef {
 }
 
 func (fw *Firewall) setupBaselineChains() error {
+	fw.cleanupChains()
+
 	for _, c := range fw.chainDefs() {
 		if err := c.ipt.NewChain(tableFilter, c.name); err != nil {
 			return fmt.Errorf("create %s: %w", c.name, err)

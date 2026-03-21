@@ -10,6 +10,7 @@ const tableMangle = "mangle"
 // setupMSSClamping adds TCP MSS clamping rules to the mangle table for both
 // FORWARD (other containers routing through us) and OUTPUT (this container).
 func (fw *Firewall) setupMSSClamping(ipv6Enabled bool) {
+	fw.cleanupMSSClamping()
 	fw.log.Debug("Setting up TCP MSS clamping for VPN tunnel")
 
 	ipv4Ok := false

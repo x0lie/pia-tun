@@ -19,7 +19,7 @@ func (fw *Firewall) setupLocalNetworks(localNetworks string) (string, error) {
 	lans := formatNetworks(lansV4, lansV6)
 	fw.log.Debug("Resolved local networks: %s", lans)
 
-	if err := setupLocalRoutes(lansV4, lansV6); err != nil {
+	if err := fw.setupLocalRoutes(lansV4, lansV6); err != nil {
 		return "", fmt.Errorf("failed to setup routes: %w", err)
 	}
 	fw.log.Debug("Added routes for %s", lans)
@@ -34,7 +34,9 @@ func (fw *Firewall) setupLocalNetworks(localNetworks string) (string, error) {
 
 // setupLocalRoutes adds routing rules so traffic to LOCAL_NETWORKS
 // uses the main routing table instead of the VPN tunnel.
-func setupLocalRoutes(lansV4, lansV6 []string) error {
+func (fw *Firewall) setupLocalRoutes(lansV4, lansV6 []string) error {
+	fw.cleanupLocalRoutes()
+
 	priority := strconv.Itoa(priorityLocalNet)
 	for _, network := range lansV4 {
 		args := []string{"rule", "add", "to", network, "table", "main", "priority", priority}

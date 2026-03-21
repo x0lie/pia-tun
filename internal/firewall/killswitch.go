@@ -16,8 +16,6 @@ type KillswitchConfig struct {
 // routes, creates iptables chains, verifies they're active, and enables MSS clamping.
 func (fw *Firewall) Setup(cfg KillswitchConfig) error {
 	log.Step("Applying killswitch...")
-	fw.log.Debug("Performing defensive cleanup")
-	fw.Cleanup()
 
 	// Establish baseline DROP for ipv4 and ipv6
 	if err := fw.setupBaselineChains(); err != nil {
@@ -65,20 +63,19 @@ func (fw *Firewall) Setup(cfg KillswitchConfig) error {
 		return err
 	}
 	fw.active = true
-	log.Success("DROP Rule on all VPN chains")
 
 	return nil
 }
 
 // Cleanup removes all killswitch chains, bypass routes, and MSS clamping rules.
 func (fw *Firewall) Cleanup() {
+	fw.active = false
 	fw.RemovePIARoutes()
 	fw.cleanupLocalRoutes()
 	fw.cleanupMSSClamping()
 	fw.cleanupBypassRoutes()
 	fw.RemoveExemptions()
 	fw.cleanupChains()
-	fw.active = false
 }
 
 // IsActive returns whether the killswitch is currently set up.

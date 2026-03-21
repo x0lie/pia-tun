@@ -11,7 +11,7 @@ A feature-rich Docker container for Wireguard + Private Internet Access (PIA) VP
 - **Port Syncing** - Automatically syncs forwarded port to an API endpoint
 - **SOCKS5/HTTP Proxies** - Built-in dual-protocol proxy server with optional authentication
 - **High Throughput** - Tested at greater than 95% of line-speed with automatic MSS Clamping
-- **Kill-Switch Firewall** - Zero-leak architecture with nft/iptables auto-detection. Optimized for maximum throughput
+- **Kill-Switch Firewall** - Zero-leak architecture with nft/iptables auto-detection
 - **Resilient Design** - Network failures do not break functionality
 - **Smart Reconnects** - Distinguishes between WAN outages and VPN failures
 - **Prometheus Metrics** - Export health, connection, and performance metrics
@@ -152,10 +152,10 @@ See [`docs/docker-compose-examples/`](https://github.com/x0lie/pia-tun/tree/main
 
 #### Kill-Switch Protection
 
-This container implements a strict firewall to prevent any traffic from leaking outside the VPN tunnel — during startup, reconnects, crashes, or misconfigurations.
+This container implements a strict firewall to prevent any traffic from leaking outside the VPN tunnel — during startup, reconnects, crashes, or most misconfigurations.
 
 **Container Lifecycle:**
-- On startup: Kill-switch immediately applied
+- On startup: Kill-switch immediately applied (~25ms on amd64)
 - During reconnections: Firewall remains active (zero leak window)
 - On normal shutdown: Firewall rules cleanly removed after dependents stop
 - On crash/OOM/unexpected-exit: Firewall remains active until network namespace destroyed

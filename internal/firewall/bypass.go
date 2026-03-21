@@ -26,7 +26,7 @@ func (fw *Firewall) setupBypass() error {
 	if err := fw.setupBypassRoutes(); err != nil {
 		return fmt.Errorf("failed to setup bypass routes: %w", err)
 	}
-	if err := fw.insertBypassFirewallRules(); err != nil {
+	if err := fw.insertBypassRules(); err != nil {
 		return fmt.Errorf("failed to insert bypass rules: %w", err)
 	}
 	return nil
@@ -34,6 +34,8 @@ func (fw *Firewall) setupBypass() error {
 
 // setupBypassRoutes creates routes with priority 50 to main table
 func (fw *Firewall) setupBypassRoutes() error {
+	fw.cleanupBypassRoutes()
+
 	for _, network := range WANCheckIPs {
 		args := []string{"rule", "add", "to", network, "table", "main", "priority", strconv.Itoa(bypassPriority)}
 		if err := exec.Command("ip", args...).Run(); err != nil {
@@ -57,7 +59,7 @@ func (fw *Firewall) cleanupBypassRoutes() {
 
 // insertBypassFirewallRules inserts ACCEPT rules for each WanCheckIP into the
 // VPN_OUT chain before DROP. Rules are restricted to TCP port 13 (DAYTIME).
-func (fw *Firewall) insertBypassFirewallRules() error {
+func (fw *Firewall) insertBypassRules() error {
 	fw.log.Debug("Inserting bypass route rules before DROP (TCP/13 via default gateway)")
 
 	for _, ip := range WANCheckIPs {
