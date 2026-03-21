@@ -33,19 +33,19 @@ func VerifyConnection(ctx context.Context, dnsMode string, dnsServers []string, 
 	if err != nil {
 		return fmt.Errorf("waiting for handshake: %w", err)
 	}
-	log.Success(fmt.Sprintf("Handshake complete (%.1fs)", time.Since(start).Seconds()))
+	log.Success("Handshake complete (%.1fs)", time.Since(start).Seconds())
 	stopTrigger()
 
 	// Log PIA DNS if enabled
 	if dnsMode == "pia" {
-		log.Success(fmt.Sprintf("DNS: PIA (%s)", strings.Join(dnsServers, ", ")))
+		log.Success("DNS: PIA (%s)", strings.Join(dnsServers, ", "))
 	}
 
 	// Get public IP (parallel requests to multiple services)
 	logger.Debug("Retrieving Public IP")
 	publicIP, err := getPublicIP(ctx, dnsMode, dnsServers, ipTimeout)
 	if err != nil {
-		log.Warning(fmt.Sprintf("Could not verify IP:\n    %s", err))
+		log.Warning("Could not verify IP:\n    %s", err)
 		return nil // Must return, IP comparison invalid
 	}
 
@@ -54,7 +54,7 @@ func VerifyConnection(ctx context.Context, dnsMode string, dnsServers []string, 
 		log.Error("CRITICAL: Public IP matches pre-VPN IP - possible leak!")
 		return fmt.Errorf("IP leak detected: traffic not routing through VPN!")
 	}
-	log.Success(fmt.Sprintf("External IP: %s%s%s%s", log.ColorGreen, log.ColorBold, publicIP, log.ColorReset))
+	log.Success("External IP: %s%s%s%s", log.ColorGreen, log.ColorBold, publicIP, log.ColorReset)
 
 	return nil
 }

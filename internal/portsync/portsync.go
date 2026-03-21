@@ -2,7 +2,6 @@ package portsync
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/log"
@@ -89,7 +88,7 @@ func (s *Syncer) handleNewPort(ctx context.Context, port int) {
 
 	// Log first failure
 	if s.client != nil && !clientOK {
-		log.Warning(fmt.Sprintf("%s not reachable, will retry", s.client.Name()))
+		log.Warning("%s not reachable, will retry", s.client.Name())
 	}
 	if s.script != "" && !scriptOK {
 		log.Warning("port-sync script failed, will retry")
@@ -123,7 +122,7 @@ func (s *Syncer) trySync(ctx context.Context, port int, clientOK, scriptOK bool)
 		if err := s.client.SyncPort(ctx, port); err != nil {
 			s.log.Debug("%s sync failed: %v", s.client.Name(), err)
 		} else {
-			log.Success(fmt.Sprintf("%s port updated", s.client.Name()))
+			log.Success("%s port updated", s.client.Name())
 			clientOK = true
 		}
 	}

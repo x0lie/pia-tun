@@ -91,7 +91,7 @@ func (p *Proxy) start(ctx context.Context) error {
 		select {
 		case err := <-errCh:
 			if ctx.Err() == nil {
-				log.Error(fmt.Sprintf("DoT proxy error: %v", err))
+				log.Error("DoT proxy error: %v", err)
 			}
 		case <-ctx.Done():
 		}
@@ -311,7 +311,7 @@ func (p *Proxy) parseUpstreams() ([]string, error) {
 	for _, host := range p.rawServers {
 		host = strings.TrimPrefix(host, "tls://")
 		if net.ParseIP(host) != nil {
-			log.Warning(fmt.Sprintf("DNS=tls://%s is a bare IP — hostname required for TLS verification (e.g. tls://one.one.one.one)", host))
+			log.Warning("DNS=tls://%s is a bare IP — hostname required for TLS verification (e.g. tls://one.one.one.one)", host)
 			continue
 		}
 		hostnames = append(hostnames, host)
@@ -332,7 +332,7 @@ func (p *Proxy) resolveHostnames(ctx context.Context, hostnames []string) error 
 
 	for h, result := range results {
 		if result.NXDomain {
-			log.Warning(fmt.Sprintf("Hostname %s not found, skipping", h))
+			log.Warning("Hostname %s not found, skipping", h)
 			continue
 		}
 		for _, ip := range result.IPs {

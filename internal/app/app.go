@@ -148,7 +148,7 @@ func (a *App) initialize(ctx context.Context) error {
 	if a.cfg.Proxy.Enabled {
 		go func() {
 			if err = proxy.Run(ctx, a.cfg.Proxy); err != nil {
-				log.Error(fmt.Sprintf("Proxy server error: %v", err))
+				log.Error("Proxy server error: %v", err)
 			}
 		}()
 	}
@@ -262,7 +262,7 @@ func (a *App) runServices(ctx context.Context) error {
 	switch a.cfg.DNSMode {
 	case "pia":
 		if err := dns.Clear(); err != nil {
-			log.Warning(fmt.Sprintf("Failed to clear resolv.conf: %v", err))
+			log.Warning("Failed to clear resolv.conf: %v", err)
 		}
 	case "dot":
 		if a.cfg.DNSMode == "dot" {
@@ -333,7 +333,7 @@ func (a *App) retryWithWANCheck(ctx context.Context, fn func(context.Context) er
 			delay = 5 * time.Second
 			continue
 		}
-		log.Warning(fmt.Sprintf("Will retry in %s", delay))
+		log.Warning("Will retry in %s", delay)
 
 		select {
 		case <-ctx.Done():
@@ -350,12 +350,12 @@ func (a *App) retryWithWANCheck(ctx context.Context, fn func(context.Context) er
 
 func (a *App) showMonitorStatus() {
 	log.Step("Health monitor running...")
-	log.Success(fmt.Sprintf("Check interval: %ds, Failure window: %ds",
+	log.Success("Check interval: %ds, Failure window: %ds",
 		int(a.cfg.Monitor.Interval.Seconds()),
-		int(a.cfg.Monitor.FailureWindow.Seconds())))
+		int(a.cfg.Monitor.FailureWindow.Seconds()))
 
 	port := a.cfg.Metrics.Port
-	log.Success(fmt.Sprintf("Endpoints on localhost:%d", port))
+	log.Success("Endpoints on localhost:%d", port)
 
 	if a.cfg.Metrics.Enabled {
 		log.Info("    /ready /health /metrics /metrics?format=json")
@@ -369,12 +369,12 @@ func (a *App) showProxyStatus() {
 
 	if a.cfg.Proxy.User != "" && a.cfg.Proxy.Pass != "" {
 		log.Success("Proxy servers ready (authenticated):")
-		log.Info(fmt.Sprintf("    SOCKS5: socks5://%s:****@<container-ip>:%d", a.cfg.Proxy.User, a.cfg.Proxy.Socks5Port))
-		log.Info(fmt.Sprintf("    HTTP:   http://%s:****@<container-ip>:%d", a.cfg.Proxy.User, a.cfg.Proxy.HTTPPort))
+		log.Info("    SOCKS5: socks5://%s:****@<container-ip>:%d", a.cfg.Proxy.User, a.cfg.Proxy.Socks5Port)
+		log.Info("    HTTP:   http://%s:****@<container-ip>:%d", a.cfg.Proxy.User, a.cfg.Proxy.HTTPPort)
 	} else {
 		log.Success("Proxy servers ready:")
-		log.Info(fmt.Sprintf("    SOCKS5: socks5://<container-ip>:%d", a.cfg.Proxy.Socks5Port))
-		log.Info(fmt.Sprintf("    HTTP:   http://<container-ip>:%d", a.cfg.Proxy.HTTPPort))
+		log.Info("    SOCKS5: socks5://<container-ip>:%d", a.cfg.Proxy.Socks5Port)
+		log.Info("    HTTP:   http://<container-ip>:%d", a.cfg.Proxy.HTTPPort)
 	}
 }
 

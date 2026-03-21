@@ -21,7 +21,7 @@ func (fw *Firewall) Setup(cfg KillswitchConfig) error {
 	if err := fw.setupBaselineChains(); err != nil {
 		return err
 	}
-	log.Success(fmt.Sprintf("Baseline established (%s)", fw.ipt4Cmd))
+	log.Success("Baseline established (%s)", fw.ipt4Cmd)
 
 	// Set up LOCAL_NETWORKS routes and rules if LOCAL_NETWORKS != "none"
 	if cfg.LANs != "none" {
@@ -29,14 +29,14 @@ func (fw *Firewall) Setup(cfg KillswitchConfig) error {
 		if err != nil {
 			return fmt.Errorf("failed to setup local networks: %w", err)
 		}
-		log.Success(fmt.Sprintf("Local networks: %s", lans))
+		log.Success("Local networks: %s", lans)
 	}
 
 	// Add VPN to killswitch - Must be present for handshake initiation packet
 	if err := fw.addVPN(cfg.IPv6Enabled); err != nil {
 		return fmt.Errorf("failed to add VPN rules: %w", err)
 	}
-	log.Success(fmt.Sprintf("VPN allowed (fwmark %s)", fwmark))
+	log.Success("VPN allowed (fwmark %s)", fwmark)
 
 	// Setup daytime NIST bypass for WAN checking
 	if err := fw.setupBypass(); err != nil {

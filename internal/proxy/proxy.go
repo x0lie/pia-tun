@@ -150,14 +150,14 @@ func (c *Config) handleHTTP(w http.ResponseWriter, r *http.Request) {
 func (c *Config) startSOCKS5() {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", c.Socks5Port))
 	if err != nil {
-		log.Error(fmt.Sprintf("Failed to start SOCKS5 proxy: %v", err))
+		log.Error("Failed to start SOCKS5 proxy: %v", err)
 	}
 	defer listener.Close()
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Error(fmt.Sprintf("SOCKS5 accept error: %v", err))
+			log.Error("SOCKS5 accept error: %v", err)
 			continue
 		}
 		go c.handleSOCKS5(conn)

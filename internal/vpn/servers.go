@@ -23,7 +23,7 @@ func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 	if cfg.Location == "all" {
 		log.Step("Selecting best server globally...")
 	} else {
-		log.Step(fmt.Sprintf("Selecting best server from %s...", cfg.Location))
+		log.Step("Selecting best server from %s...", cfg.Location)
 	}
 
 	// If no cached ips, resolve
@@ -65,7 +65,7 @@ func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 	} else {
 		candidates = onePerRegion(filterServers(cache.Servers, cfg.Location, cfg.PFRequired))
 	}
-	log.Success(fmt.Sprintf("Found %d candidates", len(candidates)))
+	log.Success("Found %d candidates", len(candidates))
 
 	return raceServers(ctx, candidates, fw, logger)
 }
@@ -225,7 +225,7 @@ loop:
 	}
 
 	if len(collected) == 0 {
-		log.Warning(fmt.Sprintf("All servers timed out, using fallback: %s", candidates[0].CN))
+		log.Warning("All servers timed out, using fallback: %s", candidates[0].CN)
 		return candidates[0], 0, nil
 	}
 

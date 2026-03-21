@@ -123,7 +123,7 @@ func resolveLocalNetworks(input string) (ipv4, ipv6 []string) {
 		default:
 			_, _, err := net.ParseCIDR(part)
 			if err != nil {
-				log.Warning(fmt.Sprintf("Skipping local network: %s (invalid CIDR)", part))
+				log.Warning("Skipping local network: %s (invalid CIDR)", part)
 				continue
 			}
 			if strings.Contains(part, ":") {

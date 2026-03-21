@@ -48,41 +48,39 @@ func (l *Logger) Trace(format string, args ...any) {
 }
 
 // UI output — shown at info level (1) and above
-func Success(msg string) {
+func Success(format string, args ...any) {
 	if Level < 1 {
 		return
 	}
+	msg := fmt.Sprintf(format, args...)
 	fmt.Printf("  %s\u2713%s %s\n", ColorGreen, ColorReset, msg)
 }
 
-func Step(msg string) {
+func Step(format string, args ...any) {
 	if Level < 1 {
 		return
 	}
+	msg := fmt.Sprintf(format, args...)
 	fmt.Printf("\n%s\u25b6%s %s\n", ColorBlue, ColorReset, msg)
 }
 
-func Info(msg string) {
+func Info(format string, args ...any) {
 	if Level < 1 {
 		return
 	}
+	msg := fmt.Sprintf(format, args...)
 	fmt.Printf("  %s\n", msg)
 }
 
 // Always shown (level 0+)
-func Error(msg string) {
+func Error(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
 	fmt.Printf("  %s\u2717%s %s\n", ColorRed, ColorReset, msg)
 }
 
-func Warning(msg string) {
+func Warning(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
 	fmt.Printf("  %s\u26a0%s %s\n", ColorYellow, ColorReset, msg)
-}
-
-func Refreshed(msg string) {
-	if Level < 1 {
-		return
-	}
-	fmt.Printf("  %s\u21bb%s %s\n", ColorBlue, ColorReset, msg)
 }
 
 // FormatDuration formats a duration into a human-readable string.

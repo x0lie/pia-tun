@@ -2,7 +2,6 @@ package cacher
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"net/http"
 	"sync"
@@ -110,7 +109,7 @@ func Run(ctx context.Context, cache *Cache, piaUser string, piaPass string) erro
 	// Initial refresh on startup
 	logger.Debug("Performing initial cache refresh")
 	if err := refreshAll(ctx, logger, cfg, client, cache); err != nil {
-		logger.Debug(fmt.Sprintf("Initial cache refresh failed: %v", err))
+		logger.Debug("Initial cache refresh failed: %v", err)
 	} else {
 		logger.Debug("Cache initialized")
 	}
@@ -141,7 +140,7 @@ func Run(ctx context.Context, cache *Cache, piaUser string, piaPass string) erro
 				}
 			}
 			if err != nil {
-				log.Warning(fmt.Sprintf("Cache refresh failed after 3 attempts: %v", err))
+				log.Warning("Cache refresh failed after 3 attempts: %v", err)
 			} else {
 				logger.Trace("Cache refreshed")
 			}

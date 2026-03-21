@@ -2,7 +2,6 @@ package wan
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"time"
 
@@ -74,8 +73,8 @@ func (c *Checker) WaitForUp(ctx context.Context, metrics *metrics.Metrics) error
 			return ctx.Err()
 		case <-time.After(1 * time.Second):
 			if c.Check(ctx) {
-				log.Success(fmt.Sprintf("Internet restored (down for %s)",
-					log.FormatDuration(time.Since(downSince))))
+				log.Success("Internet restored (down for %s)",
+					log.FormatDuration(time.Since(downSince)))
 				metrics.UpdateWANStatus(true)
 				return nil
 			}

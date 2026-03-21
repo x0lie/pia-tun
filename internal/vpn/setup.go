@@ -73,7 +73,7 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher
 		if srv, latency, err = selectServer(ctx, cfg, fw, cache, resolver, logger); err != nil {
 			return nil, err
 		}
-		log.Success(fmt.Sprintf("Best server: %s (%dms) in %s", srv.CN, latency.Milliseconds(), srv.RegionName))
+		log.Success("Best server: %s (%dms) in %s", srv.CN, latency.Milliseconds(), srv.RegionName)
 
 		serverIP = srv.IP
 		serverCN = srv.CN
@@ -81,7 +81,7 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher
 	}
 
 	// Step 2: Generate WireGuard key pair
-	log.Step(fmt.Sprintf("Establishing connection to %s...", serverCN))
+	log.Step("Establishing connection to %s...", serverCN)
 	privateKey, publicKey, err := wg.GenerateKeyPair(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to generate WG keypair: %s", apperrors.ErrFatal, err)
@@ -116,7 +116,7 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to bring up wireguard: %s", apperrors.ErrFatal, err)
 	}
-	log.Success(fmt.Sprintf("Tunnel configured (%s)", backend))
+	log.Success("Tunnel configured (%s)", backend)
 	logger.Debug("Connected to %s (%s) in %s, latency %dms", serverCN, serverIP, region, latency.Milliseconds())
 
 	return &ConnectionInfo{

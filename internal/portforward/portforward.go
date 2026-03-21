@@ -99,10 +99,10 @@ func Run(ctx context.Context, cfg *Config, connCfg *ConnectionConfig, cache *cac
 	m.announcePort()
 
 	if m.cfg.BindInterval != 900*time.Second {
-		log.Success(fmt.Sprintf("Keep-alive: Bind refresh every %d minutes", int(m.cfg.BindInterval.Minutes())))
+		log.Success("Keep-alive: Bind refresh every %d minutes", int(m.cfg.BindInterval.Minutes()))
 	}
 	if m.cfg.SignatureSafetyHours != 6 {
-		log.Success(fmt.Sprintf("Signature safety hours: %d hours", m.cfg.SignatureSafetyHours))
+		log.Success("Signature safety hours: %d hours", m.cfg.SignatureSafetyHours)
 	}
 
 	m.log.Debug("Port forwarding setup complete, entering keepalive loop")
@@ -171,24 +171,24 @@ func (m *manager) acquirePort(ctx context.Context) error {
 }
 
 func (m *manager) announcePort() {
-	log.Success(fmt.Sprintf("Port: %s%s%d%s", log.ColorGreen, log.ColorBold, m.state.port, log.ColorReset))
+	log.Success("Port: %s%s%d%s", log.ColorGreen, log.ColorBold, m.state.port, log.ColorReset)
 
 	// Calculate and log renewal/expiry
 	renewalTime := m.state.expiresAt.Add(-time.Duration(m.cfg.SignatureSafetyHours) * time.Hour)
 	daysUntilRenewal := int(time.Until(renewalTime).Hours()) / 24
 	renewalDate := renewalTime.Format("2006-01-02")
-	m.log.Debug(fmt.Sprintf("Expires: %s", m.state.expiresAt))
-	log.Success(fmt.Sprintf("Renews: %s (%d days)", renewalDate, daysUntilRenewal))
+	m.log.Debug("Expires: %s", m.state.expiresAt)
+	log.Success("Renews: %s (%d days)", renewalDate, daysUntilRenewal)
 
 	// Allow port through firewall
 	if err := m.fw.AllowForwardedPort(m.state.port); err != nil {
-		log.Warning(fmt.Sprintf("Failed to add firewall rule for port %d: %v", m.state.port, err))
+		log.Warning("Failed to add firewall rule for port %d: %v", m.state.port, err)
 	}
 
 	// Write Port to file
 	m.log.Debug("Writing port %d to %s", m.state.port, m.cfg.PortFile)
 	if err := os.WriteFile(m.cfg.PortFile, []byte(fmt.Sprintf("%d", m.state.port)), 0644); err != nil {
-		log.Error(fmt.Sprintf("failed to write port file: %v", err))
+		log.Error("failed to write port file: %v", err)
 	}
 
 	// Update metric

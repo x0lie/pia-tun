@@ -106,9 +106,9 @@ func Up(ctx context.Context, cfg Config) (string, error) {
 	}
 	logger.Debug("MTU set (%v)", mtu)
 	if mtu == 1280 {
-		log.Success(fmt.Sprintf("MTU set to %v (safe minimum)", mtu))
+		log.Success("MTU set to %v (safe minimum)", mtu)
 	} else if mtu != defaultMTU {
-		log.Success(fmt.Sprintf("MTU set to %v", mtu))
+		log.Success("MTU set to %v", mtu)
 	}
 
 	// Set fwmark BEFORE peer config to prevent routing loops

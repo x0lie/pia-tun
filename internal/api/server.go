@@ -66,7 +66,7 @@ func New(port int, killswitchFn func() bool, connectionFn func() bool, m *metric
 func (s *Server) Start() {
 	s.log.Debug("HTTP server listening on %s", s.server.Addr)
 	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Error(fmt.Sprintf("HTTP server error: %v", err))
+		log.Error("HTTP server error: %v", err)
 	}
 }
 
