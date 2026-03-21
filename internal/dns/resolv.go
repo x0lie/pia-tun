@@ -1,10 +1,26 @@
 package dns
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 )
+
+// SetNetResolver sets net.DefaultResolver to read resolv.conf on every lookup
+func SetNetResolver() {
+	net.DefaultResolver = &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			servers, err := Read()
+			if err != nil || len(servers) == 0 {
+				return nil, fmt.Errorf("no nameservers in resolv.conf")
+			}
+			return (&net.Dialer{}).DialContext(ctx, "udp", net.JoinHostPort(servers[0], "53"))
+		},
+	}
+}
 
 // Read reads and returns /etc/resolv.conf servers
 func Read() ([]string, error) {

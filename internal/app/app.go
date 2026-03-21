@@ -153,11 +153,12 @@ func (a *App) initialize(ctx context.Context) error {
 		}()
 	}
 
-	a.resolver = dns.NewResolver(a.fw)
-
+	// Set up DNS
+	a.resolver = dns.NewExemptResolver(a.fw)
 	if err := a.retryWithWANCheck(ctx, a.setupDNS); err != nil {
 		return err
 	}
+	dns.SetNetResolver()
 
 	// Non-fatal: capture pre-VPN IP for leak detection
 	a.preVPNIP = a.captureRealIP(ctx)
@@ -201,7 +202,7 @@ func (a *App) connect(ctx context.Context) error {
 
 	// Verify connection
 	log.Step("Verifying connection...")
-	if err := vpn.VerifyConnection(ctx, a.cfg.DNSMode, a.connInfo.DNS, a.preVPNIP); err != nil {
+	if err := vpn.VerifyConnection(ctx, a.preVPNIP); err != nil {
 		return err
 	}
 

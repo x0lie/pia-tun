@@ -16,7 +16,7 @@ import (
 )
 
 // VerifyConnection confirms traffic routes through the VPN.
-func VerifyConnection(ctx context.Context, dnsMode string, dnsServers []string, preVPNIP string) error {
+func VerifyConnection(ctx context.Context, preVPNIP string) error {
 	logger := log.New("verify")
 	handshakeTimeout := 6 * time.Second
 	ipTimeout := 4 * time.Second
@@ -38,7 +38,7 @@ func VerifyConnection(ctx context.Context, dnsMode string, dnsServers []string, 
 
 	// Get public IP (parallel requests to multiple services)
 	logger.Debug("Retrieving Public IP")
-	publicIP, err := getPublicIP(ctx, dnsMode, dnsServers, ipTimeout)
+	publicIP, err := getPublicIP(ctx, ipTimeout)
 	if err != nil {
 		log.Warning("Could not verify IP:\n    %s", err)
 		return nil // Must return, IP comparison invalid
@@ -96,7 +96,7 @@ func waitForHandshake(ctx context.Context, timeout time.Duration) error {
 }
 
 // getPublicIP fetches public IP from multiple services in parallel.
-func getPublicIP(ctx context.Context, dnsMode string, dnsServers []string, timeout time.Duration) (string, error) {
+func getPublicIP(ctx context.Context, timeout time.Duration) (string, error) {
 	services := []string{
 		"https://api.ipify.org",
 		"https://ifconfig.me/ip",
@@ -113,15 +113,6 @@ func getPublicIP(ctx context.Context, dnsMode string, dnsServers []string, timeo
 	}
 
 	dialer := &net.Dialer{Timeout: timeout}
-	if dnsMode == "pia" && len(dnsServers) > 0 {
-		dialer.Resolver = &net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-				d := net.Dialer{Timeout: timeout}
-				return d.DialContext(ctx, "udp", net.JoinHostPort(dnsServers[0], "53"))
-			},
-		}
-	}
 	transport := &http.Transport{DialContext: dialer.DialContext}
 	client := &http.Client{Timeout: timeout, Transport: transport}
 	results := make(chan result, len(services))

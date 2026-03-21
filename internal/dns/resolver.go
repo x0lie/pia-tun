@@ -39,9 +39,9 @@ type Resolver struct {
 	log *log.Logger
 }
 
-// NewResolver creates a Resolver that uses the given Firewall for temporary
+// NewExemptResolver creates a Resolver that uses the given Firewall for temporary
 // exemptions during DNS queries.
-func NewResolver(fw *firewall.Firewall) *Resolver {
+func NewExemptResolver(fw *firewall.Firewall) *Resolver {
 	return &Resolver{fw: fw, log: log.New("resolver")}
 }
 
