@@ -13,10 +13,8 @@ import (
 )
 
 const (
-	piaAuthHost       = "www.privateinternetaccess.com"
-	piaServerlistHost = "serverlist.piaservers.net"
-	maxCachedIPs      = 5
-	maxTokenAge       = 23 * time.Hour
+	maxCachedIPs = 5
+	maxTokenAge  = 23 * time.Hour
 )
 
 type config struct {
@@ -47,15 +45,15 @@ func refreshAll(ctx context.Context, logger *log.Logger, cfg *config, client *ht
 
 	// 1. Refresh login token
 	logger.Trace("Refreshing login token...")
-	authIPs, err := resolveIPv4(ctx, piaAuthHost)
+	authIPs, err := resolveIPv4(ctx, pia.AuthHostname)
 	if err != nil {
-		logger.Debug("Failed to resolve %s: %v", piaAuthHost, err)
+		logger.Debug("Failed to resolve %s: %v", pia.AuthHostname, err)
 		lastErr = err
 	} else {
-		logger.Trace("Resolved %s to %v", piaAuthHost, authIPs)
+		logger.Trace("Resolved %s to %v", pia.AuthHostname, authIPs)
 		c.MergeAuthIPs(authIPs)
 
-		token, err := pia.GenerateToken(ctx, client, piaAuthHost, cfg.piaUser, cfg.piaPass)
+		token, err := pia.GenerateToken(ctx, client, pia.AuthHostname, cfg.piaUser, cfg.piaPass)
 		if err != nil {
 			logger.Debug("Token refresh failed: %v", err)
 			lastErr = err
@@ -71,15 +69,15 @@ func refreshAll(ctx context.Context, logger *log.Logger, cfg *config, client *ht
 
 	// 2. Refresh server list
 	logger.Trace("Refreshing server list...")
-	slIPs, err := resolveIPv4(ctx, piaServerlistHost)
+	slIPs, err := resolveIPv4(ctx, pia.ServerlistHostname)
 	if err != nil {
-		logger.Debug("Failed to resolve %s: %v", piaServerlistHost, err)
+		logger.Debug("Failed to resolve %s: %v", pia.ServerlistHostname, err)
 		lastErr = err
 	} else {
-		logger.Trace("Resolved %s to %v", piaServerlistHost, slIPs)
+		logger.Trace("Resolved %s to %v", pia.ServerlistHostname, slIPs)
 		c.MergeServerListIPs(slIPs)
 
-		servers, err := pia.FetchServerList(ctx, client, piaServerlistHost)
+		servers, err := pia.FetchServerList(ctx, client, pia.ServerlistHostname)
 		if err != nil {
 			logger.Debug("Server list refresh failed: %v", err)
 			lastErr = err

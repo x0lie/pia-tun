@@ -28,7 +28,7 @@ func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 
 	// If no cached ips, resolve
 	if cache.ServerListIPs == nil {
-		ips, err := resolver.Resolve(ctx, "serverlist.piaservers.net")
+		ips, err := resolver.Resolve(ctx, pia.ServerlistHostname)
 		if err != nil {
 			return pia.Server{}, 0, err
 		}

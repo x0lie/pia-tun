@@ -17,21 +17,20 @@ import (
 )
 
 const (
-	authPath       = "/gtoken/generateToken"
-	serverListPath = "/vpninfo/servers/v6"
-	addKeyPort     = "1337"
-	caCertPath     = "/app/ca.rsa.4096.crt"
+	AuthHostname       = "www.privateinternetaccess.com"
+	ServerlistHostname = "serverlist.piaservers.net"
+	authPath           = "/gtoken/generateToken"
+	serverListPath     = "/vpninfo/servers/v6"
+	addKeyPort         = "1337"
+	caCertPath         = "/app/ca.rsa.4096.crt"
 )
-
-// authHostname is used for TLS SNI and Host header when connecting by IP.
-const authHostname = "www.privateinternetaccess.com"
 
 // GenerateToken authenticates with PIA and returns a login token.
 // ip is the server IP to connect to. The hostname is used for TLS SNI.
 // Returns ErrFatal for invalid credentials
 func GenerateToken(ctx context.Context, client *http.Client, ip, user, pass string) (string, error) {
 	// Use hostname in URL for correct Host header, but connect to IP
-	reqURL := fmt.Sprintf("https://%s%s", authHostname, authPath)
+	reqURL := fmt.Sprintf("https://%s%s", AuthHostname, authPath)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
@@ -40,7 +39,7 @@ func GenerateToken(ctx context.Context, client *http.Client, ip, user, pass stri
 	req.SetBasicAuth(user, pass)
 
 	// Create a client that connects to the IP but uses hostname for SNI
-	authClient := newHostMappedClient(client.Timeout, authHostname, ip)
+	authClient := newHostMappedClient(client.Timeout, AuthHostname, ip)
 
 	resp, err := authClient.Do(req)
 	if err != nil {
@@ -79,14 +78,11 @@ func GenerateToken(ctx context.Context, client *http.Client, ip, user, pass stri
 	return result.Token, nil
 }
 
-// serverlistHostname is used for TLS SNI and Host header when connecting by IP.
-const serverlistHostname = "serverlist.piaservers.net"
-
 // FetchServerList fetches the PIA server list.
 // ip is the server IP to connect to. The hostname is used for TLS SNI.
 func FetchServerList(ctx context.Context, client *http.Client, ip string) ([]Server, error) {
 	// Use hostname in URL for correct Host header, but connect to IP
-	reqURL := fmt.Sprintf("https://%s%s", serverlistHostname, serverListPath)
+	reqURL := fmt.Sprintf("https://%s%s", ServerlistHostname, serverListPath)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
@@ -94,7 +90,7 @@ func FetchServerList(ctx context.Context, client *http.Client, ip string) ([]Ser
 	}
 
 	// Create a client that connects to the IP but uses hostname for SNI
-	serverlistClient := newHostMappedClient(client.Timeout, serverlistHostname, ip)
+	serverlistClient := newHostMappedClient(client.Timeout, ServerlistHostname, ip)
 
 	resp, err := serverlistClient.Do(req)
 	if err != nil {

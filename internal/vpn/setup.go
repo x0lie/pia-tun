@@ -167,7 +167,7 @@ func authenticate(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 	}
 
 	// Fall back to DNS resolution
-	ips, err := resolver.Resolve(ctx, "www.privateinternetaccess.com")
+	ips, err := resolver.Resolve(ctx, pia.AuthHostname)
 	if err != nil {
 		return "", err
 	}
