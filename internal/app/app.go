@@ -169,6 +169,8 @@ func (a *App) initialize(ctx context.Context) error {
 // connect runs a single connection attempt using the Go VPN orchestrator.
 // Fatal errors cause exit (returns apperrors.ErrFatal)
 func (a *App) connect(ctx context.Context) error {
+	wg.Down(ctx) // pia0 can't exist for exemptions to work (routes must fall through to main table)
+
 	cfg := vpn.Config{
 		PIAUser:    a.cfg.PIA.User,
 		PIAPass:    a.cfg.PIA.Pass,
@@ -297,6 +299,7 @@ func (a *App) setupDNS(ctx context.Context) error {
 	case "dot":
 		log.Step("Starting DoT proxy on port 53...")
 		a.dotProxy = dns.New(a.cfg.DNS, a.resolver)
+		wg.Down(ctx) // pia0 can't exist for exemptions to work
 		if err := a.dotProxy.Setup(ctx); err != nil {
 			return err
 		}
