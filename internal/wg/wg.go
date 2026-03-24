@@ -61,9 +61,6 @@ func GenerateKeyPair(ctx context.Context) (privateKey, publicKey string, err err
 
 // Up creates and configures a WireGuard interface and routing rules.
 func Up(ctx context.Context, cfg Config) (string, error) {
-	// Defensive cleanup
-	Down(ctx)
-
 	// Detects backend and creates interface (prefers kernel)
 	backend, err := createInterface(ctx, cfg.Backend)
 	if err != nil {
@@ -138,6 +135,11 @@ func Up(ctx context.Context, cfg Config) (string, error) {
 		return "", fmt.Errorf("bring up interface: %w", err)
 	}
 	logger.Debug("%s set up", ifaceName)
+
+	// Check sysctl if rp_filter == 1 (causes dropped handshakes)
+	if err := checkRPFilter(ctx); err != nil {
+		return "", err
+	}
 
 	// Add VPN route to separate table
 	tableStr := strconv.Itoa(routingTable)
@@ -277,6 +279,44 @@ func cleanupRoutingRules(ctx context.Context) {
 			logger.Debug("Removed routing rule at priority %d", p)
 		}
 	}
+}
+
+// checkRPFilter errors if the effective rp_filter for the default route interface
+// is 1 (strict). The effective value is max(all, iface) per Linux semantics.
+func checkRPFilter(ctx context.Context) error {
+	// Find the default route interface
+	out, err := exec.CommandContext(ctx, "ip", "-4", "route", "show", "default").Output()
+	if err != nil {
+		return nil // can't determine, skip check
+	}
+	var iface string
+	fields := strings.Fields(string(out))
+	for i, field := range fields {
+		if field == "dev" && i+1 < len(fields) {
+			iface = fields[i+1]
+			break
+		}
+	}
+	if iface == "" {
+		return nil // can't determine, skip check
+	}
+
+	// Function for finding sysctl rp_filter value
+	rpFilterVal := func(iface string) int {
+		out, err := exec.CommandContext(ctx, "sysctl", "-n", "net.ipv4.conf."+iface+".rp_filter").Output()
+		if err != nil {
+			return 0
+		}
+		v, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+		return v
+	}
+
+	// The effective rp_filter is the maximum of "all" and "iface"
+	if max(rpFilterVal("all"), rpFilterVal(iface)) == 1 {
+		return fmt.Errorf("net.ipv4.conf.all.rp_filter=1 will cause handshake failures; add to compose file:\n\n    sysctls:\n      - net.ipv4.conf.all.rp_filter=2\n\n    or set equal to 2 on host machine")
+	}
+	logger.Debug("sysctl rp_filter test passed (!= 1)")
+	return nil
 }
 
 // run executes a command. On failure, stderr is included in the error.

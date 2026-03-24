@@ -114,7 +114,7 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher
 	}
 	backend, err := wg.Up(ctx, wgCfg)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to bring up wireguard: %s", apperrors.ErrFatal, err)
+		return nil, fmt.Errorf("%w: %s", apperrors.ErrFatal, err)
 	}
 	log.Success("Tunnel configured (%s)", backend)
 	logger.Debug("Connected to %s (%s) in %s, latency %dms", serverCN, serverIP, region, latency.Milliseconds())
