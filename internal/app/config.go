@@ -165,8 +165,12 @@ func getEnvOrSecret(key, def string) string {
 	}
 
 	secretPath := "/run/secrets/" + strings.ToLower(key)
-	if data, err := os.ReadFile(secretPath); err == nil {
+	data, err := os.ReadFile(secretPath)
+	if err == nil {
 		return strings.TrimSpace(string(data))
+	}
+	if !os.IsNotExist(err) {
+		log.Warning("cannot read secret %s: %v - ensure file is owned by root with chmod 600", strings.ToLower(key), err)
 	}
 
 	return def
