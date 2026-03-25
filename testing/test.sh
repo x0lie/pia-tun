@@ -21,7 +21,7 @@ CONTAINER="pia-tun-test"
 IMAGE_NAME="${IMAGE_NAME:-pia-tun:test}"
 
 # Env
-PIA_LOCATION="${PIA_LOCATION:-ca_ontario}"
+PIA_LOCATIONS="${PIA_LOCATIONS:-ca_ontario}"
 METRICS_PORT=9091
 METRICS_URL="http://localhost:$METRICS_PORT"
 DNS="${DNS:-pia}"
@@ -148,7 +148,7 @@ start_container() {
         -p $METRICS_PORT:$METRICS_PORT \
         -e PIA_USER="$PIA_USER" \
         -e PIA_PASS="$PIA_PASS" \
-        -e PIA_LOCATION="$PIA_LOCATION" \
+        -e PIA_LOCATIONS="$PIA_LOCATIONS" \
         -e DNS="$DNS" \
         -e PF_ENABLED=true \
         -e PORT_FILE="$PORT_FILE" \

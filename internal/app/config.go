@@ -78,7 +78,7 @@ func loadPIAConfig() PIA {
 	return PIA{
 		User:     getEnvOrSecret("PIA_USER", ""),
 		Pass:     getEnvOrSecret("PIA_PASS", ""),
-		Location: getEnv("PIA_LOCATION", "all"),
+		Location: getEnv("PIA_LOCATIONS", "all"),
 		CN:       getEnv("PIA_CN", ""),
 		IP:       getEnv("PIA_IP", ""),
 	}
@@ -235,7 +235,7 @@ func setupAutoEnable() {
 
 func (a *App) logConfig() {
 	a.log.Debug("Environment configuration:")
-	a.log.Debug("  PIA_LOCATION=%s", a.cfg.PIA.Location)
+	a.log.Debug("  PIA_LOCATIONS=%s", a.cfg.PIA.Location)
 	a.log.Debug("  LOG_LEVEL=%s", a.cfg.LogLevel)
 	a.log.Debug("  IPV6_ENABLED=%v", a.cfg.VPN.IPv6Enabled)
 	a.log.Debug("  LOCAL_NETWORKS=%s", a.cfg.FW.LANs)

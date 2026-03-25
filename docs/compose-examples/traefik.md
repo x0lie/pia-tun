@@ -41,7 +41,7 @@ services:
     networks:
       - traefik
     environment:
-      - PIA_LOCATION=ca_ontario,ca_ontario-so,ca_toronto
+      - PIA_LOCATIONS=ca_ontario,ca_ontario-so,ca_toronto
       - PS_CLIENT=qbittorrent
     secrets:
       - pia_user

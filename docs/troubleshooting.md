@@ -31,8 +31,8 @@ Query the PIA server list directly:
 curl -s 'https://serverlist.piaservers.net/vpninfo/servers/v6' | head -n -1 | jq -r '.regions[].id' | sort
 ```
 
-- Alternatively, use `PIA_LOCATION=all` (default) with `LOG_LEVEL=debug` to see the lowest latency options
-- You can also input an invalid option for PIA_LOCATION to see all locations
+- Alternatively, use `PIA_LOCATIONS=all` (default) with `LOG_LEVEL=debug` to see the lowest latency options
+- You can also input an invalid option for PIA_LOCATIONS to see all locations
 
 ## Common Issues
 

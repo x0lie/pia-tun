@@ -5,9 +5,9 @@
 - Accepts Docker secrets (ps_user and ps_pass) or env var (PS_USER and PS_PASS)
 - You can also "Bypass authentication for clients on localhost" (Options > WebUI > Authentication) to skip authentication for pia-tun
 
-## Note on PIA_LOCATION
+## Note on PIA_LOCATIONS
 
-- `PIA_LOCATION=all` (default) works well, but latency-based selection doesn't guarantee highest throughput
+- `PIA_LOCATIONS=all` (default) works well, but latency-based selection doesn't guarantee highest throughput
 - Path quality, peering quality, and network congestion all have an effect on throughput
 - Most Americans will see the highest speeds to PIA's Canadian servers rather than South America or Mexico, for example
 
@@ -21,7 +21,7 @@ services:
     cap_drop:
       - ALL
     environment:
-      - PIA_LOCATION=ca_ontario,ca_ontario-so,ca_toronto
+      - PIA_LOCATIONS=ca_ontario,ca_ontario-so,ca_toronto
       - PS_CLIENT=qbittorrent
       - LOCAL_NETWORKS=auto,192.168.1.0/24
     secrets:

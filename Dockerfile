@@ -91,7 +91,7 @@ LABEL org.opencontainers.image.title="pia-tun" \
 
 ENV PIA_USER="" \
     PIA_PASS="" \
-    PIA_LOCATION="all" \
+    PIA_LOCATIONS="all" \
     LOG_LEVEL=info \
     WG_BACKEND="" \
     MTU="1420" \

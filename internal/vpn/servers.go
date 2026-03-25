@@ -49,7 +49,7 @@ func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 		// Check if Region exists
 		allInRegion := filterServers(cache.Servers, cfg.Location, false)
 		if len(allInRegion) == 0 {
-			return pia.Server{}, 0, fmt.Errorf("%w: PIA_LOCATION not found: %s\n\n    Available regions:\n    %s",
+			return pia.Server{}, 0, fmt.Errorf("%w: PIA_LOCATIONS not found: %s\n\n    Available regions:\n    %s",
 				apperrors.ErrFatal, cfg.Location, regionList(cache.Servers, false))
 		}
 
@@ -58,7 +58,7 @@ func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 		if cfg.PFRequired {
 			candidates = filterServers(cache.Servers, cfg.Location, true)
 			if len(candidates) == 0 {
-				return pia.Server{}, 0, fmt.Errorf("%w: PIA_LOCATION does not support port forwarding: %s\n\n    Available regions with port forwarding:\n      %s",
+				return pia.Server{}, 0, fmt.Errorf("%w: PIA_LOCATIONS does not support port forwarding: %s\n\n    Available regions with port forwarding:\n      %s",
 					apperrors.ErrFatal, cfg.Location, regionList(cache.Servers, true))
 			}
 		}
