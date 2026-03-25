@@ -2,12 +2,15 @@
 
 Common issues and solutions for pia-tun, particularly on older or minimal host systems.
 
-## Finding Available PIA Locations
+## Read the logs
 
-Query the PIA server list directly:
+The logs are made to be very useful
+
 ```bash
-curl -s 'https://serverlist.piaservers.net/vpninfo/servers/v6' | head -n -1 | jq -r '.regions[].id' | sort
+docker logs pia-tun
 ```
+
+`LOG_LEVEL=debug` and `LOG_LEVEL=trace` may also be useful if no explicit errors at info level
 
 ## Verify VPN is Working
 
@@ -16,112 +19,78 @@ Check your IP is different from your real IP:
 docker exec pia-tun curl -s ifconfig.me
 ```
 
-View container logs:
+Verify it reconnects on failures:
 ```bash
-docker logs pia-tun
+docker exec pia-tun ip link delete pia0 && docker logs pia-tun -f
 ```
+
+## Finding Available PIA Locations
+
+Query the PIA server list directly:
+```bash
+curl -s 'https://serverlist.piaservers.net/vpninfo/servers/v6' | head -n -1 | jq -r '.regions[].id' | sort
+```
+
+- Alternatively, use `PIA_LOCATION=all` (default) with `LOG_LEVEL=debug` to see the lowest latency options
+- You can also input an invalid option for PIA_LOCATION to see all locations
 
 ## Common Issues
 
-**Container exits immediately:**
-- Check that `NET_ADMIN` capability is granted
-- Verify PIA credentials are correct
-- Check logs for authentication errors
-
-**API port updater not reaching client:**
+**Port Syncer not reaching client:**
 - Verify `PS_URL` is accessible from pia-tun container
-- Check `PS_USER` and `PS_PASS` are correct
-- Review logs for API communication errors
+- Check `PS_USER` and `PS_PASS` or equivalent secrets are correct
+- Review `LOG_LEVEL=debug` logs for API communication errors
 
-**Cannot access metrics/proxy from LAN:**
+**Cannot access metrics, proxy, or dependent webui from LAN:**
 - Services are localhost and container network only by default for security
-- Use `LOCAL_NETWORKS=auto,192.168.1.0/24` or whatever networks necessary and be sure to publish the relevant ports to pia-tun service in docker-compose.yml.
+- Use `LOCAL_NETWORKS=auto,192.168.1.0/24` or whatever networks necessary
+- Be sure to publish the relevant ports to pia-tun service in docker-compose.yml:
 
-## Kernel Module Issues
+```yaml
+services:
+  pia-tun:
+    environment:
+      - PROXY_ENABLED=true
+    ports:
+      - 1080:1080   # SOCKS5
+      - 8888:8888   # HTTP Proxy
+      - 9090:9090   # Metrics
+```
+
+## iptables Issues
 
 ### Symptoms
 - Container fails to start with iptables errors
-- Many IPv6-related errors like `ip6tables: No chain/target/match by that name` during startup
-- Connection tracking errors
 
 ### Cause
-Some minimal systems (Synology NAS, older distros, minimal VPS) don't load firewall-related kernel modules until something needs them. Containers can't load kernel modules themselves.
+- Some minimal systems (Synology NAS, older distros, minimal VPS) don't load firewall-related kernel modules until something needs them. Containers can't load kernel modules themselves.
+- Most modern kernels (Ubuntu 20.04+, Debian 10+, etc.), use nf_tables (modern iptables backend) and are unlikely to have issues.
+
+### How to tell which backend in use
+You can see what backend you're using in the container logs at `LOG_LEVEL=info` (default) near the top:
+```bash
+▶ Applying killswitch...
+  ✓ Baseline established (iptables-legacy)
+```
 
 ### Solution
-Load the required modules on the **host** system:
+Load the required modules on the **host** system (iptables-legacy only):
 
 ```bash
 sudo modprobe ip_tables
 sudo modprobe ip6_tables
 sudo modprobe ip6table_filter
-sudo modprobe nf_conntrack
 ```
 
-To make this permanent across reboots, add to `/etc/modules-load.d/pia-tun.conf`:
+To make this permanent across reboots (not the same for all distros), add to `/etc/modules-load.d/pia-tun.conf`:
 
 ```
 ip_tables
 ip6_tables
 ip6table_filter
-nf_conntrack
 ```
 
----
-
-## VPN Connectivity Drops After Setup + Infinite Restarts
-
-### Symptoms
-- Container starts successfully
-- WireGuard interface is created
-- Handshakes fail or connectivity drops immediately after connecting - Verifying Connection fails
-
-### Cause
-Strict Reverse Path Filtering (`rp_filter=1`) drops VPN return traffic because packets arrive on a different interface than the kernel expects.
-
-This commonly affects:
-- Older distros
-- Some NAS systems
-
-### Solution
-On the **host** system, set loose mode for reverse path filtering:
-
-```bash
-
-sudo sysctl -w net.ipv4.conf.all.rp_filter=2
-sudo sysctl -w net.ipv4.conf.default.rp_filter=2
-```
-
-Many modern systems use these by default.
-To make permanent, add to `/etc/sysctl.d/99-pia-tun.conf`:
-
-```
-net.ipv4.conf.all.rp_filter=2
-net.ipv4.conf.default.rp_filter=2
-```
-
-Then apply: `sudo sysctl --system`
-
-**Note:** `rp_filter=2` (loose mode) still provides protection against IP spoofing while allowing VPN traffic. This is preferred over `rp_filter=0` (disabled).
-
----
-
-## iptables-legacy Issues
-
-### Symptoms
-- Errors in log about iptables "Permission denied"
-
-### Solutions
-
-**If nftables is not an option:**
-The container will test for nftables capability and fallback to iptables-legacy (x_tables) if it fails. If your host has both nftables and iptables, it will prefer iptables (for reliability) if docker writes its rules to iptables.
-
-```yaml
-cap_add:
-  - NET_ADMIN
-  - NET_RAW     # Typically a requirement for iptables (legacy). Rarely required for iptables-nft/nftables backend.
-cap_drop:
-  - ALL
-```
+These kernel modules are requirements for iptables-legacy. If you don't have them and can't get them (and can't use iptables-nft), [make an issue](https://github.com/x0lie/pia-tun/issues)
 
 **To force a specific IPT backend:**
 ```yaml
@@ -135,12 +104,11 @@ environment:
 ### Symptoms
 - "Kernel WireGuard unavailable" warning
 - WireGuard interface fails to create entirely
-- Handshake timeouts
 
 ### Solutions
 
 **If kernel WireGuard is unavailable:**
-The container automatically falls back to `wireguard-go` (userspace) if wireguard kernel method fails. This works fine but uses slightly more CPU. It also may drastically affect your speeds. To use kernel WireGuard:
+The container automatically falls back to `wireguard-go` (userspace) if wireguard kernel method fails. This works fine but uses more CPU and may negatively affect your speeds. To use kernel WireGuard:
 
 ```bash
 # On host system
@@ -151,11 +119,5 @@ sudo modprobe wireguard
 ```yaml
 environment:
   - WG_BACKEND=userspace  # Force wireguard-go
-  - WG_BACKEND=kernel     # Force kernel (fails if unavailable)
-```
-
-**For TUN device issues with wireguard-go:**
-```yaml
-devices:
-  - /dev/net/tun:/dev/net/tun
+  - WG_BACKEND=kernel     # Force kernel
 ```

@@ -1,12 +1,12 @@
 # Restarting Brittle Dependents on Port Changes
 
-Most torrent clients support live port updates via API — use `PS_CLIENT` or `PS_SCRIPT` for these (see README). This page covers the rare case where a dependent has no usable API and requires a full container restart when the forwarded port changes (e.g., rtorrent).
+Most torrent clients support live port updates via API — use `PS_CLIENT` or `PS_SCRIPT` for these (see [env tables](./env.md)). This page covers the case where a dependent has no usable API, or is brittle, and requires a full container restart when the forwarded port changes (e.g., rtorrent).
 
 ## The Problem
 
 `PS_SCRIPT` runs inside the pia-tun container and can do most things — update config files on shared volumes, hit API endpoints, write to files. However, it cannot restart other containers without mounting the Docker socket, which is not recommended for security reasons.
 
-Restarting a Docker container requires Docker socket access. Something outside of pia-tun should do it.
+Restarting a Docker container requires Docker socket access. An external application should handle this.
 
 ## Options
 
