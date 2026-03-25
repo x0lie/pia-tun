@@ -1,7 +1,7 @@
 # Kill-Switch Protection
 
 This container implements a strict firewall using iptables-nft or iptables-legacy to prevent any traffic from leaking outside the VPN tunnel — even during startup, reconnects, crashes, and most misconfigurations.
-- **Default-deny:** All traffic blocked except loopback, VPN interface, and container network(s) (`LOCAL_NETWORKS=auto`)
+- **Default-deny:** All traffic blocked by default except loopback, VPN interface, and container network(s)
 - **Fast protection:** DROP established on all 4 chains after ~25ms (amd64)
 - **Auto-detection:** Automatically selects iptables backend by probing for capability (override with `IPT_BACKEND={nft,legacy}`)
 - **Optimized rule ordering:** Established/Related connections matched first for maximum performance

@@ -23,7 +23,7 @@ services:
     environment:
       - PIA_LOCATIONS=ca_ontario,ca_ontario-so,ca_toronto
       - PS_CLIENT=qbittorrent
-      - LOCAL_NETWORKS=auto,192.168.1.0/24
+      - LOCAL_NETWORKS=192.168.1.0/24
     secrets:
       - pia_user
       - pia_pass

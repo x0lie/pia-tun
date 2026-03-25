@@ -17,12 +17,13 @@
 
 | Variable         | Description                                                                                                                    | Default |
 |------------------|--------------------------------------------------------------------------------------------------------------------------------|---------|
-| `LOCAL_NETWORKS` | CIDR ranges for tunnel bypass. Supports `auto`, IPv4 and IPv6 (e.g., `auto,192.168.1.0/24,fd00::/64`) or `all` or `none`       | `auto`  |
+| `LOCAL_NETWORKS` | CIDR ranges for tunnel bypass. Supports IPv4 and IPv6 (e.g., `192.168.1.0/24,fd00::/64`) or `all` or `none`                    | `auto`  |
 | `DNS`            | Supports `pia`, `system`, DoT (e.g., `tls://one.one.one.one,dns.mullvad.net`), or Do53 (e.g., `1.1.1.1,8.8.8.8`). Round-robin. | `pia`   |
 | `IPT_BACKEND`    | iptables backend: `nft` or `legacy`. Auto-detected if not set.                                                                 | Auto    |
 
-- `LOCAL_NETWORKS=auto` will allow bidirectional access on the network(s) pia-tun exists on.
-- For many setups you will need something like `LOCAL_NETWORKS=auto,192.168.1.0/24` to access dependent web UI.
+- `LOCAL_NETWORKS` automatically includes networks pia-tun exists on unless `LOCAL_NETWORKS=none`.
+- `LOCAL_NETWORKS` allows bidirectional access to containers and machines on the specified networks.
+- For many setups you will need something like `LOCAL_NETWORKS=192.168.1.0/24` (your local network) to access dependent web UI.
 - `LOCAL_NETWORKS` accepts both private/public and IPv4/IPv6 CIDRs (single addresses need /32).
 - If `DNS=pia` and `LOCAL_NETWORKS` includes PIA's DNS, DNS routes take priority (routes through tunnel).
 

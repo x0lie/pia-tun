@@ -43,7 +43,7 @@ curl -s 'https://serverlist.piaservers.net/vpninfo/servers/v6' | head -n -1 | jq
 
 **Cannot access metrics, proxy, or dependent webui from LAN:**
 - Services are localhost and container network only by default for security
-- Use `LOCAL_NETWORKS=auto,192.168.1.0/24` or whatever networks necessary
+- Use `LOCAL_NETWORKS=192.168.1.0/24` or whatever networks necessary
 - Be sure to publish the relevant ports to pia-tun service in docker-compose.yml:
 
 ```yaml

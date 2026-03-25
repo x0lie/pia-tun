@@ -98,10 +98,13 @@ func (fw *Firewall) setupLocalRules(lansV4, lansV6 []string) error {
 }
 
 // resolveLocalNetworks parses the LOCAL_NETWORKS input string into separate
-// IPv4 and IPv6 CIDR slices. Supports special values "all", "auto", and "none"
+// IPv4 and IPv6 CIDR slices. Supports special value "all". Caller is responsible
+// for not calling this when LOCAL_NETWORKS=none
 func resolveLocalNetworks(input string) (ipv4, ipv6 []string) {
-	if input == "" {
-		input = "auto"
+	if !strings.Contains(input, "all") {
+		v4, v6 := detectKernelSubnets()
+		ipv4 = append(ipv4, v4...)
+		ipv6 = append(ipv6, v6...)
 	}
 
 	parts := strings.Split(input, ",")
@@ -112,14 +115,9 @@ func resolveLocalNetworks(input string) (ipv4, ipv6 []string) {
 		}
 
 		switch part {
-		case "auto":
-			v4, v6 := detectKernelSubnets()
-			ipv4 = append(ipv4, v4...)
-			ipv6 = append(ipv6, v6...)
 		case "all":
 			ipv4 = append(ipv4, "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 			ipv6 = append(ipv6, "fc00::/7")
-		case "none":
 		default:
 			_, _, err := net.ParseCIDR(part)
 			if err != nil {

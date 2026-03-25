@@ -2,6 +2,7 @@ package firewall
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/x0lie/pia-tun/internal/log"
 )
@@ -24,7 +25,7 @@ func (fw *Firewall) Setup(cfg KillswitchConfig) error {
 	log.Success("Baseline established (%s)", fw.ipt4Cmd)
 
 	// Set up LOCAL_NETWORKS routes and rules if LOCAL_NETWORKS != "none"
-	if cfg.LANs != "none" {
+	if !strings.Contains(cfg.LANs, "none") {
 		lans, err := fw.setupLocalNetworks(cfg.LANs)
 		if err != nil {
 			return fmt.Errorf("failed to setup local networks: %w", err)
