@@ -62,6 +62,7 @@ func (q *qBittorrent) login(ctx context.Context) error {
 		"password": {q.pass},
 	}
 
+	q.log.Debug("Attempting qBittorrent login...")
 	req, err := http.NewRequestWithContext(ctx, "POST",
 		q.url+"/api/v2/auth/login",
 		strings.NewReader(form.Encode()))
@@ -77,11 +78,10 @@ func (q *qBittorrent) login(ctx context.Context) error {
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
-	q.log.Debug("login response: status=%d body=%s cookies=%v", resp.StatusCode, string(body), resp.Cookies())
-
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status %d", resp.StatusCode)
+		return fmt.Errorf("unexpected status %d, body=%s", resp.StatusCode, string(body))
 	}
+	q.log.Debug("Login successful (status=%d)", resp.StatusCode)
 	return nil
 }
 
@@ -90,7 +90,8 @@ func (q *qBittorrent) setPort(ctx context.Context, port int) error {
 		"json": {fmt.Sprintf(`{"listen_port":%d}`, port)},
 	}
 
-	q.log.Debug("setPort request body: %s", form.Encode())
+	q.log.Debug("Setting port...")
+	q.log.Trace("setPort request body: %s", form.Encode())
 
 	req, err := http.NewRequestWithContext(ctx, "POST",
 		q.url+"/api/v2/app/setPreferences",
@@ -106,12 +107,11 @@ func (q *qBittorrent) setPort(ctx context.Context, port int) error {
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
-	q.log.Debug("setPort response: status=%d body=%s", resp.StatusCode, string(body))
-
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("unexpected status %d, body=%s", resp.StatusCode, body)
 	}
+	q.log.Debug("Port set successful (status=%d)", resp.StatusCode)
 	return nil
 }
 
@@ -135,8 +135,9 @@ func (q *qBittorrent) verifyPort(ctx context.Context, port int) error {
 
 	// Quick check: look for "listen_port":PORT in the response
 	expected := fmt.Sprintf(`"listen_port":%d`, port)
-	q.log.Debug("verifyPort response (first 200 chars): %.200s", string(body))
-	q.log.Debug("looking for: %s", expected)
+	q.log.Trace("verifyPort response (first 50 char): %.50s", string(body))
+	q.log.Debug("Checking if qBit port updated...")
+	q.log.Trace("looking for: %s", expected)
 	if !strings.Contains(string(body), expected) {
 		return fmt.Errorf("port not set (expected %d in response)", port)
 	}
