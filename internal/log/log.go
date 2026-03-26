@@ -103,10 +103,6 @@ func StartupBanner(version, sha string) {
 	}
 
 	versionText := "pia-tun " + version
-	if len(version) > 0 && version[0] >= '0' && version[0] <= '9' {
-		versionText = "pia-tun v" + version
-	}
-
 	c, r, g, b := ColorCyan, ColorReset, ColorGreen, ColorBold
 
 	out := fmt.Sprintf("\n%s\n%s\n%s\n%s\n%s\n%s\n",
