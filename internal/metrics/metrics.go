@@ -2,7 +2,6 @@ package metrics
 
 import (
 	"fmt"
-	"regexp"
 	"sync"
 	"time"
 
@@ -211,18 +210,6 @@ func New(cfg Config, version string) *Metrics {
 	m.registry = prometheus.NewRegistry()
 
 	m.registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
-
-	m.registry.MustRegister(collectors.NewGoCollector(
-		collectors.WithGoCollectorMemStatsMetricsDisabled(),
-		collectors.WithGoCollectorRuntimeMetrics(
-			collectors.GoRuntimeMetricsRule{
-				Matcher: regexp.MustCompile(`^/gc/`),
-			},
-			collectors.GoRuntimeMetricsRule{
-				Matcher: regexp.MustCompile(`^/sched/`),
-			},
-		),
-	))
 
 	var registerer prometheus.Registerer
 	if cfg.Name != "" {
