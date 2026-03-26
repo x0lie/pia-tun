@@ -218,7 +218,7 @@ func startUserspace(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("start wireguard-go: %w", err)
 	}
 
-	if err := waitForInterface(ctx, ifaceName); err != nil {
+	if err := waitForInterface(ctx); err != nil {
 		out := strings.TrimSpace(wgOut.String())
 		if strings.Contains(out, "no such device") {
 			return "", fmt.Errorf("TUN kernel module not loaded (run 'sudo modprobe tun' on host)")
@@ -250,17 +250,17 @@ func ensureTUN() error {
 	return nil
 }
 
-// waitForInterface polls for the named interface to appear.
-func waitForInterface(ctx context.Context, name string) error {
+// waitForInterface polls and waits for the UAPI socket to appear
+func waitForInterface(ctx context.Context) error {
 	deadline := time.After(wgGoWaitTimeout)
 	for {
-		if exec.CommandContext(ctx, "ip", "link", "show", name).Run() == nil {
+		if _, err := os.Stat("/var/run/wireguard/" + ifaceName + ".sock"); err == nil {
 			logger.Debug("wireguard-go interface detected")
 			return nil
 		}
 		select {
 		case <-deadline:
-			return fmt.Errorf("interface %s did not appear within %s", name, wgGoWaitTimeout)
+			return fmt.Errorf("interface %s did not appear within %s", ifaceName, wgGoWaitTimeout)
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(wgGoWaitInterval):
@@ -334,7 +334,7 @@ func run(ctx context.Context, name string, args ...string) error {
 }
 
 func GetTransferBytes() (rx, tx int64, err error) {
-	cmd := exec.Command("wg", "show", "pia0", "transfer")
+	cmd := exec.Command("wg", "show", ifaceName, "transfer")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0, 0, err
@@ -364,7 +364,7 @@ func GetTransferBytes() (rx, tx int64, err error) {
 }
 
 func GetLastHandshake() int64 {
-	cmd := exec.Command("wg", "show", "pia0", "latest-handshakes")
+	cmd := exec.Command("wg", "show", ifaceName, "latest-handshakes")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0
