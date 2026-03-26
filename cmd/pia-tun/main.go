@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	_ "time/tzdata"
 
 	"github.com/x0lie/pia-tun/internal/app"
 )

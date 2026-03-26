@@ -141,10 +141,12 @@ func (m *manager) acquirePort(ctx context.Context) error {
 	}
 
 	m.log.Trace("Parsing initial signature response...")
-	port, expiresAt, err := parsePayload(resp.Payload)
+	port, expiresAtUTC, err := parsePayload(resp.Payload)
 	if err != nil {
 		return err
 	}
+
+	expiresAt := expiresAtUTC.Local()
 
 	m.log.Trace("Initial parsed values:")
 	m.log.Trace("  Port: %d", port)
