@@ -125,7 +125,7 @@ func Run(ctx context.Context, cache *Cache, piaUser string, piaPass string) erro
 			return ctx.Err()
 
 		case <-ticker.C:
-			logger.Debug("Starting scheduled refresh")
+			logger.Trace("Starting scheduled refresh")
 			var err error
 			for attempt := range 3 {
 				if err = refreshAll(ctx, logger, cfg, client, cache); err == nil {
