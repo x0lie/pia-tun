@@ -1,7 +1,5 @@
 FROM golang:1.23-alpine AS go-builder
 
-RUN apk add --no-cache git
-
 WORKDIR /build
 
 COPY go.mod go.sum ./
@@ -17,12 +15,11 @@ RUN cd cmd/pia-tun && \
     -o /build/pia-tun . 
 
 # Build wireguard-go for userspace fallback (pre-5.6 kernels without WireGuard module)
-RUN git clone --depth 1 https://github.com/WireGuard/wireguard-go /build/wireguard-go-src && \
-    cd /build/wireguard-go-src && \
-    CGO_ENABLED=0 go build \
+RUN CGO_ENABLED=0 go build \
     -ldflags="-w -s" \
     -trimpath \
-    -o /build/wireguard-go . 
+    -o /build/wireguard-go \
+    golang.zx2c4.com/wireguard
 
 FROM alpine:3.19
 
