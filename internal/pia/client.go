@@ -22,7 +22,7 @@ const (
 	authPath           = "/gtoken/generateToken"
 	serverListPath     = "/vpninfo/servers/v6"
 	addKeyPort         = "1337"
-	caCertPath         = "/app/ca.rsa.4096.crt"
+	caCertPath         = "/etc/pia-tun/ca.rsa.4096.crt"
 )
 
 // GenerateToken authenticates with PIA and returns a login token.

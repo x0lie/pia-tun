@@ -5,26 +5,24 @@ RUN apk add --no-cache git
 WORKDIR /build
 
 COPY go.mod go.sum ./
+RUN go mod download
 COPY cmd/pia-tun/ ./cmd/pia-tun/
 COPY internal/ ./internal/
 
 # Build single binary with maximum optimization
 RUN cd cmd/pia-tun && \
-    CGO_ENABLED=0 GOOS=linux go build \
-    -a -installsuffix cgo \
+    CGO_ENABLED=0 go build \
     -ldflags="-w -s" \
     -trimpath \
-    -o /build/pia-tun . && \
-    chmod +x /build/pia-tun
+    -o /build/pia-tun . 
 
 # Build wireguard-go for userspace fallback (pre-5.6 kernels without WireGuard module)
 RUN git clone --depth 1 https://github.com/WireGuard/wireguard-go /build/wireguard-go-src && \
     cd /build/wireguard-go-src && \
-    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
+    CGO_ENABLED=0 go build \
     -ldflags="-w -s" \
     -trimpath \
-    -o /build/wireguard-go . && \
-    chmod +x /build/wireguard-go
+    -o /build/wireguard-go . 
 
 FROM alpine:3.19
 
@@ -32,52 +30,27 @@ FROM alpine:3.19
 ARG VERSION=local
 ARG SHA=local
 
-# Install MINIMAL runtime dependencies
-RUN apk update && \
-    apk add --no-cache \
+# Install runtime dependencies
+RUN apk add --no-cache \
         bash \
         curl \
         wireguard-tools-wg \
         iptables \
         iptables-legacy \
-        iproute2-minimal \
-    && \
-    bash --version && \
+        iproute2-minimal && \
     wg --version && \
-    rm -rf \
-        /var/cache/apk/* \
-        /tmp/* \
-        /var/tmp/* \
-        /usr/share/man/* \
-        /usr/share/doc/* \
-        /usr/share/info/* \
-        /usr/share/licenses/* \
-        /usr/lib/python* \
-        /root/.cache \
-        /usr/lib*.a /usr/lib/*.la \
-    && \
     find /usr/bin /usr/sbin /bin /sbin -type f -executable \
         -exec strip --strip-all {} \; 2>/dev/null || true
 
-# Copy single Go binary and create symlinks (busybox-style dispatch)
+# Create pia-tun directories for forwarded port and PIA's CA
+RUN mkdir -p /run/pia-tun /etc/pia-tun
+
+# Copy Go binaries
 COPY --from=go-builder /build/pia-tun /usr/local/bin/pia-tun
-RUN ln -s pia-tun /usr/local/bin/monitor && \
-    ln -s pia-tun /usr/local/bin/cacher && \
-    ln -s pia-tun /usr/local/bin/portforward && \
-    ln -s pia-tun /usr/local/bin/proxy
 COPY --from=go-builder /build/wireguard-go /usr/local/bin/wireguard-go
 
 # Copy certificate
-COPY ca/rsa_4096.crt /app/ca.rsa.4096.crt
-
-WORKDIR /app
-
-RUN mkdir -p /etc/wireguard && \
-    mkdir -p /run/pia-tun
-
-# Set VERSION and SHA as environment variables for runtime
-ENV VERSION=${VERSION}
-ENV SHA=${SHA}
+COPY ca/rsa_4096.crt /etc/pia-tun/ca.rsa.4096.crt
 
 # OCI labels for container metadata (connects GHCR package to GitHub repo)
 LABEL org.opencontainers.image.title="pia-tun" \
@@ -89,10 +62,15 @@ LABEL org.opencontainers.image.title="pia-tun" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.vendor="x0lie"
 
+# Set VERSION and SHA as environment variables for runtime
+ENV VERSION=${VERSION} \
+    SHA=${SHA}
+
 ENV PIA_USER="" \
     PIA_PASS="" \
     PIA_LOCATIONS="all" \
     LOG_LEVEL=info \
+    TZ="" \
     WG_BACKEND="" \
     MTU="1420" \
     LOCAL_NETWORKS="" \
