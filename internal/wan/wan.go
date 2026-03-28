@@ -10,12 +10,9 @@ import (
 	"github.com/x0lie/pia-tun/internal/metrics"
 )
 
-type Checker struct {
-	DialTimeout  time.Duration
-	PollInterval time.Duration
-}
+const timeout = 5 * time.Second
 
-func (c *Checker) Check(ctx context.Context) bool {
+func Check(ctx context.Context) bool {
 	logger := log.New("wan")
 	logger.Trace("Checking WAN connectivity (bypass routes, parallel)")
 
@@ -29,7 +26,7 @@ func (c *Checker) Check(ctx context.Context) bool {
 	for _, ip := range firewall.WANCheckIPs {
 		go func(t string) {
 			addr := net.JoinHostPort(t, "13")
-			dialer := &net.Dialer{Timeout: 5 * time.Second}
+			dialer := &net.Dialer{Timeout: timeout}
 			conn, err := dialer.DialContext(ctx, "tcp", addr)
 			if err == nil {
 				conn.Close()
@@ -53,12 +50,12 @@ func (c *Checker) Check(ctx context.Context) bool {
 
 }
 
-func (c *Checker) WaitForUp(ctx context.Context, metrics *metrics.Metrics) error {
+func WaitForUp(ctx context.Context, metrics *metrics.Metrics) error {
 	log.Step("Testing WAN...")
 
 	downSince := time.Now()
 
-	if c.Check(ctx) {
+	if Check(ctx) {
 		log.Success("Internet up")
 		metrics.UpdateWANStatus(true)
 		return nil
@@ -72,7 +69,7 @@ func (c *Checker) WaitForUp(ctx context.Context, metrics *metrics.Metrics) error
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(1 * time.Second):
-			if c.Check(ctx) {
+			if Check(ctx) {
 				log.Success("Internet restored (down for %s)",
 					log.FormatDuration(time.Since(downSince)))
 				metrics.UpdateWANStatus(true)

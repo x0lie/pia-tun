@@ -41,7 +41,6 @@ type App struct {
 	cache    *cacher.Cache
 	resolver *dns.Resolver
 	metrics  *metrics.Metrics
-	wan      *wan.Checker
 	api      *api.Server
 	dotProxy *dns.Proxy
 }
@@ -54,7 +53,6 @@ func Run(ctx context.Context) error {
 		cfg:   LoadConfig(),
 		log:   log.New("app"),
 		cache: &cacher.Cache{},
-		wan:   &wan.Checker{},
 	}
 	a.logConfig()
 	if err := a.cfg.validate(); err != nil {
@@ -91,7 +89,7 @@ func Run(ctx context.Context) error {
 			log.Error(err.Error())
 
 			log.ReconnectingBanner()
-			a.wan.WaitForUp(ctx, a.metrics)
+			wan.WaitForUp(ctx, a.metrics)
 
 			if err := a.retryWithWANCheck(ctx, a.connect); err != nil {
 				log.Error(err.Error())
@@ -333,8 +331,8 @@ func (a *App) retryWithWANCheck(ctx context.Context, fn func(context.Context) er
 
 		// Non-fatal errors
 		log.Warning(err.Error())
-		if !a.wan.Check(ctx) {
-			a.wan.WaitForUp(ctx, a.metrics)
+		if !wan.Check(ctx) {
+			wan.WaitForUp(ctx, a.metrics)
 			delay = 5 * time.Second
 			continue
 		}
