@@ -83,12 +83,10 @@ func startContainer(t *testing.T, cfg app.Config) *container {
 
 	dns := cfg.DNSMode
 	switch dns {
-	case "do53", "dot":
+	case "do53", "dot", "system":
 		dns = strings.Join(cfg.DNS, ",")
-	case "pia":
-		dns = ""
 	default:
-		dns = "none"
+		dns = ""
 	}
 
 	if cfg.FW.LANs == "none" {
