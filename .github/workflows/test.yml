@@ -1,6 +1,5 @@
 name: Test
 
-# Run tests on pull requests only (develop.yml and release.yml handle push testing)
 on:
   push:
     branches: [ main ]
@@ -24,6 +23,7 @@ on:
       - 'renovate.json'
       - '.editorconfig'
       - '.vscode/**'
+  workflow_call:
 
 env:
   DOCKERHUB_USERNAME: x0lie
@@ -74,10 +74,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Build image for scanning
         run: docker build -t ${{ env.IMAGE_NAME }}:scan .
-
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
@@ -85,7 +83,7 @@ jobs:
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH,MEDIUM'
-          exit-code: '0'  # Don't fail on vulnerabilities (just report)
+          exit-code: '1'
 
       # Upload results to GitHub Security tab
       - name: Upload Trivy results to GitHub Security

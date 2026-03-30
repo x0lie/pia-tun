@@ -13,60 +13,14 @@ env:
 jobs:
   # Run tests before releasing
   test:
-    name: Run Tests Before Release
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Run integration tests
-        env:
-          PIA_USER: ${{ secrets.PIA_USER }}
-          PIA_PASS: ${{ secrets.PIA_PASS }}
-          PIA_LOCATIONS: "ca_ontario, ca_ontario-so, ca_toronto"
-          LOCAL_NETWORKS: "all"
-          PF_ENABLED: true
-          PORT_FILE: "/port"
-          PROXY_ENABLED: true
-          PROXY_USER: "user"
-          PROXY_PASS: "pass"
-          SOCKS5_PORT: "1081"
-          HTTP_PROXY_PORT: "8889"
-          METRICS_PORT: "9091"
-        run: go test -v -tags integration -timeout 5m ./tests/integration/...
-
-  # Security scan before releasing
-  security-scan:
-    name: Security Scan Before Release
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Build image for scanning
-        run: docker build -t ${{ env.IMAGE_NAME }}:scan .
-
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: '${{ env.IMAGE_NAME }}:scan'
-          format: 'table'
-          severity: 'CRITICAL,HIGH,MEDIUM'
-          exit-code: '1'  # Fail on critical/high vulnerabilities in releases
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
 
   # Build and push multi-arch images to Docker Hub and GHCR
   release:
     name: Build and Push to Registries
     runs-on: ubuntu-latest
-    needs: [test, security-scan]  # Only run if tests pass
+    needs: [test]  # Only run if tests pass
     permissions:
       contents: write         # Required for creating GitHub releases
       security-events: write  # Required to upload SARIF results to GitHub Security
@@ -171,18 +125,3 @@ jobs:
             See below for auto-generated changelog.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # Scan the published image with Trivy
-      - name: Scan published image
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: '${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }}'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH,MEDIUM'
-
-      - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v4
-        if: always()
-        with:
-          sarif_file: 'trivy-results.sarif'

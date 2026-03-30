@@ -22,54 +22,8 @@ env:
 jobs:
   # Run tests
   test:
-    name: Run Tests
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Run integration tests
-        env:
-          PIA_USER: ${{ secrets.PIA_USER }}
-          PIA_PASS: ${{ secrets.PIA_PASS }}
-          PIA_LOCATIONS: "ca_ontario, ca_ontario-so, ca_toronto"
-          LOCAL_NETWORKS: "all"
-          PF_ENABLED: true
-          PORT_FILE: "/port"
-          PROXY_ENABLED: true
-          PROXY_USER: "user"
-          PROXY_PASS: "pass"
-          SOCKS5_PORT: "1081"
-          HTTP_PROXY_PORT: "8889"
-          METRICS_PORT: "9091"
-        run: go test -v -tags integration -timeout 5m ./tests/integration/...
-
-  # Security scan (non-blocking for develop)
-  security-scan:
-    name: Security Scan
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Build image for scanning
-        run: docker build -t ${{ env.IMAGE_NAME }}:scan .
-
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: '${{ env.IMAGE_NAME }}:scan'
-          format: 'table'
-          severity: 'CRITICAL,HIGH,MEDIUM'
-          exit-code: '0'  # Don't fail develop builds on vulnerabilities (warn only)
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
 
   # Build and push multi-arch image to Docker Hub and GHCR with :develop tag
   build-and-push:
