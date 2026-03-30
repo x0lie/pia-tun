@@ -24,6 +24,10 @@ jobs:
   test:
     uses: ./.github/workflows/test.yml
     secrets: inherit
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
 
   # Build and push multi-arch image to Docker Hub and GHCR with :develop tag
   build-and-push:
