@@ -26,15 +26,18 @@ const (
 type upstream struct {
 	addr   string // "ip:port"
 	tlsCfg *tls.Config
-	mu     sync.Mutex // serializes queries; conn is reused across calls
-	conn   *tls.Conn
+	mu     sync.Mutex               // serializes queries; conn is reused across calls
+	conn   atomic.Pointer[tls.Conn] // nil when not connected; closed directly by CloseUpstreams
 }
 
 type Proxy struct {
-	rawServers []string
-	upstreams  []*upstream
-	resolver   *Resolver
-	log        *log.Logger
+	rawServers  []string
+	upstreams   []*upstream
+	resolver    *Resolver
+	log         *log.Logger
+	dialMu      sync.RWMutex
+	dialsCtx    context.Context
+	cancelDials context.CancelFunc
 }
 
 func New(rawServers []string, r *Resolver) *Proxy {
@@ -63,7 +66,7 @@ func (p *Proxy) Setup(ctx context.Context) error {
 // Goroutines continue until ctx is cancelled.
 func (p *Proxy) start(ctx context.Context) error {
 	var idx atomic.Uint64
-	handle := func(query []byte) []byte { return p.dispatch(p.upstreams, &idx, query) }
+	handle := func(ctx context.Context, query []byte) []byte { return p.dispatch(ctx, p.upstreams, &idx, query) }
 
 	readyCh := make(chan struct{}, 2)
 	errCh := make(chan error, 2)
@@ -79,6 +82,8 @@ func (p *Proxy) start(ctx context.Context) error {
 			ready++
 		}
 	}
+
+	p.dialsCtx, p.cancelDials = context.WithCancel(context.Background())
 
 	if err := Write([]string{proxyIP}); err != nil {
 		p.CloseUpstreams()
@@ -120,18 +125,26 @@ func (p *Proxy) Display() string {
 }
 
 func (p *Proxy) CloseUpstreams() {
+	// Cancel in-flight dials so forwardDoT exits DialContext immediately.
+	// Reset so the proxy remains functional after reconnect.
+	p.dialMu.Lock()
+	if p.cancelDials != nil {
+		p.cancelDials()
+		p.dialsCtx, p.cancelDials = context.WithCancel(context.Background())
+	}
+	p.dialMu.Unlock()
+
+	// Close connections directly without acquiring u.mu — this immediately unblocks
+	// any forwardDoT goroutine blocked in readMsg/writeMsg.
 	for _, u := range p.upstreams {
-		u.mu.Lock()
-		if u.conn != nil {
-			u.conn.Close()
-			u.conn = nil
+		if conn := u.conn.Swap(nil); conn != nil {
+			conn.Close()
 		}
-		u.mu.Unlock()
 	}
 }
 
 // serveUDP listens for DNS queries over UDP and dispatches them.
-func serveUDP(ctx context.Context, readyCh chan<- struct{}, handle func([]byte) []byte) error {
+func serveUDP(ctx context.Context, readyCh chan<- struct{}, handle func(context.Context, []byte) []byte) error {
 	pc, err := net.ListenPacket("udp", proxyAddr)
 	if err != nil {
 		return err
@@ -161,7 +174,7 @@ func serveUDP(ctx context.Context, readyCh chan<- struct{}, handle func([]byte) 
 		query := make([]byte, n)
 		copy(query, buf[:n])
 		go func(q []byte, a net.Addr) {
-			resp := handle(q)
+			resp := handle(ctx, q)
 			if resp != nil {
 				pc.WriteTo(resp, a)
 			}
@@ -170,7 +183,7 @@ func serveUDP(ctx context.Context, readyCh chan<- struct{}, handle func([]byte) 
 }
 
 // serveTCP listens for DNS queries over TCP and dispatches them.
-func serveTCP(ctx context.Context, readyCh chan<- struct{}, handle func([]byte) []byte) error {
+func serveTCP(ctx context.Context, readyCh chan<- struct{}, handle func(context.Context, []byte) []byte) error {
 	ln, err := net.Listen("tcp", proxyAddr)
 	if err != nil {
 		return err
@@ -196,11 +209,11 @@ func serveTCP(ctx context.Context, readyCh chan<- struct{}, handle func([]byte) 
 			}
 			return err
 		}
-		go handleTCPConn(conn, handle)
+		go handleTCPConn(ctx, conn, handle)
 	}
 }
 
-func handleTCPConn(conn net.Conn, handle func([]byte) []byte) {
+func handleTCPConn(ctx context.Context, conn net.Conn, handle func(context.Context, []byte) []byte) {
 	defer conn.Close()
 	for {
 		conn.SetDeadline(time.Now().Add(queryTimeout))
@@ -208,7 +221,7 @@ func handleTCPConn(conn net.Conn, handle func([]byte) []byte) {
 		if err != nil {
 			return
 		}
-		resp := handle(query)
+		resp := handle(ctx, query)
 		if resp == nil {
 			return
 		}
@@ -219,14 +232,21 @@ func handleTCPConn(conn net.Conn, handle func([]byte) []byte) {
 }
 
 // dispatch forwards a raw DNS query to an upstream server, trying each in round-robin order.
-func (p *Proxy) dispatch(upstreams []*upstream, idx *atomic.Uint64, query []byte) []byte {
+func (p *Proxy) dispatch(_ context.Context, upstreams []*upstream, idx *atomic.Uint64, query []byte) []byte {
+	p.dialMu.RLock()
+	dialCtx := p.dialsCtx
+	p.dialMu.RUnlock()
+
 	n := len(upstreams)
 	start := int(idx.Add(1)-1) % n
 
 	for i := 0; i < n; i++ {
 		u := upstreams[(start+i)%n]
-		resp, err := u.forwardDoT(query)
+		resp, err := u.forwardDoT(dialCtx, query)
 		if err != nil {
+			if dialCtx.Err() != nil {
+				break
+			}
 			p.log.Trace("Upstream %s failed: %v", u.addr, err)
 			continue
 		}
@@ -239,28 +259,33 @@ func (p *Proxy) dispatch(upstreams []*upstream, idx *atomic.Uint64, query []byte
 // forwardDoT sends a DNS query over a persistent TLS connection.
 // On a stale connection (write or read error), reconnects once and retries.
 // Queries to the same upstream are serialized via mu.
-func (u *upstream) forwardDoT(query []byte) ([]byte, error) {
+func (u *upstream) forwardDoT(dialCtx context.Context, query []byte) ([]byte, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
 	for attempt := 0; attempt < 2; attempt++ {
-		if u.conn == nil {
-			conn, err := tls.DialWithDialer(&net.Dialer{Timeout: queryTimeout}, "tcp", u.addr, u.tlsCfg)
+		conn := u.conn.Load()
+		if conn == nil {
+			c, err := (&tls.Dialer{
+				NetDialer: &net.Dialer{Timeout: queryTimeout},
+				Config:    u.tlsCfg,
+			}).DialContext(dialCtx, "tcp", u.addr)
 			if err != nil {
 				return nil, err
 			}
-			u.conn = conn
+			conn = c.(*tls.Conn)
+			u.conn.Store(conn)
 		}
-		u.conn.SetDeadline(time.Now().Add(queryTimeout))
-		if err := writeMsg(u.conn, query); err != nil {
-			u.conn.Close()
-			u.conn = nil
+		conn.SetDeadline(time.Now().Add(queryTimeout))
+		if err := writeMsg(conn, query); err != nil {
+			u.conn.Store(nil)
+			conn.Close()
 			continue
 		}
-		resp, err := readMsg(u.conn)
+		resp, err := readMsg(conn)
 		if err != nil {
-			u.conn.Close()
-			u.conn = nil
+			u.conn.Store(nil)
+			conn.Close()
 			continue
 		}
 		return resp, nil
