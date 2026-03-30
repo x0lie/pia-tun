@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	ifaceName           = "pia0"
+	IfaceName           = "pia0"
 	fwmark              = 51820
 	routingTable        = 51820
 	persistentKeepalive = 25
@@ -66,7 +66,7 @@ func Up(ctx context.Context, cfg Config) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("create interface: %w", err)
 	}
-	logger.Debug("Interface created (%s)", ifaceName)
+	logger.Debug("Interface created (%s)", IfaceName)
 
 	// Clean up on any subsequent failure
 	defer func() {
@@ -77,7 +77,7 @@ func Up(ctx context.Context, cfg Config) (string, error) {
 	}()
 
 	// Set private key via /dev/stdin to avoid writing key to disk
-	setKeyCmd := exec.CommandContext(ctx, "wg", "set", ifaceName, "private-key", "/dev/stdin")
+	setKeyCmd := exec.CommandContext(ctx, "wg", "set", IfaceName, "private-key", "/dev/stdin")
 	setKeyCmd.Stdin = strings.NewReader(cfg.PrivateKey)
 	var setKeyStderr bytes.Buffer
 	setKeyCmd.Stderr = &setKeyStderr
@@ -91,14 +91,14 @@ func Up(ctx context.Context, cfg Config) (string, error) {
 	logger.Debug("Private key set")
 
 	// Configure address
-	if err := run(ctx, "ip", "address", "add", cfg.PeerIP+"/32", "dev", ifaceName); err != nil {
+	if err := run(ctx, "ip", "address", "add", cfg.PeerIP+"/32", "dev", IfaceName); err != nil {
 		return "", fmt.Errorf("add address: %w", err)
 	}
 	logger.Debug("Address configured: %s", cfg.PeerIP)
 
 	// Set MTU
 	mtu := max(cfg.MTU, 1280)
-	if err := run(ctx, "ip", "link", "set", "mtu", strconv.Itoa(mtu), "dev", ifaceName); err != nil {
+	if err := run(ctx, "ip", "link", "set", "mtu", strconv.Itoa(mtu), "dev", IfaceName); err != nil {
 		return "", fmt.Errorf("set MTU: %w", err)
 	}
 	logger.Debug("MTU set (%v)", mtu)
@@ -110,7 +110,7 @@ func Up(ctx context.Context, cfg Config) (string, error) {
 
 	// Set fwmark BEFORE peer config to prevent routing loops
 	fwmarkStr := strconv.Itoa(fwmark)
-	if err := run(ctx, "wg", "set", ifaceName, "fwmark", fwmarkStr); err != nil {
+	if err := run(ctx, "wg", "set", IfaceName, "fwmark", fwmarkStr); err != nil {
 		return "", fmt.Errorf("set fwmark: %w", err)
 	}
 	logger.Debug("Fwmark set (%d)", fwmark)
@@ -120,7 +120,7 @@ func Up(ctx context.Context, cfg Config) (string, error) {
 	if cfg.IPv6Enabled {
 		allowedIPs = "0.0.0.0/0, ::/0"
 	}
-	if err := run(ctx, "wg", "set", ifaceName,
+	if err := run(ctx, "wg", "set", IfaceName,
 		"peer", cfg.PeerPublicKey,
 		"endpoint", cfg.Endpoint,
 		"allowed-ips", allowedIPs,
@@ -131,10 +131,10 @@ func Up(ctx context.Context, cfg Config) (string, error) {
 	logger.Debug("Peer configured: endpoint: %s", cfg.Endpoint)
 
 	// Bring interface up
-	if err := run(ctx, "ip", "link", "set", ifaceName, "up"); err != nil {
+	if err := run(ctx, "ip", "link", "set", IfaceName, "up"); err != nil {
 		return "", fmt.Errorf("bring up interface: %w", err)
 	}
-	logger.Debug("%s set up", ifaceName)
+	logger.Debug("%s set up", IfaceName)
 
 	// Check sysctl if rp_filter == 1 (causes dropped handshakes)
 	if err := checkRPFilter(ctx); err != nil {
@@ -143,7 +143,7 @@ func Up(ctx context.Context, cfg Config) (string, error) {
 
 	// Add VPN route to separate table
 	tableStr := strconv.Itoa(routingTable)
-	if err := run(ctx, "ip", "route", "add", "0.0.0.0/0", "dev", ifaceName, "table", tableStr); err != nil {
+	if err := run(ctx, "ip", "route", "add", "0.0.0.0/0", "dev", IfaceName, "table", tableStr); err != nil {
 		return "", fmt.Errorf("add VPN route: %w", err)
 	}
 	logger.Debug("Added VPN route to table %d", routingTable)
@@ -165,14 +165,14 @@ func Up(ctx context.Context, cfg Config) (string, error) {
 // kills any userspace wireguard-go process. Safe to call even if Up was
 // never called or failed partway through. All operations are best-effort.
 func Down(ctx context.Context) {
-	run(ctx, "ip", "link", "set", ifaceName, "down")
-	logger.Debug("%s set down", ifaceName)
-	run(ctx, "ip", "link", "del", ifaceName)
-	logger.Debug("%s deleted", ifaceName)
+	run(ctx, "ip", "link", "set", IfaceName, "down")
+	logger.Debug("%s set down", IfaceName)
+	run(ctx, "ip", "link", "del", IfaceName)
+	logger.Debug("%s deleted", IfaceName)
 
 	// Kill wireguard-go if running (userspace mode)
-	exec.CommandContext(ctx, "pkill", "-f", "wireguard-go "+ifaceName).Run()
-	os.Remove("/var/run/wireguard/" + ifaceName + ".sock")
+	exec.CommandContext(ctx, "pkill", "-f", "wireguard-go "+IfaceName).Run()
+	os.Remove("/var/run/wireguard/" + IfaceName + ".sock")
 
 	cleanupRoutingRules(ctx)
 }
@@ -182,7 +182,7 @@ func Down(ctx context.Context) {
 func createInterface(ctx context.Context, backend string) (string, error) {
 	switch backend {
 	case "kernel":
-		if err := run(ctx, "ip", "link", "add", ifaceName, "type", "wireguard"); err != nil {
+		if err := run(ctx, "ip", "link", "add", IfaceName, "type", "wireguard"); err != nil {
 			return "", fmt.Errorf("kernel WireGuard unavailable (WG_BACKEND=kernel): %w", err)
 		}
 		logger.Debug("Using kernel WireGuard")
@@ -194,7 +194,7 @@ func createInterface(ctx context.Context, backend string) (string, error) {
 
 	default:
 		// Auto-detect: try kernel first
-		if err := run(ctx, "ip", "link", "add", ifaceName, "type", "wireguard"); err == nil {
+		if err := run(ctx, "ip", "link", "add", IfaceName, "type", "wireguard"); err == nil {
 			logger.Debug("Using kernel WireGuard")
 			return "kernel", nil
 		}
@@ -210,7 +210,7 @@ func startUserspace(ctx context.Context) (string, error) {
 	}
 
 	logger.Debug("Starting wireguard-go daemon")
-	cmd := exec.CommandContext(ctx, "wireguard-go", ifaceName)
+	cmd := exec.CommandContext(ctx, "wireguard-go", IfaceName)
 	var wgOut bytes.Buffer
 	cmd.Stdout = &wgOut
 	cmd.Stderr = &wgOut
@@ -254,13 +254,13 @@ func ensureTUN() error {
 func waitForInterface(ctx context.Context) error {
 	deadline := time.After(wgGoWaitTimeout)
 	for {
-		if _, err := os.Stat("/var/run/wireguard/" + ifaceName + ".sock"); err == nil {
+		if _, err := os.Stat("/var/run/wireguard/" + IfaceName + ".sock"); err == nil {
 			logger.Debug("wireguard-go interface detected")
 			return nil
 		}
 		select {
 		case <-deadline:
-			return fmt.Errorf("interface %s did not appear within %s", ifaceName, wgGoWaitTimeout)
+			return fmt.Errorf("interface %s did not appear within %s", IfaceName, wgGoWaitTimeout)
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(wgGoWaitInterval):
@@ -334,7 +334,7 @@ func run(ctx context.Context, name string, args ...string) error {
 }
 
 func GetTransferBytes() (rx, tx int64, err error) {
-	cmd := exec.Command("wg", "show", ifaceName, "transfer")
+	cmd := exec.Command("wg", "show", IfaceName, "transfer")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0, 0, err
@@ -364,7 +364,7 @@ func GetTransferBytes() (rx, tx int64, err error) {
 }
 
 func GetLastHandshake() int64 {
-	cmd := exec.Command("wg", "show", ifaceName, "latest-handshakes")
+	cmd := exec.Command("wg", "show", IfaceName, "latest-handshakes")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0

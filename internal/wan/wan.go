@@ -10,7 +10,7 @@ import (
 	"github.com/x0lie/pia-tun/internal/metrics"
 )
 
-const timeout = 5 * time.Second
+const Timeout = 5 * time.Second
 
 func Check(ctx context.Context) bool {
 	logger := log.New("wan")
@@ -26,7 +26,7 @@ func Check(ctx context.Context) bool {
 	for _, ip := range firewall.WANCheckIPs {
 		go func(t string) {
 			addr := net.JoinHostPort(t, "13")
-			dialer := &net.Dialer{Timeout: timeout}
+			dialer := &net.Dialer{Timeout: Timeout}
 			conn, err := dialer.DialContext(ctx, "tcp", addr)
 			if err == nil {
 				conn.Close()

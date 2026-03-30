@@ -20,19 +20,27 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
 
-      - name: Run test suite
+      - name: Run integration tests
         env:
           PIA_USER: ${{ secrets.PIA_USER }}
           PIA_PASS: ${{ secrets.PIA_PASS }}
-          PIA_LOCATIONS: ca_ontario,ca_toronto
+          PIA_LOCATIONS: "ca_ontario, ca_ontario-so, ca_toronto"
+          LOCAL_NETWORKS: "all"
           PF_ENABLED: true
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}:test
-        run: |
-          chmod +x testing/test.sh
-          ./testing/test.sh
+          PORT_FILE: "/port"
+          PROXY_ENABLED: true
+          PROXY_USER: "user"
+          PROXY_PASS: "pass"
+          SOCKS5_PORT: "1081"
+          HTTP_PROXY_PORT: "8889"
+          METRICS_PORT: "9091"
+        run: go test -v -tags integration -timeout 5m ./tests/integration/...
 
   # Security scan before releasing
   security-scan:

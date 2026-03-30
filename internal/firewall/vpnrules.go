@@ -17,7 +17,7 @@ const (
 	chainExempt   = "VPN_EXEMPTIONS"
 )
 
-var portForwardComments = []string{"port_forward_tcp", "port_forward_udp"}
+var PortForwardComments = []string{"port_forward_tcp", "port_forward_udp"}
 
 type Exemption struct {
 	IP, Port, Proto, Comment string
@@ -30,8 +30,8 @@ func (fw *Firewall) createExemptChain() error {
 	}
 
 	// Wire into parent VPN_OUT
-	if err := fw.ipt4.Insert(tableFilter, chainOut, 1, "-j", chainExempt); err != nil {
-		fw.log.Debug("Failed to insert %s into %s: %s", chainExempt, chainOut, err)
+	if err := fw.ipt4.Insert(tableFilter, ChainOut, 1, "-j", chainExempt); err != nil {
+		fw.log.Debug("Failed to insert %s into %s: %s", chainExempt, ChainOut, err)
 	}
 	return nil
 }
@@ -83,7 +83,7 @@ func (fw *Firewall) AddExemptions(specs ...Exemption) error {
 
 func (fw *Firewall) RemoveExemptions() {
 	fw.log.Debug("Removing exemptions")
-	fw.ipt4.Delete(tableFilter, chainOut, "-j", chainExempt)
+	fw.ipt4.Delete(tableFilter, ChainOut, "-j", chainExempt)
 	fw.ipt4.ClearAndDeleteChain(tableFilter, chainExempt)
 }
 
@@ -93,16 +93,16 @@ func (fw *Firewall) addVPN(ipv6Enabled bool) error {
 	fwmarkComment := "vpn_fwmark"
 
 	fwmarkSpec := []string{"-m", "mark", "--mark", fwmark, "-m", "comment", "--comment", fwmarkComment, "-j", "ACCEPT"}
-	if err := fw.ipt4.Insert(tableFilter, chainOut, vpnInsertPos, fwmarkSpec...); err != nil {
+	if err := fw.ipt4.Insert(tableFilter, ChainOut, vpnInsertPos, fwmarkSpec...); err != nil {
 		return fmt.Errorf("insert VPN interface rule: %w", err)
 	}
-	fw.log.Debug("fwmark ACCEPT added to %s", chainOut)
+	fw.log.Debug("fwmark ACCEPT added to %s", ChainOut)
 
 	ifaceSpec := []string{"-o", "pia0", "-m", "comment", "--comment", ifaceComment, "-j", "ACCEPT"}
-	if err := fw.ipt4.Insert(tableFilter, chainOut, vpnInsertPos, ifaceSpec...); err != nil {
+	if err := fw.ipt4.Insert(tableFilter, ChainOut, vpnInsertPos, ifaceSpec...); err != nil {
 		return fmt.Errorf("insert VPN interface rule: %w", err)
 	}
-	fw.log.Debug("pia0 ACCEPT added to %s", chainOut)
+	fw.log.Debug("pia0 ACCEPT added to %s", ChainOut)
 
 	if ipv6Enabled {
 		ifaceSpec6 := []string{"-o", "pia0", "-m", "comment", "--comment", ifaceComment, "-j", "ACCEPT"}
@@ -128,7 +128,7 @@ func (fw *Firewall) AllowForwardedPort(port int) error {
 			"-j", "ACCEPT",
 			"-m", "comment", "--comment", comment,
 		}
-		if err := fw.ipt4.Insert(tableFilter, chainIn, portInsertPos, spec...); err != nil {
+		if err := fw.ipt4.Insert(tableFilter, ChainIn, portInsertPos, spec...); err != nil {
 			return fmt.Errorf("insert port forward rule: %w", err)
 		}
 	}
@@ -139,7 +139,7 @@ func (fw *Firewall) AllowForwardedPort(port int) error {
 
 // RemoveForwardedPort removes all port forwarding rules from VPN_IN.
 func (fw *Firewall) RemoveForwardedPort() {
-	fw.removeVPNRulesByComment(fw.ipt4Cmd, chainIn, portForwardComments)
+	fw.removeVPNRulesByComment(fw.ipt4Cmd, ChainIn, PortForwardComments)
 }
 
 // removeVPNRulesByComment finds rules containing any of the given comments

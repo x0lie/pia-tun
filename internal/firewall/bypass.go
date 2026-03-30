@@ -8,7 +8,7 @@ import (
 
 const (
 	bypassPriority = 50
-	bypassComment  = "bypass_routes"
+	BypassComment  = "bypass_routes"
 )
 
 // CheckIPs are the NIST/NCAR time servers used for WAN connectivity checks.
@@ -66,9 +66,9 @@ func (fw *Firewall) insertBypassRules() error {
 		spec := []string{
 			"-p", "tcp", "--dport", "13",
 			"-d", ip, "-j", "ACCEPT",
-			"-m", "comment", "--comment", bypassComment,
+			"-m", "comment", "--comment", BypassComment,
 		}
-		if err := fw.insertBeforeDrop(fw.ipt4, chainOut, spec...); err != nil {
+		if err := fw.insertBeforeDrop(fw.ipt4, ChainOut, spec...); err != nil {
 			return fmt.Errorf("insert bypass rule for %s: %w", ip, err)
 		}
 	}

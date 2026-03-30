@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	chainIn   = "VPN_IN"
-	chainOut  = "VPN_OUT"
+	ChainIn   = "VPN_IN"
+	ChainOut  = "VPN_OUT"
 	chainIn6  = "VPN_IN6"
 	chainOut6 = "VPN_OUT6"
 )
@@ -24,8 +24,8 @@ type chainDef struct {
 
 func (fw *Firewall) chainDefs() []chainDef {
 	return []chainDef{
-		{chainIn, "INPUT", fw.ipt4, "-i"},
-		{chainOut, "OUTPUT", fw.ipt4, "-o"},
+		{ChainIn, "INPUT", fw.ipt4, "-i"},
+		{ChainOut, "OUTPUT", fw.ipt4, "-o"},
 		{chainIn6, "INPUT", fw.ipt6, "-i"},
 		{chainOut6, "OUTPUT", fw.ipt6, "-o"},
 	}
@@ -124,10 +124,10 @@ func (fw *Firewall) verifyKillswitch() error {
 
 // checkChainsPresent verifies all 4 chains have DROP rules and are wired into their parents.
 func (fw *Firewall) checkChainsPresent() bool {
-	return chainHasDrop(fw.ipt4, chainIn) &&
-		chainIsInParent(fw.ipt4, "INPUT", chainIn) &&
-		chainHasDrop(fw.ipt4, chainOut) &&
-		chainIsInParent(fw.ipt4, "OUTPUT", chainOut) &&
+	return chainHasDrop(fw.ipt4, ChainIn) &&
+		chainIsInParent(fw.ipt4, "INPUT", ChainIn) &&
+		chainHasDrop(fw.ipt4, ChainOut) &&
+		chainIsInParent(fw.ipt4, "OUTPUT", ChainOut) &&
 		chainHasDrop(fw.ipt6, chainIn6) &&
 		chainIsInParent(fw.ipt6, "INPUT", chainIn6) &&
 		chainHasDrop(fw.ipt6, chainOut6) &&

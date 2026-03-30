@@ -73,11 +73,11 @@ func (fw *Firewall) setupLocalRules(lansV4, lansV6 []string) error {
 	// IPv4 local networks → VPN_IN and VPN_OUT
 	if len(lansV4) > 0 {
 		for _, network := range lansV4 {
-			if err := fw.insertBeforeDrop(fw.ipt4, chainIn, "-s", network, "-j", "ACCEPT"); err != nil {
-				return fmt.Errorf("%s local network %s: %w", chainIn, network, err)
+			if err := fw.insertBeforeDrop(fw.ipt4, ChainIn, "-s", network, "-j", "ACCEPT"); err != nil {
+				return fmt.Errorf("%s local network %s: %w", ChainIn, network, err)
 			}
-			if err := fw.insertBeforeDrop(fw.ipt4, chainOut, "-d", network, "-j", "ACCEPT"); err != nil {
-				return fmt.Errorf("%s local network %s: %w", chainOut, network, err)
+			if err := fw.insertBeforeDrop(fw.ipt4, ChainOut, "-d", network, "-j", "ACCEPT"); err != nil {
+				return fmt.Errorf("%s local network %s: %w", ChainOut, network, err)
 			}
 		}
 	}

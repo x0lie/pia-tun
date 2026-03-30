@@ -56,7 +56,7 @@ func Run(ctx context.Context, cfg *Config, metrics *metrics.Metrics, serverIP st
 	}
 }
 
-const timeout = 3 * time.Second
+const Timeout = 3 * time.Second
 
 func (m *Monitor) performCheck(ctx context.Context) error {
 	var serverLatencyChan chan float64
@@ -74,7 +74,7 @@ func (m *Monitor) performCheck(ctx context.Context) error {
 	}
 
 	// Normal health check
-	duration, err := m.checkConnectivity(ctx, timeout)
+	duration, err := m.checkConnectivity(ctx, Timeout)
 
 	if m.metrics.Enabled() {
 		m.metrics.RecordCheck(err == nil, duration)
@@ -105,7 +105,7 @@ func (m *Monitor) performRapidChecks(ctx context.Context) error {
 
 	recovered := false
 	failureStart := time.Now()
-	t := timeout
+	t := Timeout
 
 	for {
 		if ctx.Err() != nil {
@@ -187,7 +187,7 @@ func (m *Monitor) checkConnectivity(ctx context.Context, timeout time.Duration) 
 }
 
 func (m *Monitor) checkServerLatency(ctx context.Context, serverIP string) float64 {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
 
 	start := time.Now()
