@@ -24,7 +24,7 @@ RUN cd cmd/proxy && \
     # Make them executable HERE (not after COPY)
     chmod +x /build/proxy /build/monitor /build/portforward
 
-FROM alpine:3.19
+FROM alpine:3.23
 
 # Install MINIMAL runtime dependencies
 RUN apk update && \
