@@ -1,4 +1,4 @@
-FROM golang:1.23-alpine AS go-builder
+FROM golang:1.26.1-alpine3.23 AS go-builder
 
 WORKDIR /build
 
@@ -21,7 +21,7 @@ RUN CGO_ENABLED=0 go build \
     -o /build/wireguard-go \
     golang.zx2c4.com/wireguard
 
-FROM alpine:3.19
+FROM alpine:3.23.3
 
 # Accept version from build stage
 ARG VERSION=local
