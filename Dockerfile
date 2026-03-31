@@ -28,7 +28,7 @@ ARG VERSION=local
 ARG SHA=local
 
 # Install runtime dependencies
-RUN apk add --no-cache \
+RUN apk upgrade --no-cache && apk add --no-cache \
         bash \
         curl \
         wireguard-tools-wg \
