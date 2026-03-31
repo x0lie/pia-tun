@@ -103,7 +103,7 @@ jobs:
       - name: Build image for scanning
         run: docker build -t ${{ env.IMAGE_NAME }}:scan .
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: '${{ env.IMAGE_NAME }}:scan'
           format: 'sarif'
@@ -121,7 +121,7 @@ jobs:
 
       # Also show results in action log
       - name: Run Trivy (table output)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: '${{ env.IMAGE_NAME }}:scan'
           format: 'table'
