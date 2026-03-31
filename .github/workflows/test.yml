@@ -1,0 +1,102 @@
+name: Test
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.gitattributes'
+      - 'renovate.json'
+      - '.editorconfig'
+      - '.vscode/**'
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.gitattributes'
+      - 'renovate.json'
+      - '.editorconfig'
+      - '.vscode/**'
+  workflow_call:
+
+env:
+  DOCKERHUB_USERNAME: x0lie
+  IMAGE_NAME: pia-tun
+
+jobs:
+  test:
+    name: Run Test Suite
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Run the test suite
+      - name: Run integration tests
+        env:
+          PIA_USER: ${{ secrets.PIA_USER }}
+          PIA_PASS: ${{ secrets.PIA_PASS }}
+          PIA_LOCATIONS: "ca_ontario, ca_ontario-so, ca_toronto"
+          LOCAL_NETWORKS: "all"
+          PF_ENABLED: true
+          PORT_FILE: "/port"
+          PROXY_ENABLED: true
+          PROXY_USER: "user"
+          PROXY_PASS: "pass"
+          SOCKS5_PORT: "1081"
+          HTTP_PROXY_PORT: "8889"
+          METRICS_PORT: "9091"
+        run: go test -v -tags integration -timeout 5m ./tests/integration/...
+
+  # Security scan with Trivy
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write  # Required to upload SARIF results to GitHub Security
+      contents: read          # Required to checkout code
+      actions: read           # Required to access workflow run information
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Build image for scanning
+        run: docker build -t ${{ env.IMAGE_NAME }}:scan .
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ env.IMAGE_NAME }}:scan'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          ignore-unfixed: true
+          exit-code: '1'
+
+      # Upload results to GitHub Security tab
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      # Also show results in action log
+      - name: Run Trivy (table output)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ env.IMAGE_NAME }}:scan'
+          format: 'table'
+          severity: 'CRITICAL,HIGH,MEDIUM'

@@ -1,0 +1,36 @@
+# Auto-label PRs based on changed files
+# Labels feed into .github/release.yml for changelog generation
+# CI/CD & Automation
+
+ci:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '.github/**'
+      - 'renovate.json'
+
+dependencies:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'go.mod'
+      - 'go.sum'
+
+docs:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/*.md'
+      - 'docs/**'
+
+# Chore (non-functional)
+chore:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '.gitignore'
+      - '.gitattributes'
+      - '.editorconfig'
+      - '.dockerignore'
+      - 'LICENSE'
+
+testing:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'testing/**'

@@ -1,0 +1,32 @@
+name: DockerHub-Readme
+
+# Triggers on changes to the README.md on the main branch
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'README.md'
+      - 'docs/**'
+      - '.github/workflows/readme.yml'
+  workflow_dispatch:
+
+env:
+  DOCKERHUB_USERNAME: x0lie
+  IMAGE_NAME: pia-tun
+
+jobs:
+  sync-description:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Update Docker Hub Description
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
+          readme-filepath: ./README.md
+          enable-url-completion: true

@@ -1,0 +1,105 @@
+name: Develop Branch CI/CD
+
+# Trigger on pushes to develop branch (but skip docs-only changes)
+on:
+  push:
+    branches:
+      - develop
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.gitattributes'
+      - 'renovate.json'
+      - '.editorconfig'
+      - '.vscode/**'
+
+env:
+  DOCKERHUB_USERNAME: x0lie
+  IMAGE_NAME: pia-tun
+
+jobs:
+  # Run tests
+  test:
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+
+  # Build and push multi-arch image to Docker Hub and GHCR with :develop tag
+  build-and-push:
+    name: Build and Push to Registries
+    runs-on: ubuntu-latest
+    needs: [test]  # Only run if tests pass (skip security-scan dependency for faster feedback)
+    permissions:
+      contents: read      # Required to checkout code
+      packages: write     # Required to push to ghcr.io
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Get commit SHA (full version)
+      - name: Get commit SHA
+        id: sha
+        run: echo "FULL_SHA=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+      # Set up QEMU for multi-arch builds
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # Set up Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Login to Docker Hub
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Login to GitHub Container Registry
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build and push amd64 image with :develop tag to both registries
+      - name: Build and push develop image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            VERSION=develop
+            SHA=${{ steps.sha.outputs.FULL_SHA }}
+          tags: |
+            ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:develop
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:develop
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Add a summary
+      - name: Job Summary
+        run: |
+          echo "## ✅ Develop Image Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Docker Hub:**" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:develop" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**GitHub Container Registry:**" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:develop" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Platform**: linux/amd64 only (multi-arch in releases)" >> $GITHUB_STEP_SUMMARY
