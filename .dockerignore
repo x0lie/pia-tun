@@ -2,6 +2,7 @@
 .github/
 .gitignore
 README.md
+CONTRIBUTING.md
 PROJECT_STRUCTURE.md
 Dockerfile
 docker-compose/
