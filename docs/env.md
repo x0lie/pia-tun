@@ -22,10 +22,14 @@
 | `DNS`            | Supports `pia`, `system`, DoT (e.g., `tls://one.one.one.one,dns.mullvad.net`), or Do53 (e.g., `1.1.1.1,8.8.8.8`). Round-robin. | `pia`   |
 | `IPT_BACKEND`    | iptables backend: `nft` or `legacy`. Auto-detected if not set.                                                                 | Auto    |
 
-- `LOCAL_NETWORKS` automatically includes networks pia-tun exists on unless `LOCAL_NETWORKS=none`.
-- `LOCAL_NETWORKS` allows bidirectional access to containers and machines on the specified networks.
-- For many setups you will need something like `LOCAL_NETWORKS=192.168.1.0/24` (your local network) to access dependent web UI.
-- `LOCAL_NETWORKS` accepts both private/public and IPv4/IPv6 CIDRs (single addresses need /32).
+### LOCAL_NETWORKS explained
+
+- Allows bidirectional access to containers and machines on the specified networks.
+- `LOCAL_NETWORKS=all` is the same as `LOCAL_NETWORKS=10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7`.
+- Automatically includes the attached container network(s) unless set to `none`.
+  - On k8s, with CNIs like Cilium or Calico, auto-detection does not work - set to your pod CIDR or `all` for access.
+- Accepts both private/public and IPv4/IPv6 CIDRs (single addresses need /32).
+- If using a reverse proxy on Docker, setting `LOCAL_NETWORKS` is likely unnecessary.
 - If `DNS=pia` and `LOCAL_NETWORKS` includes PIA's DNS, DNS routes take priority (routes through tunnel).
 
 ## Port Forwarding & Syncing
