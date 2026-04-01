@@ -23,13 +23,13 @@ type Metrics struct {
 	log    *log.Logger
 
 	// Internal state tracking (for JSON endpoint)
-	TotalChecks       int64
-	FailedChecks      int64
-	SuccessfulChecks  int64
-	TotalReconnects   int64
-	LastCheckTime     time.Time
-	LastCheckDuration time.Duration
-	UptimeStart       time.Time
+	TotalChecks      int64
+	FailedChecks     int64
+	SuccessfulChecks int64
+	TotalReconnects  int64
+	LastCheckTime    time.Time
+	LastCheckLatency time.Duration
+	UptimeStart      time.Time
 
 	// VPN-specific state
 	CurrentServer    string
@@ -53,7 +53,7 @@ type Metrics struct {
 	healthChecksTotal      prometheus.Counter
 	healthChecksSuccess    prometheus.Counter
 	reconnectsTotal        prometheus.Counter
-	checkDurationHistogram prometheus.Histogram
+	checkLatencyHistogram  prometheus.Histogram
 	bytesReceivedTotal     prometheus.Counter
 	bytesTransmittedTotal  prometheus.Counter
 	serverLatencyHistogram prometheus.Histogram
@@ -109,12 +109,12 @@ func New(cfg Config, version string) *Metrics {
 		Help: "Total number of VPN reconnections",
 	})
 
-	m.checkDurationHistogram = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name: "pia_tun_health_checks_duration_seconds",
-		Help: "Histogram of health check durations in seconds",
+	m.checkLatencyHistogram = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name: "pia_tun_health_checks_latency_seconds",
+		Help: "Histogram of health check latency in seconds",
 		Buckets: []float64{
-			0.010, 0.020, 0.030, 0.040, 0.050, 0.060, 0.070, 0.080,
-			0.090, 0.100, 0.120, 0.150, 0.200, 0.300, 0.500, 1.0, 2.0, 5.0,
+			0.005, 0.010, 0.025, 0.050, 0.075, 0.100,
+			0.150, 0.200, 0.300, 0.500, 1.0, 2.0,
 		},
 	})
 
@@ -130,9 +130,10 @@ func New(cfg Config, version string) *Metrics {
 
 	m.serverLatencyHistogram = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name: "pia_tun_server_latency_seconds",
-		Help: "Histogram of VPN server ping latency in seconds",
+		Help: "Histogram of VPN server latency in seconds",
 		Buckets: []float64{
-			0.005, 0.010, 0.025, 0.050, 0.075, 0.100, 0.150, 0.200, 0.300, 0.500, 1.0, 2.0,
+			0.005, 0.010, 0.025, 0.050, 0.075,
+			0.100, 0.150, 0.200, 0.300, 0.500, 1.0, 2.0,
 		},
 	})
 
@@ -225,7 +226,7 @@ func New(cfg Config, version string) *Metrics {
 		m.healthChecksTotal,
 		m.healthChecksSuccess,
 		m.reconnectsTotal,
-		m.checkDurationHistogram,
+		m.checkLatencyHistogram,
 		m.bytesReceivedTotal,
 		m.bytesTransmittedTotal,
 		m.serverLatencyHistogram,
@@ -272,7 +273,7 @@ func (m *Metrics) RecordCheck(success bool, duration time.Duration) {
 
 	m.TotalChecks++
 	m.LastCheckTime = time.Now()
-	m.LastCheckDuration = duration
+	m.LastCheckLatency = duration
 
 	if success {
 		m.SuccessfulChecks++
@@ -284,7 +285,7 @@ func (m *Metrics) RecordCheck(success bool, duration time.Duration) {
 	if success {
 		m.healthChecksSuccess.Inc()
 	}
-	m.checkDurationHistogram.Observe(duration.Seconds())
+	m.checkLatencyHistogram.Observe(duration.Seconds())
 }
 
 func (m *Metrics) UpdateTransferBytes(rx, tx int64) {
@@ -479,7 +480,7 @@ func (m *Metrics) GetStats() map[string]interface{} {
 		"health_checks_successful":   m.SuccessfulChecks,
 		"health_checks_failed":       m.FailedChecks,
 		"health_checks_success_rate": successRate,
-		"health_checks_latency_ms":   m.LastCheckDuration.Milliseconds(),
+		"health_checks_latency_ms":   m.LastCheckLatency.Milliseconds(),
 	}
 }
 
