@@ -56,19 +56,19 @@ func Run(ctx context.Context) error {
 	}
 	a.logConfig()
 	if err := a.cfg.validate(); err != nil {
-		log.Error(err.Error())
+		log.Error("%s", err.Error())
 		return err
 	}
 
 	if err := a.initialize(ctx); err != nil {
-		log.Error(err.Error())
+		log.Error("%s", err.Error())
 		return err
 	}
 	defer a.cleanup()
 
 	// Initial connection with wan-aware retry
 	if err := a.retryWithWANCheck(ctx, a.connect); err != nil {
-		log.Error(err.Error())
+		log.Error("%s", err.Error())
 		return err
 	}
 
@@ -86,13 +86,13 @@ func Run(ctx context.Context) error {
 
 		if errors.Is(err, apperrors.ErrReconnect) {
 			log.Info("")
-			log.Error(err.Error())
+			log.Error("%s", err.Error())
 
 			log.ReconnectingBanner()
 			wan.WaitForUp(ctx, a.metrics)
 
 			if err := a.retryWithWANCheck(ctx, a.connect); err != nil {
-				log.Error(err.Error())
+				log.Error("%s", err.Error())
 				return err
 			}
 			a.metrics.RecordReconnect()
@@ -100,7 +100,7 @@ func Run(ctx context.Context) error {
 		}
 
 		log.Info("")
-		log.Error(err.Error())
+		log.Error("%s", err.Error())
 		return err
 	}
 }
@@ -285,14 +285,14 @@ func (a *App) setupDNS(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("%w: %v", apperrors.ErrFatal, err)
 		}
-		log.Success(strings.Join(resolvServers, ", "))
+		log.Success("%s", strings.Join(resolvServers, ", "))
 		return nil
 	case "do53":
 		log.Step("Writing DNS to resolv.conf...")
 		if err := dns.Write(a.cfg.DNS); err != nil {
 			return fmt.Errorf("%w: %v", apperrors.ErrFatal, err)
 		}
-		log.Success(strings.Join(a.cfg.DNS, ", "))
+		log.Success("%s", strings.Join(a.cfg.DNS, ", "))
 		return nil
 	case "dot":
 		log.Step("Starting DoT proxy on port 53...")
@@ -301,7 +301,7 @@ func (a *App) setupDNS(ctx context.Context) error {
 		if err := a.dotProxy.Setup(ctx); err != nil {
 			return err
 		}
-		log.Success(a.dotProxy.Display())
+		log.Success("%s", a.dotProxy.Display())
 		return nil
 	default:
 		return fmt.Errorf("unknown DNS mode: %s", a.cfg.DNSMode)
@@ -330,7 +330,7 @@ func (a *App) retryWithWANCheck(ctx context.Context, fn func(context.Context) er
 		}
 
 		// Non-fatal errors
-		log.Warning(err.Error())
+		log.Warning("%s", err.Error())
 		if !wan.Check(ctx) {
 			wan.WaitForUp(ctx, a.metrics)
 			delay = 5 * time.Second
