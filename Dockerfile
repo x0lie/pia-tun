@@ -7,14 +7,12 @@ RUN go mod download
 COPY cmd/pia-tun/ ./cmd/pia-tun/
 COPY internal/ ./internal/
 
-# Build single binary with maximum optimization
 RUN cd cmd/pia-tun && \
     CGO_ENABLED=0 go build \
     -ldflags="-w -s" \
     -trimpath \
     -o /build/pia-tun . 
 
-# Build wireguard-go for userspace fallback (pre-5.6 kernels without WireGuard module)
 RUN CGO_ENABLED=0 go build \
     -ldflags="-w -s" \
     -trimpath \
@@ -23,11 +21,9 @@ RUN CGO_ENABLED=0 go build \
 
 FROM alpine:3.23.3
 
-# Accept version from build stage
 ARG VERSION=local
 ARG SHA=local
 
-# Install runtime dependencies
 RUN apk upgrade --no-cache && apk add --no-cache \
         bash \
         curl \
@@ -39,27 +35,16 @@ RUN apk upgrade --no-cache && apk add --no-cache \
     find /usr/bin /usr/sbin /bin /sbin -type f -executable \
         -exec strip --strip-all {} \; 2>/dev/null || true
 
-# Create pia-tun directories for forwarded port and PIA's CA
+# Create pia-tun directory for forwarded port and PIA's CA
 RUN mkdir -p /run/pia-tun /etc/pia-tun
 
-# Copy Go binaries
 COPY --from=go-builder /build/pia-tun /usr/local/bin/pia-tun
 COPY --from=go-builder /build/wireguard-go /usr/local/bin/wireguard-go
 
-# Copy certificate
 COPY ca/rsa_4096.crt /etc/pia-tun/ca.rsa.4096.crt
 
-# OCI labels for container metadata (connects GHCR package to GitHub repo)
-LABEL org.opencontainers.image.title="pia-tun" \
-      org.opencontainers.image.description="Lightweight WireGuard VPN client for Private Internet Access with advanced killswitch, port forwarding, and SOCKS5/HTTP proxy support" \
-      org.opencontainers.image.url="https://github.com/x0lie/pia-tun" \
-      org.opencontainers.image.source="https://github.com/x0lie/pia-tun" \
-      org.opencontainers.image.documentation="https://github.com/x0lie/pia-tun/blob/main/README.md" \
-      org.opencontainers.image.version="${VERSION}" \
-      org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.vendor="x0lie"
+LABEL org.opencontainers.image.source="https://github.com/x0lie/pia-tun"
 
-# Set VERSION and SHA as environment variables for runtime
 ENV VERSION=${VERSION} \
     SHA=${SHA}
 
