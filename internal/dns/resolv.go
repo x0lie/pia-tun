@@ -72,6 +72,9 @@ func Clear() error {
 
 // Backup moves /etc/resolv.conf to /etc/resolv.bak
 func Backup() error {
+	if _, err := os.Stat("/etc/resolv.bak"); err == nil {
+		return nil // backup already exists, do not overwrite
+	}
 	data, err := os.ReadFile("/etc/resolv.conf")
 	if err != nil {
 		return fmt.Errorf("failed to read resolv.conf for backup: %w", err)
