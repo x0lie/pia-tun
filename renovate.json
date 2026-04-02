@@ -1,62 +1,66 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended"
+    "config:recommended",
+    "helpers:pinGitHubActionDigests",
+    "docker:pinDigests"
   ],
   "baseBranches": ["develop"],
+  "useBaseBranchConfig": "merge",
   "labels": ["dependencies"],
+  "platformAutomerge": true,
   "automerge": false,
-  "platformAutomerge": false,
   "automergeType": "pr",
   "automergeStrategy": "squash",
   "schedule": ["before 6am on monday"],
+  "rebaseWhen": "behind-base-branch",
   "timezone": "America/New_York",
+  "rangeStrategy": "bump",
+  "minimumReleaseAge": "2 days",
+  "osvVulnerabilityAlerts": true,
+
   "packageRules": [
     {
-      "description": "Alpine base image - automerge patch updates",
+      "description": "Docker images - automerge digest/patch",
       "matchDatasources": ["docker"],
-      "matchPackageNames": ["alpine", "golang"],
-      "matchUpdateTypes": ["patch", "digest"],
-      "enabled": true,
+      "matchUpdateTypes": ["digest", "patch"],
       "automerge": true,
       "labels": ["docker", "automerge"]
     },
     {
-      "description": "Alpine base image - manual review for minor/major",
+      "description": "Docker images - minor/major",
       "matchDatasources": ["docker"],
-      "matchPackageNames": ["alpine", "golang"],
       "matchUpdateTypes": ["minor", "major"],
-      "enabled": true,
-      "automerge": false,
       "labels": ["docker", "review-required"]
     },
     {
-      "description": "Go dependencies - automerge patch, manual review for minor/major",
+      "description": "Go dependencies - automerge patch",
       "matchManagers": ["gomod"],
       "matchUpdateTypes": ["patch"],
-      "enabled": true,
       "automerge": true,
       "labels": ["go", "automerge"]
     },
     {
-      "description": "Go dependencies - manual review for minor/major",
+      "description": "Go dependencies - minor/major",
       "matchManagers": ["gomod"],
       "matchUpdateTypes": ["minor", "major"],
-      "enabled": true,
-      "automerge": false,
       "labels": ["go", "review-required"]
     },
     {
-      "description": "GitHub Actions - automerge all updates",
+      "description": "GitHub Actions - automerge patch/minor",
       "matchManagers": ["github-actions"],
-      "enabled": true,
+      "matchUpdateTypes": ["patch", "minor"],
       "automerge": true,
       "labels": ["github-actions", "automerge"]
+    },
+    {
+      "description": "GitHub Actions - major",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["major"],
+      "labels": ["github-actions", "review-required"]
     }
   ],
   "vulnerabilityAlerts": {
-    "labels": ["security", "vulnerability"],
-    "enabled": true,
-    "automerge": false
+    "labels": ["security", "vulnerability"]
   }
 }
