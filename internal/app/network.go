@@ -94,7 +94,7 @@ func (a *App) captureRealIP(ctx context.Context) string {
 
 	a.log.Debug("Got IP %s from %s", res.ip, res.src)
 
-	log.Success("Real IP captured: " + res.ip)
+	log.Success("Real IP captured: %s", res.ip)
 
 	return res.ip
 }
