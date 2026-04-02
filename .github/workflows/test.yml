@@ -1,29 +1,17 @@
 name: Test
 
 on:
-  push:
-    branches: [ main ]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'LICENSE'
-      - '.gitignore'
-      - '.gitattributes'
-      - 'renovate.json'
-      - '.editorconfig'
-      - '.vscode/**'
-  pull_request:
-    branches: [ main ]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'LICENSE'
-      - '.gitignore'
-      - '.gitattributes'
-      - 'renovate.json'
-      - '.editorconfig'
-      - '.vscode/**'
   workflow_call:
+  pull_request:
+    paths:
+      - 'ca/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'tests/**'
+      - 'tools/**'
+      - Dockerfile
+      - go.mod
+      - go.sum
 
 env:
   DOCKERHUB_USERNAME: x0lie
@@ -33,7 +21,6 @@ jobs:
   test:
     name: Run Test Suite (${{ matrix.config }})
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     strategy:
       matrix:
         include:
@@ -59,7 +46,6 @@ jobs:
             WG_BACKEND: "userspace"
 
     steps:
-      # Checkout code
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -69,7 +55,6 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # Run the test suite
       - name: Run integration tests
         env:
           PIA_USER: ${{ secrets.PIA_USER }}
@@ -112,7 +97,6 @@ jobs:
           ignore-unfixed: true
           exit-code: '1'
 
-      # Upload results to GitHub Security tab
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v4
         if: always()
