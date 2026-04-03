@@ -1,11 +1,16 @@
-# Compiled binaries
-cmd/monitor/monitor
-cmd/proxy/proxy
-cmd/portforward/portforward
-bin/
+# Linux
+.directory
 
-# Test artifacts
-test-logs.txt
-trivy-results.sarif
+# macOS
+.DS_Store
 
-/bin
+# Windows
+Thumbs.db
+desktop.ini
+
+# Editor artifacts
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
