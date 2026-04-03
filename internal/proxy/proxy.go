@@ -14,7 +14,6 @@ import (
 	"github.com/x0lie/pia-tun/internal/log"
 )
 
-// Proxy holds the proxy server configuration and state.
 type Config struct {
 	Enabled    bool
 	User       string
@@ -29,7 +28,7 @@ func Run(ctx context.Context, cfg Config) error {
 	c := &cfg
 
 	// Start SOCKS5 proxy in goroutine
-	go c.startSOCKS5()
+	go c.startSOCKS5(ctx)
 
 	// Start HTTP proxy (blocks until context is done or error)
 	server := &http.Server{
@@ -147,17 +146,26 @@ func (c *Config) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, resp.Body)
 }
 
-func (c *Config) startSOCKS5() {
+func (c *Config) startSOCKS5(ctx context.Context) {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", c.Socks5Port))
 	if err != nil {
 		log.Error("Failed to start SOCKS5 proxy: %v", err)
+		return
 	}
 	defer listener.Close()
+
+	go func() {
+		<-ctx.Done()
+		listener.Close()
+	}()
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Error("SOCKS5 accept error: %v", err)
+			if ctx.Err() != nil {
+				return
+			}
+			log.Warning("SOCKS5 accept error: %v", err)
 			continue
 		}
 		go c.handleSOCKS5(conn)
