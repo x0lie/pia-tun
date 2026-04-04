@@ -50,7 +50,9 @@ curl -s 'https://serverlist.piaservers.net/vpninfo/servers/v6' | head -n -1 | jq
 services:
   pia-tun:
     environment:
-      - PROXY_ENABLED=true
+      - SOCKS5_ENABLED=true
+      - HTTP_PROXY_ENABLED=true
+      # - METRICS_ENABLED=true by default
     ports:
       - 1080:1080   # SOCKS5
       - 8888:8888   # HTTP Proxy

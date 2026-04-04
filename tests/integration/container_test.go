@@ -117,8 +117,9 @@ func startContainer(t *testing.T, cfg app.Config) *container {
 		"-e", "PORT_FILE=" + cfg.PF.PortFile,
 		"-e", "PF_SIGNATURE_SAFETY_HOURS=" + strconv.Itoa(cfg.PF.SignatureSafetyHours),
 		"-e", "LOCAL_NETWORKS=" + cfg.FW.LANs,
-		"-e", "PROXY_ENABLED=" + strconv.FormatBool(cfg.Proxy.Enabled),
+		"-e", "SOCKS5_ENABLED=" + strconv.FormatBool(cfg.Proxy.Socks5Enabled),
 		"-e", "SOCKS5_PORT=" + socks5Port,
+		"-e", "HTTP_PROXY_ENABLED=" + strconv.FormatBool(cfg.Proxy.HTTPEnabled),
 		"-e", "HTTP_PROXY_PORT=" + httpProxyPort,
 		"-e", "PROXY_USER=" + cfg.Proxy.User,
 		"-e", "PROXY_PASS=" + cfg.Proxy.Pass,
@@ -129,9 +130,13 @@ func startContainer(t *testing.T, cfg app.Config) *container {
 		"-e", "INSTANCE_NAME=" + cfg.Metrics.Name,
 	}
 
-	if cfg.Proxy.Enabled {
+	if cfg.Proxy.HTTPEnabled {
 		args = append(args,
 			"-p", httpProxyPort+":"+httpProxyPort,
+		)
+	}
+	if cfg.Proxy.Socks5Enabled {
+		args = append(args,
 			"-p", socks5Port+":"+socks5Port,
 		)
 	}
@@ -261,20 +266,16 @@ func (c *container) verifyPort(t *testing.T) {
 	log.Success("%s has tcp+udp ACCEPT rules for port %s", chainIn, portFromFile)
 }
 
-func (c *container) testProxy(t *testing.T) {
+func (c *container) testSocks5(t *testing.T) {
 	t.Helper()
 
 	socksPort := strconv.Itoa(c.cfg.Proxy.Socks5Port)
-	httpPort := strconv.Itoa(c.cfg.Proxy.HTTPPort)
-
 	socksTarget := "localhost:" + socksPort
-	httpTarget := "http://localhost:" + httpPort
 
 	authEnabled := c.cfg.Proxy.User != "" && c.cfg.Proxy.Pass != ""
 	if authEnabled {
 		userPass := c.cfg.Proxy.User + ":" + c.cfg.Proxy.Pass
 		socksTarget = userPass + "@localhost:" + socksPort
-		httpTarget = "http://" + userPass + "@localhost:" + httpPort
 	}
 
 	// SOCKS5
@@ -296,6 +297,19 @@ func (c *container) testProxy(t *testing.T) {
 		} else {
 			log.Success("SOCKS5 auth enforced")
 		}
+	}
+}
+
+func (c *container) testHTTPProxy(t *testing.T) {
+	t.Helper()
+
+	httpPort := strconv.Itoa(c.cfg.Proxy.HTTPPort)
+	httpTarget := "http://localhost:" + httpPort
+
+	authEnabled := c.cfg.Proxy.User != "" && c.cfg.Proxy.Pass != ""
+	if authEnabled {
+		userPass := c.cfg.Proxy.User + ":" + c.cfg.Proxy.Pass
+		httpTarget = "http://" + userPass + "@localhost:" + httpPort
 	}
 
 	// HTTP proxy

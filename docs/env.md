@@ -63,13 +63,14 @@ volumes:
 
 ## Proxy Settings
 
-| Variable          | Description                                                      | Default |
-|-------------------|------------------------------------------------------------------|---------|
-| `PROXY_ENABLED`   | Enable SOCKS5/HTTP proxies                                       | `false` |
-| `SOCKS5_PORT`     | SOCKS5 listen port                                               | `1080`  |
-| `HTTP_PROXY_PORT` | HTTP proxy listen port                                           | `8888`  |
-| `PROXY_USER`      | Proxy authentication username (or use `/run/secrets/proxy_user`) | None    |
-| `PROXY_PASS`      | Proxy authentication password (or use `/run/secrets/proxy_pass`) | None    |
+| Variable             | Description                                                      | Default |
+|----------------------|------------------------------------------------------------------|---------|
+| `SOCKS5_ENABLED`     | Enables SOCKS5 proxy                                             | `false` |
+| `SOCKS5_PORT`        | SOCKS5 listen port                                               | `1080`  |
+| `HTTP_PROXY_ENABLED` | Enables HTTP proxy                                               | `false` |
+| `HTTP_PROXY_PORT`    | HTTP proxy listen port                                           | `8888`  |
+| `PROXY_USER`         | Proxy authentication username (or use `/run/secrets/proxy_user`) | None    |
+| `PROXY_PASS`         | Proxy authentication password (or use `/run/secrets/proxy_pass`) | None    |
 
 ## Health Monitoring & Reconnects
 

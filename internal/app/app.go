@@ -18,7 +18,6 @@ import (
 	"github.com/x0lie/pia-tun/internal/monitor"
 	"github.com/x0lie/pia-tun/internal/portforward"
 	"github.com/x0lie/pia-tun/internal/portsync"
-	"github.com/x0lie/pia-tun/internal/proxy"
 	"github.com/x0lie/pia-tun/internal/vpn"
 	"github.com/x0lie/pia-tun/internal/wan"
 	"github.com/x0lie/pia-tun/internal/wg"
@@ -73,7 +72,7 @@ func Run(ctx context.Context) error {
 	}
 
 	a.showMonitorStatus()
-	if a.cfg.Proxy.Enabled {
+	if a.cfg.Proxy.HTTPEnabled || a.cfg.Proxy.Socks5Enabled {
 		a.showProxyStatus()
 	}
 
@@ -142,13 +141,12 @@ func (a *App) initialize(ctx context.Context) error {
 	a.api = api.New(a.cfg.Metrics.Port, a.fw.IsActive, a.connectionUp.Load, a.metrics)
 	go a.api.Start()
 
-	// Start Proxy server
-	if a.cfg.Proxy.Enabled {
-		go func() {
-			if err = proxy.Run(ctx, a.cfg.Proxy); err != nil {
-				log.Error("Proxy server error: %v", err)
-			}
-		}()
+	// Start Proxies
+	if a.cfg.Proxy.Socks5Enabled {
+		go a.cfg.Proxy.StartSOCKS5(ctx)
+	}
+	if a.cfg.Proxy.HTTPEnabled {
+		go a.cfg.Proxy.StartHTTPProxy(ctx)
 	}
 
 	// Set up DNS
@@ -368,16 +366,29 @@ func (a *App) showMonitorStatus() {
 }
 
 func (a *App) showProxyStatus() {
-	log.Step("Proxy server running...")
+	httpProxyEnabled := a.cfg.Proxy.HTTPEnabled
+	socks5Enabled := a.cfg.Proxy.Socks5Enabled
+
+	if socks5Enabled && httpProxyEnabled {
+		log.Step("Proxies running...")
+	} else {
+		log.Step("Proxy running...")
+	}
 
 	if a.cfg.Proxy.User != "" && a.cfg.Proxy.Pass != "" {
-		log.Success("Proxy servers ready (authenticated):")
-		log.Info("    SOCKS5: socks5://%s:****@<container-ip>:%d", a.cfg.Proxy.User, a.cfg.Proxy.Socks5Port)
-		log.Info("    HTTP:   http://%s:****@<container-ip>:%d", a.cfg.Proxy.User, a.cfg.Proxy.HTTPPort)
+		if socks5Enabled {
+			log.Success("SOCKS5: socks5://%s:****@<container-ip>:%d", a.cfg.Proxy.User, a.cfg.Proxy.Socks5Port)
+		}
+		if httpProxyEnabled {
+			log.Success("HTTP:   http://%s:****@<container-ip>:%d", a.cfg.Proxy.User, a.cfg.Proxy.HTTPPort)
+		}
 	} else {
-		log.Success("Proxy servers ready:")
-		log.Info("    SOCKS5: socks5://<container-ip>:%d", a.cfg.Proxy.Socks5Port)
-		log.Info("    HTTP:   http://<container-ip>:%d", a.cfg.Proxy.HTTPPort)
+		if socks5Enabled {
+			log.Success("SOCKS5: socks5://<container-ip>:%d", a.cfg.Proxy.Socks5Port)
+		}
+		if httpProxyEnabled {
+			log.Success("HTTP:   http://<container-ip>:%d", a.cfg.Proxy.HTTPPort)
+		}
 	}
 }
 

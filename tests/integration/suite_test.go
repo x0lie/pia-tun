@@ -50,8 +50,11 @@ func TestSuite(t *testing.T) {
 	log.Success("host IP: %s", ctr.hostIP)
 	ctr.getVPNIP(t)
 	log.Step("Testing proxy...")
-	if cfg.Proxy.Enabled {
-		ctr.testProxy(t)
+	if cfg.Proxy.Socks5Enabled {
+		ctr.testSocks5(t)
+	}
+	if cfg.Proxy.HTTPEnabled {
+		ctr.testHTTPProxy(t)
 	}
 	log.Step("Runtime firewall stats:")
 	ctr.logFirewallState(t)
