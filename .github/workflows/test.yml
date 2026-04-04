@@ -32,17 +32,19 @@ jobs:
             DNS: "tls://one.one.one.one, dns.quad9.net"
             PF_ENABLED: true
             PORT_FILE: "/port"
-            PROXY_ENABLED: true
             PROXY_USER: "user"
             PROXY_PASS: "pass"
+            SOCKS5_ENABLED: true
             SOCKS5_PORT: "1081"
+            HTTP_PROXY_ENABLED: true
             HTTP_PROXY_PORT: "8889"
             METRICS_PORT: "9091"
 
           - config: legacy
             DNS: "system"
             PF_ENABLED: true
-            PROXY_ENABLED: true
+            SOCKS5_ENABLED: true
+            HTTP_PROXY_ENABLED: true
             WG_BACKEND: "userspace"
 
     steps:
@@ -64,10 +66,11 @@ jobs:
           DNS: ${{ matrix.DNS }}
           PF_ENABLED: ${{ matrix.PF_ENABLED }}
           PORT_FILE: ${{ matrix.PORT_FILE }}
-          PROXY_ENABLED: ${{ matrix.PROXY_ENABLED }}
           PROXY_USER: ${{ matrix.PROXY_USER }}
           PROXY_PASS: ${{ matrix.PROXY_PASS }}
+          SOCKS5_ENABLED: ${{ matrix.SOCKS5_ENABLED }}
           SOCKS5_PORT: ${{ matrix.SOCKS5_PORT }}
+          HTTP_PROXY_ENABLED: ${{ matrix.HTTP_PROXY_ENABLED }}
           HTTP_PROXY_PORT: ${{ matrix.HTTP_PROXY_PORT }}
           METRICS_PORT: ${{ matrix.METRICS_PORT }}
           WG_BACKEND: ${{ matrix.WG_BACKEND }}

@@ -120,11 +120,12 @@ func loadPSConfig() portsync.Config {
 
 func loadProxyConfig() proxy.Config {
 	return proxy.Config{
-		Enabled:    getEnvBool("PROXY_ENABLED", false),
-		User:       getEnvOrSecret("PROXY_USER", ""),
-		Pass:       getEnvOrSecret("PROXY_PASS", ""),
-		Socks5Port: getEnvInt("SOCKS5_PORT", 1080),
-		HTTPPort:   getEnvInt("HTTP_PROXY_PORT", 8888),
+		HTTPEnabled:   getEnvBool("HTTP_PROXY_ENABLED", false),
+		Socks5Enabled: getEnvBool("SOCKS5_ENABLED", false),
+		User:          getEnvOrSecret("PROXY_USER", ""),
+		Pass:          getEnvOrSecret("PROXY_PASS", ""),
+		Socks5Port:    getEnvInt("SOCKS5_PORT", 1080),
+		HTTPPort:      getEnvInt("HTTP_PROXY_PORT", 8888),
 	}
 }
 
@@ -248,8 +249,9 @@ func (a *App) logConfig() {
 	a.log.Debug("  PS_CLIENT=%s", a.cfg.PS.Client)
 	a.log.Debug("  PS_URL=%s", a.cfg.PS.URL)
 	a.log.Debug("  PS_SCRIPT=%s", a.cfg.PS.Script)
-	a.log.Debug("  PROXY_ENABLED=%v", a.cfg.Proxy.Enabled)
+	a.log.Debug("  SOCKS5_ENABLED=%v", a.cfg.Proxy.Socks5Enabled)
 	a.log.Debug("  SOCKS5_PORT=%d", a.cfg.Proxy.Socks5Port)
+	a.log.Debug("  HTTP_PROXY_ENABLED=%v", a.cfg.Proxy.HTTPEnabled)
 	a.log.Debug("  HTTP_PROXY_PORT=%v", a.cfg.Proxy.HTTPPort)
 	a.log.Debug("  METRICS_ENABLED=%v", a.cfg.Metrics.Enabled)
 	a.log.Debug("  METRICS_PORT=%d", a.cfg.Metrics.Port)

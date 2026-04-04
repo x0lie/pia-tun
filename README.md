@@ -9,7 +9,7 @@ A feature-rich and reliable VPN container image for PIA + WireGuard
 - **Reliable reconnect** - Handles outages gracefully and avoids reconnect churn
 - **Port forwarding** - Manages port acquisition, keepalive, and expiry/refresh
 - **Port syncing** - Automatically syncs port to qBittorrent, Deluge, Transmission, and custom endpoints
-- **SOCKS5/HTTP Proxy** - Allows other machines and containers to access VPN (optional authentication)
+- **SOCKS5 + HTTP Proxies** - Allows other machines and containers to access VPN (optional authentication)
 - **DoT Support** - Encrypt your DNS requests to further anonymize
 - **Observability** - `/health`, `/ready`, `/metrics` (prometheus), and `/metrics?format=json`
 - **Smart server selection** - Chooses the lowest-latency server from selected location(s), or from all locations
