@@ -1,0 +1,27 @@
+name: Lint
+
+on:
+  workflow_call:
+  pull_request:
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'tests/**'
+      - 'tools/**'
+      - go.mod
+      - go.sum
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Vet
+        run: go vet ./...
