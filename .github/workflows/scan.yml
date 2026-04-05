@@ -2,17 +2,6 @@ name: Scan
 
 on:
   workflow_call:
-  pull_request:
-    paths:
-      - .github/workflows/scan.yml
-      - 'ca/**'
-      - 'cmd/**'
-      - 'internal/**'
-      - 'tests/**'
-      - 'tools/**'
-      - Dockerfile
-      - go.mod
-      - go.sum
 
 env:
   IMAGE_NAME: pia-tun
