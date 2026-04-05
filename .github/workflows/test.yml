@@ -2,17 +2,6 @@ name: Test
 
 on:
   workflow_call:
-  pull_request:
-    paths:
-      - .github/workflows/test.yml
-      - 'ca/**'
-      - 'cmd/**'
-      - 'internal/**'
-      - 'tests/**'
-      - 'tools/**'
-      - Dockerfile
-      - go.mod
-      - go.sum
 
 env:
   DOCKERHUB_USERNAME: x0lie

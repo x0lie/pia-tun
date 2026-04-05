@@ -1,0 +1,35 @@
+name: Pull Request
+
+on:
+  pull_request:
+    paths:
+      - '.github/**'
+      - 'ca/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'tests/**'
+      - 'tools/**'
+      - Dockerfile
+      - go.mod
+      - go.sum
+
+env:
+  IMAGE_NAME: pia-tun
+
+jobs:
+  lint:
+    uses: ./.github/workflows/lint.yml
+
+  scan:
+    uses: ./.github/workflows/scan.yml
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+
+  test:
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
+    needs: [lint, scan]
+    permissions:
+      contents: read

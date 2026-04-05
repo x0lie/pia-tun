@@ -20,6 +20,7 @@ jobs:
   test:
     uses: ./.github/workflows/test.yml
     secrets: inherit
+    needs: [scan]
     permissions:
       contents: read
 
@@ -27,7 +28,7 @@ jobs:
   build-and-push:
     name: Build and Push to Registries
     runs-on: ubuntu-latest
-    needs: [scan, test]  # Only run if tests pass
+    needs: [test]  # Only run if tests pass
     permissions:
       contents: write  # Required to create GitHub Release
       packages: write  # Required to push to ghcr.io
