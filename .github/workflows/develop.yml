@@ -33,6 +33,7 @@ jobs:
   test:
     uses: ./.github/workflows/test.yml
     secrets: inherit
+    needs: [lint, scan]
     permissions:
       contents: read
 
@@ -40,7 +41,7 @@ jobs:
   build-and-push:
     name: Build and Push to Registries
     runs-on: ubuntu-latest
-    needs: [lint, scan, test]  # Only run if tests pass
+    needs: [test]  # Only run if tests pass
     permissions:
       contents: read   # Required to checkout code
       packages: write  # Required to push to ghcr.io

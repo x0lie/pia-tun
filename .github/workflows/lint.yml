@@ -2,15 +2,6 @@ name: Lint
 
 on:
   workflow_call:
-  pull_request:
-    paths:
-      - .github/workflows/lint.yml
-      - 'cmd/**'
-      - 'internal/**'
-      - 'tests/**'
-      - 'tools/**'
-      - go.mod
-      - go.sum
 
 jobs:
   lint:
