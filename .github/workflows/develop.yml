@@ -19,6 +19,9 @@ env:
   IMAGE_NAME: pia-tun
 
 jobs:
+  lint:
+    uses: ./.github/workflows/lint.yml
+
   test:
     uses: ./.github/workflows/test.yml
     secrets: inherit
@@ -31,7 +34,7 @@ jobs:
   build-and-push:
     name: Build and Push to Registries
     runs-on: ubuntu-latest
-    needs: [test]  # Only run if tests pass
+    needs: [lint, test]  # Only run if tests pass
     permissions:
       contents: read   # Required to checkout code
       packages: write  # Required to push to ghcr.io
