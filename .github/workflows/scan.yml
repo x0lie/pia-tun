@@ -1,0 +1,58 @@
+name: Scan
+
+on:
+  workflow_call:
+  pull_request:
+    paths:
+      - .github/workflows/scan.yml
+      - 'ca/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'tests/**'
+      - 'tools/**'
+      - Dockerfile
+      - go.mod
+      - go.sum
+
+env:
+  IMAGE_NAME: pia-tun
+
+jobs:
+  # Security scan with Trivy
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write  # Required to upload SARIF results to GitHub Security
+      contents: read          # Required to checkout code
+      actions: read           # Required to access workflow run information
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Build image for scanning
+        run: docker build -t ${{ env.IMAGE_NAME }}:scan .
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: '${{ env.IMAGE_NAME }}:scan'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      # Also show results in action log
+      - name: Run Trivy (table output)
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: '${{ env.IMAGE_NAME }}:scan'
+          format: 'table'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          ignore-unfixed: true

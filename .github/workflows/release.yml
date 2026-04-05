@@ -10,19 +10,24 @@ env:
   IMAGE_NAME: pia-tun
 
 jobs:
+  scan:
+    uses: ./.github/workflows/scan.yml
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+
   test:
     uses: ./.github/workflows/test.yml
     secrets: inherit
     permissions:
-      security-events: write
-      actions: read
       contents: read
 
   # Build and push multi-arch image to Docker Hub and GHCR with :semver and :latest tags
   build-and-push:
     name: Build and Push to Registries
     runs-on: ubuntu-latest
-    needs: [test]  # Only run if tests pass
+    needs: [scan, test]  # Only run if tests pass
     permissions:
       contents: write  # Required to create GitHub Release
       packages: write  # Required to push to ghcr.io
