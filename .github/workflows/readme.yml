@@ -1,13 +1,11 @@
-name: DockerHub-Readme
+name: Readme Sync
 
-# Triggers on changes to the README.md on the main branch
 on:
   push:
     branches:
       - main
     paths:
       - 'README.md'
-      - 'docs/**'
       - '.github/workflows/readme.yml'
   workflow_dispatch:
 
