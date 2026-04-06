@@ -457,7 +457,11 @@ func formatBytes(b int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-// GetStats returns  for json endpoint
+func formatLatency(l int64) string {
+	return fmt.Sprintf("%dms", l)
+}
+
+// GetStats returns metrics snapshot for for JSON endpoint
 func (m *Metrics) GetStats() map[string]interface{} {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -483,7 +487,7 @@ func (m *Metrics) GetStats() map[string]interface{} {
 		"current_ip":                 m.CurrentIP,
 		"session_uptime":             log.FormatDuration(sessionUptime),
 		"container_uptime":           log.FormatDuration(containerUptime),
-		"server_latency_ms":          m.ServerLatency,
+		"server_latency_last":        formatLatency(m.ServerLatency),
 		"bytes_received":             formatBytes(m.BytesReceived),
 		"bytes_transmitted":          formatBytes(m.BytesTransmitted),
 		"bytes_total":                formatBytes(m.BytesReceived + m.BytesTransmitted),
@@ -494,7 +498,7 @@ func (m *Metrics) GetStats() map[string]interface{} {
 		"health_checks_successful":   m.SuccessfulChecks,
 		"health_checks_failed":       m.FailedChecks,
 		"health_checks_success_rate": successRate,
-		"health_checks_latency_ms":   m.LastCheckLatency.Milliseconds(),
+		"health_checks_latency_last": formatLatency(m.LastCheckLatency.Milliseconds()),
 	}
 }
 
