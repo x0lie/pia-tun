@@ -16,6 +16,10 @@ import (
 	"github.com/x0lie/pia-tun/internal/apperrors"
 )
 
+// PIA Private Cert (caCertPath) only used by AddKey, all others use System CAs,
+// except the port signature/bind requests (no CA exists). The getSignature
+// and bindPort functions are the only PIA interactions not listed here.
+
 const (
 	AuthHostname       = "www.privateinternetaccess.com"
 	ServerlistHostname = "serverlist.piaservers.net"
@@ -26,9 +30,9 @@ const (
 )
 
 // GenerateToken authenticates with PIA and returns a login token.
-// ip is the server IP to connect to. The hostname is used for TLS SNI.
-// Returns ErrFatal for invalid credentials
-func GenerateToken(ctx context.Context, client *http.Client, ip, user, pass string) (string, error) {
+// ip is the www.privateinternetaccess.com hostname or IP.
+// Returns ErrFatal for invalid credentials.
+func GenerateToken(ctx context.Context, timeout time.Duration, ip, user, pass string) (string, error) {
 	// Use hostname in URL for correct Host header, but connect to IP
 	reqURL := fmt.Sprintf("https://%s%s", AuthHostname, authPath)
 
@@ -39,7 +43,7 @@ func GenerateToken(ctx context.Context, client *http.Client, ip, user, pass stri
 	req.SetBasicAuth(user, pass)
 
 	// Create a client that connects to the IP but uses hostname for SNI
-	authClient := newHostMappedClient(client.Timeout, AuthHostname, ip)
+	authClient := newHostMappedClient(timeout, AuthHostname, ip)
 
 	resp, err := authClient.Do(req)
 	if err != nil {
@@ -79,8 +83,8 @@ func GenerateToken(ctx context.Context, client *http.Client, ip, user, pass stri
 }
 
 // FetchServerList fetches the PIA server list.
-// ip is the server IP to connect to. The hostname is used for TLS SNI.
-func FetchServerList(ctx context.Context, client *http.Client, ip string) ([]Server, error) {
+// ip is the serverlist.piaservers.net hostname or IP
+func FetchServerList(ctx context.Context, timeout time.Duration, ip string) ([]Server, error) {
 	// Use hostname in URL for correct Host header, but connect to IP
 	reqURL := fmt.Sprintf("https://%s%s", ServerlistHostname, serverListPath)
 
@@ -90,7 +94,7 @@ func FetchServerList(ctx context.Context, client *http.Client, ip string) ([]Ser
 	}
 
 	// Create a client that connects to the IP but uses hostname for SNI
-	serverlistClient := newHostMappedClient(client.Timeout, ServerlistHostname, ip)
+	serverlistClient := newHostMappedClient(timeout, ServerlistHostname, ip)
 
 	resp, err := serverlistClient.Do(req)
 	if err != nil {
@@ -124,7 +128,7 @@ func FetchServerList(ctx context.Context, client *http.Client, ip string) ([]Ser
 	return flatRegions, nil
 }
 
-// FlattenRegions extracts WireGuard servers from regions into a flat CachedServer list.
+// flattenRegions extracts WireGuard servers from regions into a flat Server list.
 func flattenRegions(regions []region) []Server {
 	var servers []Server
 	for _, r := range regions {
@@ -142,9 +146,6 @@ func flattenRegions(regions []region) []Server {
 }
 
 // AddKey registers a WireGuard public key with PIA and returns tunnel parameters.
-// serverIP is the actual server IP to connect to, cn is the server's certificate
-// name used for both TLS verification and the URL hostname. The request is verified
-// against PIA's CA certificate.
 func AddKey(ctx context.Context, serverIP, cn, token, pubkey string) (*AddKeyResponse, error) {
 	client, err := newAddKeyClient(serverIP, cn)
 	if err != nil {
@@ -191,9 +192,7 @@ func AddKey(ctx context.Context, serverIP, cn, token, pubkey string) (*AddKeyRes
 	return &result, nil
 }
 
-// newAddKeyClient creates an http.Client for the addKey API. It verifies TLS
-// against PIA's CA certificate with ServerName set to the server's CN, and
-// dials serverIP regardless of the URL hostname (equivalent to curl --resolve).
+// newAddKeyClient returns *http.Client with PIA's private CA
 func newAddKeyClient(serverIP, cn string) (*http.Client, error) {
 	caCert, err := os.ReadFile(caCertPath)
 	if err != nil {
@@ -217,14 +216,10 @@ func newAddKeyClient(serverIP, cn string) (*http.Client, error) {
 					ctx, network, net.JoinHostPort(serverIP, port),
 				)
 			},
-			TLSHandshakeTimeout: 5 * time.Second,
 		},
 	}, nil
 }
 
-// newHostMappedClient creates an http.Client that connects to targetIP but uses
-// hostname for TLS SNI and the Host header. Certificate is verified against
-// the system CA pool — PIA's auth and serverlist endpoints use publicly trusted certs.
 func newHostMappedClient(timeout time.Duration, hostname, targetIP string) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
@@ -238,7 +233,6 @@ func newHostMappedClient(timeout time.Duration, hostname, targetIP string) *http
 					ctx, network, net.JoinHostPort(targetIP, port),
 				)
 			},
-			TLSHandshakeTimeout: 5 * time.Second,
 		},
 	}
 }

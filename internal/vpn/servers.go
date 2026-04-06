@@ -72,15 +72,13 @@ func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 
 // tryServerListIPs fetches the server list using given ips
 func tryServerListIPs(ctx context.Context, ips []string, fw *firewall.Firewall, logger *log.Logger) ([]pia.Server, error) {
-	client := pia.NewDirectClient(apiTimeout)
-
 	for _, ip := range ips {
 		logger.Debug("Trying serverlist IP: %s", ip)
 		if err := fw.AddExemption(ip, "443", "tcp", "pia-serverlist"); err != nil {
 			logger.Debug("Failed to add exemption: %v", err)
 			continue
 		}
-		servers, err := pia.FetchServerList(ctx, client, ip)
+		servers, err := pia.FetchServerList(ctx, apiTimeout, ip)
 		fw.RemoveExemptions()
 		if err != nil {
 			logger.Debug("Serverlist fetch from %s failed: %v", ip, err)
