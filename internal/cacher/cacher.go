@@ -3,7 +3,6 @@ package cacher
 import (
 	"context"
 	"net"
-	"net/http"
 	"sync"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 const (
 	maxCachedIPs = 5
 	maxTokenAge  = 23 * time.Hour
+	timeout      = 15 * time.Second
 )
 
 type config struct {
@@ -35,7 +35,7 @@ type Cache struct {
 	Servers       []pia.Server
 }
 
-func refreshAll(ctx context.Context, logger *log.Logger, cfg *config, client *http.Client, c *Cache) error {
+func refreshAll(ctx context.Context, logger *log.Logger, cfg *config, c *Cache) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -52,7 +52,7 @@ func refreshAll(ctx context.Context, logger *log.Logger, cfg *config, client *ht
 		logger.Trace("Resolved %s to %v", pia.AuthHostname, authIPs)
 		c.MergeAuthIPs(authIPs)
 
-		token, err := pia.GenerateToken(ctx, client, pia.AuthHostname, cfg.piaUser, cfg.piaPass)
+		token, err := pia.GenerateToken(ctx, timeout, pia.AuthHostname, cfg.piaUser, cfg.piaPass)
 		if err != nil {
 			logger.Debug("Token refresh failed: %v", err)
 			lastErr = err
@@ -76,7 +76,7 @@ func refreshAll(ctx context.Context, logger *log.Logger, cfg *config, client *ht
 		logger.Trace("Resolved %s to %v", pia.ServerlistHostname, slIPs)
 		c.MergeServerListIPs(slIPs)
 
-		servers, err := pia.FetchServerList(ctx, client, pia.ServerlistHostname)
+		servers, err := pia.FetchServerList(ctx, timeout, pia.ServerlistHostname)
 		if err != nil {
 			logger.Debug("Server list refresh failed: %v", err)
 			lastErr = err
@@ -104,11 +104,9 @@ func Run(ctx context.Context, cache *Cache, piaUser string, piaPass string) erro
 
 	logger.Debug("Starting with refresh interval: %v", cfg.refreshInterval)
 
-	client := pia.NewBoundClient(15*time.Second, 30*time.Second)
-
 	// Initial refresh on startup
 	logger.Debug("Performing initial cache refresh")
-	if err := refreshAll(ctx, logger, cfg, client, cache); err != nil {
+	if err := refreshAll(ctx, logger, cfg, cache); err != nil {
 		logger.Debug("Initial cache refresh failed: %v", err)
 	} else {
 		logger.Debug("Cache initialized")
@@ -128,7 +126,7 @@ func Run(ctx context.Context, cache *Cache, piaUser string, piaPass string) erro
 			logger.Trace("Starting scheduled refresh")
 			var err error
 			for attempt := range 3 {
-				if err = refreshAll(ctx, logger, cfg, client, cache); err == nil {
+				if err = refreshAll(ctx, logger, cfg, cache); err == nil {
 					break
 				}
 				if ctx.Err() != nil {

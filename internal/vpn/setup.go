@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/apperrors"
@@ -150,12 +149,10 @@ func getToken(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cac
 
 // authenticate obtains a new token from PIA.
 func authenticate(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *dns.Resolver, logger *log.Logger) (string, error) {
-	client := pia.NewDirectClient(apiTimeout)
-
 	// Try cached auth IPs first
 	for _, ip := range cache.AuthIPs {
 		logger.Debug("Trying cached auth IP: %s", ip)
-		token, err := tryAuth(ctx, client, ip, cfg.PIAUser, cfg.PIAPass, fw)
+		token, err := tryAuth(ctx, ip, cfg.PIAUser, cfg.PIAPass, fw)
 		if err == nil {
 			return token, nil
 		}
@@ -176,7 +173,7 @@ func authenticate(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 
 	for _, ip := range ips {
 		logger.Debug("Trying resolved auth IP: %s", ip)
-		token, err := tryAuth(ctx, client, ip, cfg.PIAUser, cfg.PIAPass, fw)
+		token, err := tryAuth(ctx, ip, cfg.PIAUser, cfg.PIAPass, fw)
 		if err == nil {
 			return token, nil
 		}
@@ -191,7 +188,7 @@ func authenticate(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 }
 
 // tryAuth attempts authentication with a single IP.
-func tryAuth(ctx context.Context, client *http.Client, ip, user, pass string, fw *firewall.Firewall) (string, error) {
+func tryAuth(ctx context.Context, ip, user, pass string, fw *firewall.Firewall) (string, error) {
 	comment := "auth"
 	err := fw.AddExemption(ip, "443", "tcp", comment)
 	if err != nil {
@@ -199,5 +196,5 @@ func tryAuth(ctx context.Context, client *http.Client, ip, user, pass string, fw
 	}
 	defer fw.RemoveExemptions()
 
-	return pia.GenerateToken(ctx, client, ip, user, pass)
+	return pia.GenerateToken(ctx, apiTimeout, ip, user, pass)
 }

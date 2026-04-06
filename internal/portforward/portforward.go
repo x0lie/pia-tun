@@ -2,6 +2,7 @@ package portforward
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,7 +13,6 @@ import (
 	"github.com/x0lie/pia-tun/internal/firewall"
 	"github.com/x0lie/pia-tun/internal/log"
 	"github.com/x0lie/pia-tun/internal/metrics"
-	"github.com/x0lie/pia-tun/internal/pia"
 	"github.com/x0lie/pia-tun/internal/portsync"
 )
 
@@ -56,12 +56,19 @@ const (
 )
 
 func newManager(config *Config, connConfig *ConnectionConfig, cache *cacher.Cache, logger *log.Logger, metrics *metrics.Metrics, syncer *portsync.Syncer, fw *firewall.Firewall) *manager {
+	httpClient := &http.Client{
+		Timeout: 3 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
 	return &manager{
 		cfg:        config,
 		connCfg:    connConfig,
 		cache:      cache,
 		log:        logger,
-		httpClient: pia.NewBoundClient(3*time.Second, 3*time.Second),
+		httpClient: httpClient,
 		state:      &state{},
 		metrics:    metrics,
 		syncer:     syncer,
