@@ -444,6 +444,20 @@ func (m *Metrics) UpdateKillswitchDrops(packetsIn, bytesIn, packetsOut, bytesOut
 	m.lastDroppedBytesOut = bytesOut
 }
 
+func formatBytes(b int64) string {
+	const unit = 1000
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// GetStats returns  for json endpoint
 func (m *Metrics) GetStats() map[string]interface{} {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -470,9 +484,9 @@ func (m *Metrics) GetStats() map[string]interface{} {
 		"session_uptime":             log.FormatDuration(sessionUptime),
 		"container_uptime":           log.FormatDuration(containerUptime),
 		"server_latency_ms":          m.ServerLatency,
-		"bytes_received":             m.BytesReceived,
-		"bytes_transmitted":          m.BytesTransmitted,
-		"bytes_total":                m.BytesReceived + m.BytesTransmitted,
+		"bytes_received":             formatBytes(m.BytesReceived),
+		"bytes_transmitted":          formatBytes(m.BytesTransmitted),
+		"bytes_total":                formatBytes(m.BytesReceived + m.BytesTransmitted),
 		"port_forwarding_active":     m.PortForwardingActive,
 		"port_forwarding_port":       m.PortForwardingPort,
 		"reconnects_total":           m.TotalReconnects,
