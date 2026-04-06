@@ -45,7 +45,7 @@ func NewBoundTransport(dialTimeout time.Duration) *http.Transport {
 			return d.DialContext(ctx, network, addr)
 		},
 		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true, // PIA uses self-signed certs
+			InsecureSkipVerify: true, // Only applies for port signature and bind requests
 		},
 		MaxIdleConns:        10,
 		IdleConnTimeout:     90 * time.Second,
@@ -62,16 +62,11 @@ func NewBoundClient(dialTimeout, clientTimeout time.Duration) *http.Client {
 }
 
 // NewDirectClient creates an http.Client for pre-VPN API calls.
-// Not bound to any interface, skips TLS certificate verification
-// (PIA's auth and serverlist endpoints use certs that don't chain to
-// a system-trusted CA when accessed by IP).
+// Not bound to any interface.
 func NewDirectClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
 			DialContext:         (&net.Dialer{Timeout: timeout}).DialContext,
 			TLSHandshakeTimeout: 5 * time.Second,
 		},
