@@ -79,6 +79,7 @@ volumes:
 | `HC_INTERVAL`       | Health check frequency (seconds)                           | `10`    |
 | `HC_FAILURE_WINDOW` | Time in seconds for disconnected state before reconnection | `30`    |
 
+- Health checks are to NIST servers on daytime protocol (port 13)
 - `HC_INTERVAL` and `HC_FAILURE_WINDOW` defaults are fine for most users
 - You can lengthen `HC_FAILURE_WINDOW` if overly reactive to your ISP drops
 
