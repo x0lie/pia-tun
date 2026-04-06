@@ -16,8 +16,8 @@ import (
 	"github.com/x0lie/pia-tun/internal/apperrors"
 )
 
-// PIA Private Cert (caCertPath) only used by AddKey, all others use System CAs,
-// except the port signature/bind requests (no CA exists). The getSignature
+// PIA's private cert only used by AddKey and portforward package
+// (getSignature and bindPort), all others use System CAs. The getSignature
 // and bindPort functions are the only PIA interactions not listed here.
 
 const (
@@ -192,8 +192,8 @@ func AddKey(ctx context.Context, serverIP, cn, token, pubkey string) (*AddKeyRes
 	return &result, nil
 }
 
-// newAddKeyClient returns *http.Client with PIA's private CA
-func newAddKeyClient(serverIP, cn string) (*http.Client, error) {
+// GetCertPool returns *x509.CertPool for PIA's private cert
+func GetCertPool() (*x509.CertPool, error) {
 	caCert, err := os.ReadFile(caCertPath)
 	if err != nil {
 		return nil, fmt.Errorf("read PIA CA cert: %w", err)
@@ -201,6 +201,16 @@ func newAddKeyClient(serverIP, cn string) (*http.Client, error) {
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(caCert) {
 		return nil, fmt.Errorf("parse PIA CA cert")
+	}
+
+	return pool, nil
+}
+
+// newAddKeyClient returns *http.Client with PIA's private CA
+func newAddKeyClient(serverIP, cn string) (*http.Client, error) {
+	pool, err := GetCertPool()
+	if err != nil {
+		return nil, err
 	}
 
 	return &http.Client{

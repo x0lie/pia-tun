@@ -13,6 +13,7 @@ import (
 	"github.com/x0lie/pia-tun/internal/firewall"
 	"github.com/x0lie/pia-tun/internal/log"
 	"github.com/x0lie/pia-tun/internal/metrics"
+	"github.com/x0lie/pia-tun/internal/pia"
 	"github.com/x0lie/pia-tun/internal/portsync"
 )
 
@@ -55,11 +56,18 @@ const (
 	portBindDuration = 20 * time.Minute // conservative evaluation of port bind death (tested ~23 minute lifespan)
 )
 
-func newManager(config *Config, connConfig *ConnectionConfig, cache *cacher.Cache, logger *log.Logger, metrics *metrics.Metrics, syncer *portsync.Syncer, fw *firewall.Firewall) *manager {
+func newManager(config *Config, connConfig *ConnectionConfig, cache *cacher.Cache, logger *log.Logger, metrics *metrics.Metrics, syncer *portsync.Syncer, fw *firewall.Firewall) (*manager, error) {
+	pool, err := pia.GetCertPool()
+	if err != nil {
+		return nil, err
+	}
 	httpClient := &http.Client{
 		Timeout: 3 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig: &tls.Config{
+				ServerName: connConfig.ServerCN,
+				RootCAs:    pool,
+			},
 		},
 	}
 
@@ -73,7 +81,7 @@ func newManager(config *Config, connConfig *ConnectionConfig, cache *cacher.Cach
 		metrics:    metrics,
 		syncer:     syncer,
 		fw:         fw,
-	}
+	}, nil
 }
 
 func Run(ctx context.Context, cfg *Config, connCfg *ConnectionConfig, cache *cacher.Cache, metrics *metrics.Metrics, syncer *portsync.Syncer, fw *firewall.Firewall) error {
@@ -94,7 +102,10 @@ func Run(ctx context.Context, cfg *Config, connCfg *ConnectionConfig, cache *cac
 	logger.Trace("  PEER_IP: %s", connCfg.ClientIP)
 	logger.Trace("  PIA_CN: %s", connCfg.ServerCN)
 
-	m := newManager(cfg, connCfg, cache, logger, metrics, syncer, fw)
+	m, err := newManager(cfg, connCfg, cache, logger, metrics, syncer, fw)
+	if err != nil {
+		return err
+	}
 
 	m.state.bindTime = time.Now().Add(-portBindDuration + time.Minute) // To limit initial run's failure threshold to 1 minute
 
