@@ -7,6 +7,8 @@ import (
 	"github.com/x0lie/pia-tun/internal/log"
 )
 
+const retryInterval = 10 * time.Second
+
 type Client interface {
 	SyncPort(ctx context.Context, port int) error
 	Name() string
@@ -80,22 +82,8 @@ func (s *Syncer) handleNewPort(ctx context.Context, port int) {
 	clientOK := s.client == nil // true if no client configured (nothing to do)
 	scriptOK := s.script == ""  // true if no script configured
 
-	// Initial attempt
-	clientOK, scriptOK = s.trySync(ctx, port, clientOK, scriptOK)
-	if clientOK && scriptOK {
-		return
-	}
-
-	// Log first failure
-	if s.client != nil && !clientOK {
-		log.Warning("%s not reachable, will retry", s.client.Name())
-	}
-	if s.script != "" && !scriptOK {
-		log.Warning("port-sync script failed, will retry")
-	}
-
 	// Retry loop — exits on success, new port, or context cancellation
-	timer := time.NewTimer(30 * time.Second)
+	timer := time.NewTimer(0)
 	defer timer.Stop()
 
 	for {
@@ -111,7 +99,13 @@ func (s *Syncer) handleNewPort(ctx context.Context, port int) {
 			if clientOK && scriptOK {
 				return
 			}
-			timer.Reset(30 * time.Second)
+			if s.client != nil && !clientOK {
+				log.Warning("%s not reachable, will retry in %v", s.client.Name(), retryInterval)
+			}
+			if s.script != "" && !scriptOK {
+				log.Warning("port-sync script failed, will retry in %v", retryInterval)
+			}
+			timer.Reset(retryInterval)
 		}
 	}
 }
