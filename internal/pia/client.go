@@ -223,16 +223,14 @@ func newAddKeyClient(serverIP, cn string) (*http.Client, error) {
 }
 
 // newHostMappedClient creates an http.Client that connects to targetIP but uses
-// hostname for TLS SNI and the Host header.
-// Certificate verification is skipped since PIA endpoints use certs that don't
-// chain to system-trusted CAs when accessed by IP.
+// hostname for TLS SNI and the Host header. Certificate is verified against
+// the system CA pool — PIA's auth and serverlist endpoints use publicly trusted certs.
 func newHostMappedClient(timeout time.Duration, hostname, targetIP string) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
-				ServerName:         hostname,
-				InsecureSkipVerify: true,
+				ServerName: hostname,
 			},
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				_, port, _ := net.SplitHostPort(addr)
