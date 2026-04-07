@@ -265,9 +265,7 @@ func (a *App) runServices(ctx context.Context) error {
 			log.Warning("Failed to clear resolv.conf: %v", err)
 		}
 	case "dot":
-		if a.cfg.DNSMode == "dot" {
-			a.dotProxy.CloseUpstreams() // Keeps VerifyConnection from hanging on dead connections
-		}
+		a.dotProxy.CloseUpstreams() // Keeps VerifyConnection from hanging on dead connections
 	}
 
 	return err
