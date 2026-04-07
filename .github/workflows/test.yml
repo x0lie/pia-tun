@@ -65,3 +65,12 @@ jobs:
           METRICS_PORT: ${{ matrix.METRICS_PORT }}
           WG_BACKEND: ${{ matrix.WG_BACKEND }}
         run: go test -v -tags integration -timeout 5m ./tests/integration/...
+
+  result:
+    name: Run Test Suite
+    if: always()
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |    
+          [[ "${{ needs.test.result }}" == "success" ]] || exit 1
