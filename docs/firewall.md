@@ -27,15 +27,16 @@ This container implements a strict firewall using iptables-nft or iptables-legac
 - Exemptions allow us to set up the killswitch as fast as possible and register securely
 
 **How?**
-- Exemptions are specific: the PIA and DNS IPs on tcp ports 443 and 853 respectively
+- Exemptions are specific: the PIA and DNS IPs on ports 443 and 53 respectively
 - Exemptions are only used for the duration required (success or after failing for 2 seconds)
 
 **DNS chicken-and-egg:**
 - The container needs to resolve DNS to connect to PIA (their ips rotate - cannot hardcode ips), but the killswitch is up
-- On the initial connect it makes a temporary exemption to 9.9.9.9:853 (9.9.9.11:853 fallback) for resolving privateinternetaccess.com and serverlist.piaservers.net
+- On the initial connect it makes a temporary exemption to 149.112.112.9:53 (149.112.112.11:53 fallback) for resolving privateinternetaccess.com and serverlist.piaservers.net
+  - These IPs are alternate addresses for dns9.quad9.net and dns11.quad9.net
 - After the initial connection, a caching process runs every 6 hours and caches all relevant ips, pia servers, and a fresh login token to avoid needing resolution
 - If the cached endpoints ever fail during a reconnect it will escalate to resolve hostnames again.
-- **Critical:** Do NOT set your dependent services to use 9.9.9.9 or 9.9.9.11 on port 853 for the above reason.
+- **Critical:** Do NOT set your dependent services to use 149.112.112.9 or 149.112.112.11 on port 53 for the above reason.
 
 ## Preventing startup race leaks
 - You can use `depends_on: pia-tun: condition: service_healthy` for dependents to wait until killswitch is up.
