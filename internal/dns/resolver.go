@@ -12,7 +12,9 @@ import (
 	"github.com/x0lie/pia-tun/internal/log"
 )
 
-var bootstrapServers = []string{
+// defaultServers are the alternative addresses for
+// dns9.quad9.net and dns11.quad9.net
+var defaultServers = []string{
 	"149.112.112.9",
 	"149.112.112.11",
 }
@@ -25,21 +27,28 @@ type hostResult struct {
 	NXDomain bool
 }
 
-// Resolver performs Do53 resolution using Quad9 with temporary firewall exemptions.
+// Resolver performs Do53 resolution with temporary firewall exemptions.
 type Resolver struct {
-	fw  *firewall.Firewall
-	log *log.Logger
+	fw         *firewall.Firewall
+	dnsServers []string
+	log        *log.Logger
 }
 
 // NewExemptResolver creates a Resolver that uses the given Firewall for temporary
 // exemptions during DNS queries.
-func NewExemptResolver(fw *firewall.Firewall) *Resolver {
-	return &Resolver{fw: fw, log: log.New("resolver")}
+func NewExemptResolver(fw *firewall.Firewall, dns []string) *Resolver {
+	var dnsServers []string
+	if len(dns) > 0 {
+		dnsServers = dns
+	} else {
+		dnsServers = defaultServers
+	}
+	return &Resolver{fw: fw, dnsServers: dnsServers, log: log.New("resolver")}
 }
 
-// Resolve resolves a hostname to IPv4 addresses using Quad9 Do53.
+// Resolve resolves a hostname to IPv4 addresses using Do53.
 func (r *Resolver) Resolve(ctx context.Context, hostname string) ([]string, error) {
-	for _, srv := range bootstrapServers {
+	for _, srv := range r.dnsServers {
 		m, err := r.query(ctx, []string{hostname}, srv)
 		if err == nil {
 			if result, ok := m[hostname]; ok && !result.NXDomain {
@@ -55,7 +64,7 @@ func (r *Resolver) Resolve(ctx context.Context, hostname string) ([]string, erro
 // error if resolution failed entirely (e.g. no network).
 // Hostnames with transient failures are absent from the map.
 func (r *Resolver) ResolveAll(ctx context.Context, hostnames []string) (map[string]hostResult, error) {
-	for _, srv := range bootstrapServers {
+	for _, srv := range r.dnsServers {
 		m, err := r.query(ctx, hostnames, srv)
 		if err != nil {
 			continue
@@ -67,7 +76,7 @@ func (r *Resolver) ResolveAll(ctx context.Context, hostnames []string) (map[stri
 	return nil, fmt.Errorf("failed to resolve %s", strings.Join(hostnames, ", "))
 }
 
-// query performs a single DNS lookup against one Quad9 server.
+// query performs a single DNS lookup against one server.
 // A firewall exemption for port 53 is held for the duration of the query.
 // Resolves multiple hostnames in parallel under one exemption.
 func (r *Resolver) query(ctx context.Context, hostnames []string, srv string) (map[string]hostResult, error) {
@@ -129,9 +138,26 @@ func (r *Resolver) query(ctx context.Context, hostnames []string, srv string) (m
 	return results, nil
 }
 
+// ValidateDNS warns the user when DNS and BOOTSTRAP_DNS overlap one another
+func (r *Resolver) ValidateDNS(dns []string, dnsMode string) error {
+	if dnsMode == "system" || dnsMode == "do53" {
+		var overlap bool
+		for _, ip := range dns {
+			if r.isBootstrapIP(ip) {
+				log.Warning("BOOTSTRAP_DNS and DNS overlap detected: %s", ip)
+				overlap = true
+			}
+		}
+		if overlap {
+			return fmt.Errorf("cannot continue with BOOTSTRAP_DNS and DNS overlap")
+		}
+	}
+	return nil
+}
+
 // isBootstrapIP returns true when input ip matches bootstrapServers
-func isBootstrapIP(ip string) bool {
-	for _, srv := range bootstrapServers {
+func (r *Resolver) isBootstrapIP(ip string) bool {
+	for _, srv := range r.dnsServers {
 		if ip == srv {
 			return true
 		}
