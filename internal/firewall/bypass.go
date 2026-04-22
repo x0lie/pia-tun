@@ -11,14 +11,11 @@ const (
 	BypassComment  = "bypass_routes"
 )
 
-// CheckIPs are the NIST/NCAR time servers used for WAN connectivity checks.
+// WANCheckIPs are the NIST/NCAR time servers used for WAN connectivity checks.
 // Bypass routing ensures these are reachable even when the VPN tunnel is down.
 var WANCheckIPs = []string{
-	"129.6.15.28",
-	"129.6.15.29",
-	"132.163.96.1",
-	"132.163.97.1",
-	"128.138.140.44",
+	"129.6.15.29",  // Gaithersburg
+	"132.163.97.2", // Fort Collins
 }
 
 // setupBypass creates the bypass for wan check capability
