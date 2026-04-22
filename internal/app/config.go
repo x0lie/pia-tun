@@ -16,11 +16,12 @@ import (
 )
 
 type Config struct {
-	Version  string
-	LogLevel string
-	SHA      string
-	DNS      []string
-	DNSMode  string
+	Version      string
+	LogLevel     string
+	SHA          string
+	DNS          []string
+	DNSMode      string
+	BootstrapDNS []string
 
 	PIA     PIA
 	VPN     VPN
@@ -54,14 +55,16 @@ type FW struct {
 func LoadConfig() Config {
 	setupAutoEnable()
 	dnsMode, dns := parseDNS(getEnv("DNS", "pia"))
+	bootstrapDNS := parseBootstrapDNS(getEnv("BOOTSTRAP_DNS", ""))
 	log.Level = parseLogLevel(getEnv("LOG_LEVEL", "info"))
 
 	return Config{
-		Version:  getEnv("VERSION", "local"),
-		LogLevel: getEnv("LOG_LEVEL", "info"),
-		SHA:      getEnv("SHA", ""),
-		DNS:      dns,
-		DNSMode:  dnsMode,
+		Version:      getEnv("VERSION", "local"),
+		LogLevel:     getEnv("LOG_LEVEL", "info"),
+		SHA:          getEnv("SHA", ""),
+		DNS:          dns,
+		DNSMode:      dnsMode,
+		BootstrapDNS: bootstrapDNS,
 
 		PIA:     loadPIAConfig(),
 		VPN:     loadVPNConfig(),
@@ -226,6 +229,20 @@ func parseDNS(dns string) (string, []string) {
 		}
 		return "do53", servers
 	}
+}
+
+func parseBootstrapDNS(dns string) []string {
+	if dns == "" {
+		return nil
+	}
+	var servers []string
+	for _, s := range strings.Split(dns, ",") {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			servers = append(servers, s)
+		}
+	}
+	return servers
 }
 
 func setupAutoEnable() {

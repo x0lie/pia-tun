@@ -16,21 +16,31 @@
 
 ## Network/Firewall
 
-| Variable         | Description                                                                                                                    | Default |
-|------------------|--------------------------------------------------------------------------------------------------------------------------------|---------|
-| `LOCAL_NETWORKS` | CIDR ranges for tunnel bypass. Supports IPv4 and IPv6 (e.g., `192.168.1.0/24,fd00::/64`) or `all` or `none`                    | `auto`  |
-| `DNS`            | Supports `pia`, `system`, DoT (e.g., `tls://one.one.one.one,dns.mullvad.net`), or Do53 (e.g., `1.1.1.1,8.8.8.8`). Round-robin. | `pia`   |
-| `IPT_BACKEND`    | iptables backend: `nft` or `legacy`. Auto-detected if not set.                                                                 | Auto    |
+| Variable         | Description                                                                                                                    | Default                         |
+|------------------|--------------------------------------------------------------------------------------------------------------------------------|---------------------------------|
+| `LOCAL_NETWORKS` | CIDR ranges for tunnel bypass. Supports IPv4 and IPv6 (e.g., `192.168.1.0/24,fd00::/64`) or `all` or `none`                    | `auto`                          |
+| `IPT_BACKEND`    | iptables backend: `nft` or `legacy`. Auto-detected if not set.                                                                 | Auto                            |
+| `DNS`            | Supports `pia`, `system`, DoT (e.g., `tls://one.one.one.one,dns.mullvad.net`), or Do53 (e.g., `1.1.1.1,8.8.8.8`). Round-robin. | `pia`                           |
+| `BOOTSTRAP_DNS`  | Supports Do53 only. Do not set IPs that overlap with `DNS`.                                                                    | `149.112.112.9, 149.112.112.11` |
 
 ### LOCAL_NETWORKS explained
 
 - Allows bidirectional access to containers and machines on the specified networks.
 - `LOCAL_NETWORKS=all` is the same as `LOCAL_NETWORKS=10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7`.
 - Automatically includes the attached container network(s) unless set to `none`.
-  - On k8s, with CNIs like Cilium or Calico, auto-detection does not work - set to your pod CIDR or `all` for access.
+  - On k8s, with CNIs like Cilium and Calico, auto-detection does not work - set to your pod CIDR or `all` for access.
 - Accepts both private/public and IPv4/IPv6 CIDRs (single addresses need /32).
-- If using a reverse proxy on Docker, setting `LOCAL_NETWORKS` is likely unnecessary.
+- If using a reverse proxy on Docker, setting `LOCAL_NETWORKS` is often unnecessary.
 - If `DNS=pia` and `LOCAL_NETWORKS` includes PIA's DNS, DNS routes take priority (routes through tunnel).
+
+### DNS and BOOTSTRAP_DNS explained
+
+- `BOOTSTRAP_DNS` is what is used to resolve www.privateinternetaccess.com and serverlist.piaservers.net.
+  - Useful in specific cases, like for setting granular CiliumNetworkPolicy (toFQDNs).
+  - Should be left default by most users, and should not overlap with `DNS`.
+- `DNS=system` should only be used if you understand what is downstream of your default /etc/resolv.conf.
+  - With Docker this is typically a localhost loopback, which is allowed regardless of `LOCAL_NETWORKS`.
+  - It is easy to leak your DNS with this setting, most users should avoid `DNS=system`.
 
 ## Port Forwarding & Syncing
 

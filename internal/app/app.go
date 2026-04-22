@@ -150,8 +150,11 @@ func (a *App) initialize(ctx context.Context) error {
 	}
 
 	// Set up DNS
-	a.resolver = dns.NewExemptResolver(a.fw)
+	a.resolver = dns.NewExemptResolver(a.fw, a.cfg.BootstrapDNS)
 	if err := a.retryWithWANCheck(ctx, a.setupDNS); err != nil {
+		return err
+	}
+	if err := a.resolver.ValidateDNS(a.cfg.DNS, a.cfg.DNSMode); err != nil {
 		return err
 	}
 	dns.SetNetResolver()
@@ -281,6 +284,7 @@ func (a *App) setupDNS(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("%w: %v", apperrors.ErrFatal, err)
 		}
+		a.cfg.DNS = resolvServers
 		log.Success("%s", strings.Join(resolvServers, ", "))
 		return nil
 	case "do53":
