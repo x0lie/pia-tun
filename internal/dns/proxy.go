@@ -361,10 +361,6 @@ func (p *Proxy) resolveHostnames(ctx context.Context, hostnames []string) error 
 			continue
 		}
 		for _, ip := range result.IPs {
-			if isBootstrapIP(ip) {
-				p.log.Debug("Cannot use %s from %s (bootstrap DNS), skipping", ip, h)
-				continue
-			}
 			p.upstreams = append(p.upstreams, &upstream{
 				addr: net.JoinHostPort(ip, "853"),
 				tlsCfg: &tls.Config{
