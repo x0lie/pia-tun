@@ -2,7 +2,6 @@ package dns
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -13,14 +12,9 @@ import (
 	"github.com/x0lie/pia-tun/internal/log"
 )
 
-type dnsServer struct {
-	ip      string
-	tlsHost string
-}
-
-var bootstrapServers = []dnsServer{
-	{"9.9.9.9", "dns.quad9.net"},
-	{"9.9.9.11", "dns11.quad9.net"},
+var bootstrapServers = []string{
+	"149.112.112.9",
+	"149.112.112.11",
 }
 
 // hostResult holds the DNS lookup result for a single hostname.
@@ -31,9 +25,7 @@ type hostResult struct {
 	NXDomain bool
 }
 
-// Resolver performs DNS-over-TLS resolution using Quad9 with temporary firewall
-// exemptions. This is used for pre-VPN name resolution where the system resolver
-// is unavailable (killswitch blocks port 53).
+// Resolver performs Do53 resolution using Quad9 with temporary firewall exemptions.
 type Resolver struct {
 	fw  *firewall.Firewall
 	log *log.Logger
@@ -45,11 +37,10 @@ func NewExemptResolver(fw *firewall.Firewall) *Resolver {
 	return &Resolver{fw: fw, log: log.New("resolver")}
 }
 
-// Resolve resolves a hostname to IPv4 addresses using Quad9 DNS-over-TLS.
-// Tries 9.9.9.9 first, falls back to 9.9.9.11.
+// Resolve resolves a hostname to IPv4 addresses using Quad9 Do53.
 func (r *Resolver) Resolve(ctx context.Context, hostname string) ([]string, error) {
 	for _, srv := range bootstrapServers {
-		m, err := r.queryDoT(ctx, []string{hostname}, srv)
+		m, err := r.query(ctx, []string{hostname}, srv)
 		if err == nil {
 			if result, ok := m[hostname]; ok && !result.NXDomain {
 				return result.IPs, nil
@@ -65,7 +56,7 @@ func (r *Resolver) Resolve(ctx context.Context, hostname string) ([]string, erro
 // Hostnames with transient failures are absent from the map.
 func (r *Resolver) ResolveAll(ctx context.Context, hostnames []string) (map[string]hostResult, error) {
 	for _, srv := range bootstrapServers {
-		m, err := r.queryDoT(ctx, hostnames, srv)
+		m, err := r.query(ctx, hostnames, srv)
 		if err != nil {
 			continue
 		}
@@ -76,12 +67,15 @@ func (r *Resolver) ResolveAll(ctx context.Context, hostnames []string) (map[stri
 	return nil, fmt.Errorf("failed to resolve %s", strings.Join(hostnames, ", "))
 }
 
-// queryDoT performs a single DNS-over-TLS lookup against one Quad9 server.
-// A firewall exemption for port 853 is held for the duration of the query.
+// query performs a single DNS lookup against one Quad9 server.
+// A firewall exemption for port 53 is held for the duration of the query.
 // Resolves multiple hostnames in parallel under one exemption.
-func (r *Resolver) queryDoT(ctx context.Context, hostnames []string, srv dnsServer) (map[string]hostResult, error) {
-	if err := r.fw.AddExemption(srv.ip, "853", "tcp", "dns_resolve"); err != nil {
-		return nil, fmt.Errorf("add exemption for %s: %w", srv.ip, err)
+func (r *Resolver) query(ctx context.Context, hostnames []string, srv string) (map[string]hostResult, error) {
+	if err := r.fw.AddExemptions(
+		firewall.Exemption{IP: srv, Port: "53", Proto: "udp", Comment: "dns_resolve"},
+		firewall.Exemption{IP: srv, Port: "53", Proto: "tcp", Comment: "dns_resolve"},
+	); err != nil {
+		return nil, fmt.Errorf("add exemption for %s: %w", srv, err)
 	}
 	defer r.fw.RemoveExemptions()
 
@@ -97,17 +91,14 @@ func (r *Resolver) queryDoT(ctx context.Context, hostnames []string, srv dnsServ
 		go func(h string) {
 			rslv := &net.Resolver{ // fresh resolver per goroutine
 				PreferGo: true,
-				Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
-					d := &tls.Dialer{
-						NetDialer: &net.Dialer{Timeout: 2 * time.Second},
-						Config:    &tls.Config{ServerName: srv.tlsHost},
-					}
-					return d.DialContext(ctx, "tcp", net.JoinHostPort(srv.ip, "853"))
+				Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+					d := &net.Dialer{Timeout: 2 * time.Second}
+					return d.DialContext(ctx, network, net.JoinHostPort(srv, "53"))
 				},
 			}
 			addrs, err := rslv.LookupIP(ctx, "ip4", h)
 			if err != nil {
-				r.log.Debug("LookupIP %s via %s failed: %v", h, srv.ip, err)
+				r.log.Debug("LookupIP %s via %s failed: %v", h, srv, err)
 				var dnsErr *net.DNSError
 				if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
 					ch <- res{hostname: h, nxdomain: true}
@@ -120,7 +111,7 @@ func (r *Resolver) queryDoT(ctx context.Context, hostnames []string, srv dnsServ
 			for i, addr := range addrs {
 				ips[i] = addr.String()
 			}
-			r.log.Debug("Resolved %s to %v via %s", h, ips, srv.ip)
+			r.log.Debug("Resolved %s to %v via %s", h, ips, srv)
 			ch <- res{hostname: h, ips: ips}
 		}(h)
 	}
@@ -138,9 +129,10 @@ func (r *Resolver) queryDoT(ctx context.Context, hostnames []string, srv dnsServ
 	return results, nil
 }
 
+// isBootstrapIP returns true when input ip matches bootstrapServers
 func isBootstrapIP(ip string) bool {
 	for _, srv := range bootstrapServers {
-		if ip == srv.ip {
+		if ip == srv {
 			return true
 		}
 	}
