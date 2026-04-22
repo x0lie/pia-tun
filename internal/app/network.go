@@ -18,7 +18,6 @@ import (
 var ipServices = []string{
 	"api.ipify.org",
 	"icanhazip.com",
-	"ifconfig.me",
 }
 
 const ipFetchTimeout = 5 * time.Second
