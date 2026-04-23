@@ -159,8 +159,10 @@ func (a *App) initialize(ctx context.Context) error {
 	}
 	dns.SetNetResolver()
 
-	// Non-fatal: capture pre-VPN IP for leak detection
-	a.preVPNIP = a.captureRealIP(ctx)
+	// Non-fatal: capture pre-VPN IP for leak detection and user reference
+	if a.cfg.GetRealIP {
+		a.preVPNIP = a.captureRealIP(ctx)
+	}
 
 	return nil
 }

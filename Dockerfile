@@ -56,6 +56,7 @@ ENV PIA_USER="" \
     WG_BACKEND="" \
     MTU="1420" \
     LOCAL_NETWORKS="" \
+    BOOTSTRAP_DNS="" \
     DNS="pia" \
     IPT_BACKEND="" \
     PF_ENABLED=false \
@@ -75,7 +76,8 @@ ENV PIA_USER="" \
     HC_FAILURE_WINDOW=30 \
     METRICS_ENABLED=true \
     METRICS_PORT=9090 \
-    INSTANCE_NAME=""
+    INSTANCE_NAME="" \
+    GET_REAL_IP=true
 
 EXPOSE 1080 8888 9090
 

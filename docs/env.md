@@ -95,8 +95,9 @@ volumes:
 
 ## Metrics & Observability
 
-| Variable          | Description                                                              | Default |
-|-------------------|--------------------------------------------------------------------------|---------|
-| `METRICS_ENABLED` | Enable Prometheus metrics endpoint (listen on localhost only by default) | `true`  |
-| `METRICS_PORT`    | Metrics server port                                                      | `9090`  |
-| `INSTANCE_NAME`   | Prometheus label for users running more than one container               | None    |
+| Variable          | Description                                                                  | Default |
+|-------------------|------------------------------------------------------------------------------|---------|
+| `METRICS_ENABLED` | Enable Prometheus metrics endpoint (listen on localhost only by default)     | `true`  |
+| `METRICS_PORT`    | Metrics server port                                                          | `9090`  |
+| `INSTANCE_NAME`   | Prometheus label for users running more than one container                   | None    |
+| `GET_REAL_IP`     | Fetches and logs pre-VPN IP on startup; disable for minimal egress VPN setup | `true`  |
