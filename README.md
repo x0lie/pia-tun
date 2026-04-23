@@ -21,7 +21,7 @@ A feature-rich and reliable VPN container image for PIA + WireGuard
 <img src="https://raw.githubusercontent.com/x0lie/pia-tun/main/img/pia-tun-image.png" alt="Title image" width="57%">
 
 [![Latest Version](https://img.shields.io/github/v/release/x0lie/pia-tun?label=version&style=flat-round)](https://github.com/x0lie/pia-tun/releases)
-[![Docker Image Size](https://img.shields.io/docker/image-size/x0lie/pia-tun/main?style=flat-round)](https://hub.docker.com/r/x0lie/pia-tun)
+[![Docker Image Size](https://img.shields.io/docker/image-size/x0lie/pia-tun/latest?style=flat-round)](https://hub.docker.com/r/x0lie/pia-tun)
 
 [![Docker Pulls](https://img.shields.io/docker/pulls/x0lie/pia-tun?style=flat-round)](https://hub.docker.com/r/x0lie/pia-tun)
 [![GitHub stars](https://img.shields.io/github/stars/x0lie/pia-tun?label=github+stars&style=flat-round)](https://github.com/x0lie/pia-tun/stargazers)
