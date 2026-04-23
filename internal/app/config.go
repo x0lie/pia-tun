@@ -22,6 +22,7 @@ type Config struct {
 	DNS          []string
 	DNSMode      string
 	BootstrapDNS []string
+	GetRealIP    bool
 
 	PIA     PIA
 	VPN     VPN
@@ -65,6 +66,7 @@ func LoadConfig() Config {
 		DNS:          dns,
 		DNSMode:      dnsMode,
 		BootstrapDNS: bootstrapDNS,
+		GetRealIP:    getEnvBool("GET_REAL_IP", true),
 
 		PIA:     loadPIAConfig(),
 		VPN:     loadVPNConfig(),
