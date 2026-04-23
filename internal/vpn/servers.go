@@ -142,7 +142,7 @@ func onePerRegion(candidates []pia.Server) []pia.Server {
 }
 
 // raceServers tests latency to candidates in parallel and returns the lowest-latency server.
-// Each candidate gets a temporary firewall exemption for its IP on port 443.
+// Each candidate gets a temporary firewall exemption for its IP on tcp port 1337.
 func raceServers(ctx context.Context, candidates []pia.Server, fw *firewall.Firewall, logger *log.Logger) (pia.Server, time.Duration, error) {
 	if len(candidates) == 0 {
 		return pia.Server{}, 0, fmt.Errorf("no server candidates")
@@ -152,7 +152,7 @@ func raceServers(ctx context.Context, candidates []pia.Server, fw *firewall.Fire
 	// Add all firewall exemptions upfront
 	specs := make([]firewall.Exemption, len(candidates))
 	for i, srv := range candidates {
-		specs[i] = firewall.Exemption{IP: srv.IP, Port: "443", Proto: "tcp", Comment: srv.CN}
+		specs[i] = firewall.Exemption{IP: srv.IP, Port: "1337", Proto: "tcp", Comment: srv.CN}
 	}
 	if err := fw.AddExemptions(specs...); err != nil {
 		return pia.Server{}, 0, fmt.Errorf("raceServers: %w", err)
@@ -237,7 +237,7 @@ loop:
 
 func measureLatency(ctx context.Context, ip string) time.Duration {
 	start := time.Now()
-	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(ip, "443"))
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(ip, "1337"))
 	if err != nil {
 		return 0
 	}
