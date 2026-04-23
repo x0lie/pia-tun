@@ -18,7 +18,7 @@ networks:
 
 services:
   traefik:
-    image: traefik:v3.6
+    image: traefik:latest
     container_name: traefik
     networks:
       - traefik
@@ -61,9 +61,6 @@ services:
     container_name: qbittorrent
     network_mode: "service:pia-tun"
     restart: unless-stopped
-    environment:
-      - PUID=1000
-      - PGID=1000
     volumes:
       - ./qbittorrent/config:/config
       - ./qbittorrent/downloads:/downloads
