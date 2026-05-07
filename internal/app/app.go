@@ -176,6 +176,7 @@ func (a *App) connect(ctx context.Context) error {
 		PIAUser:    a.cfg.PIA.User,
 		PIAPass:    a.cfg.PIA.Pass,
 		Location:   a.cfg.PIA.Location,
+		DIPToken:   a.cfg.PIA.DIPToken,
 		PFRequired: a.cfg.PF.Enabled,
 		ManualCN:   a.cfg.PIA.CN,
 		ManualIP:   a.cfg.PIA.IP,

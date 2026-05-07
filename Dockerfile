@@ -11,7 +11,7 @@ RUN cd cmd/pia-tun && \
     CGO_ENABLED=0 go build \
     -ldflags="-w -s" \
     -trimpath \
-    -o /build/pia-tun . 
+    -o /build/pia-tun .
 
 RUN CGO_ENABLED=0 go build \
     -ldflags="-w -s" \
@@ -51,6 +51,7 @@ ENV VERSION=${VERSION} \
 ENV PIA_USER="" \
     PIA_PASS="" \
     PIA_LOCATIONS="all" \
+    PIA_DIP_TOKEN="" \
     LOG_LEVEL=info \
     TZ="" \
     WG_BACKEND="" \

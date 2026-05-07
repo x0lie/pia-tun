@@ -1,6 +1,7 @@
 package pia
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/x0lie/pia-tun/internal/apperrors"
@@ -23,7 +25,7 @@ import (
 const (
 	AuthHostname       = "www.privateinternetaccess.com"
 	ServerlistHostname = "serverlist.piaservers.net"
-	authPath           = "/gtoken/generateToken"
+	authPath           = "/api/client/v2/token"
 	serverListPath     = "/vpninfo/servers/v6"
 	addKeyPort         = "1337"
 	caCertPath         = "/etc/pia-tun/ca.rsa.4096.crt"
@@ -36,11 +38,15 @@ func GenerateToken(ctx context.Context, timeout time.Duration, ip, user, pass st
 	// Use hostname in URL for correct Host header, but connect to IP
 	reqURL := fmt.Sprintf("https://%s%s", AuthHostname, authPath)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	form := url.Values{}
+	form.Set("username", user)
+	form.Set("password", pass)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", fmt.Errorf("create auth request: %w", err)
 	}
-	req.SetBasicAuth(user, pass)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	// Create a client that connects to the IP but uses hostname for SNI
 	authClient := newHostMappedClient(timeout, AuthHostname, ip)
@@ -187,6 +193,114 @@ func AddKey(ctx context.Context, serverIP, cn, token, pubkey string) (*AddKeyRes
 
 	if result.Status != "OK" {
 		return nil, fmt.Errorf("token rejected (status: %s)", result.Status)
+	}
+
+	return &result, nil
+}
+
+// ResolveDIP resolves a DIP token to its dedicated server details.
+// authIP is a resolved IP for www.privateinternetaccess.com.
+func ResolveDIP(ctx context.Context, timeout time.Duration, authIP, authToken, dipToken string) (*DIPInfo, error) {
+	type requestBody struct {
+		Tokens []string `json:"tokens"`
+	}
+	body, err := json.Marshal(requestBody{Tokens: []string{dipToken}})
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	reqURL := fmt.Sprintf("https://%s/api/client/v2/dedicated_ip", AuthHostname)
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create dip request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Token "+authToken)
+
+	client := newHostMappedClient(timeout, AuthHostname, authIP)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("%w: DIP auth failed (HTTP %d): %s", apperrors.ErrFatal, resp.StatusCode, string(respBody))
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result []struct {
+		Status string `json:"status"`
+		IP     string `json:"ip"`
+		CN     string `json:"cn"`
+		ID     string `json:"id"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("empty response")
+	}
+	if result[0].Status != "active" {
+		return nil, fmt.Errorf("%w: DIP token not active (status: %s)", apperrors.ErrFatal, result[0].Status)
+	}
+
+	return &DIPInfo{
+		CN:     result[0].CN,
+		IP:     result[0].IP,
+		Region: result[0].ID,
+	}, nil
+}
+
+// AddKeyDIP registers a WireGuard public key for a dedicated IP server.
+// Authentication uses the DIP token via HTTP Basic Auth instead of the normal auth token.
+func AddKeyDIP(ctx context.Context, serverIP, cn, dipToken, pubkey string) (*AddKeyResponse, error) {
+	client, err := newAddKeyClient(serverIP, cn)
+	if err != nil {
+		return nil, fmt.Errorf("create addkey client: %w", err)
+	}
+
+	params := url.Values{}
+	params.Set("pubkey", pubkey)
+	reqURL := fmt.Sprintf("https://%s:%s/addKey?%s", cn, addKeyPort, params.Encode())
+
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create addkey request: %w", err)
+	}
+	req.SetBasicAuth("dedicated_ip_"+dipToken, serverIP)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("DIP token rejected (HTTP %d)", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	var result AddKeyResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
+	}
+	if result.Status != "OK" {
+		return nil, fmt.Errorf("DIP token rejected (status: %s)", result.Status)
 	}
 
 	return &result, nil
