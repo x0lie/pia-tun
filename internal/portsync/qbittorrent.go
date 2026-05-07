@@ -78,7 +78,7 @@ func (q *qBittorrent) login(ctx context.Context) error {
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("unexpected status %d, body=%s", resp.StatusCode, string(body))
 	}
 	q.log.Debug("Login successful (status=%d)", resp.StatusCode)
