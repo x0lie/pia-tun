@@ -9,6 +9,7 @@
 | `PIA_USER`      | PIA username (or use `/run/secrets/pia_user`)                                                         | Required |
 | `PIA_PASS`      | PIA password (or use `/run/secrets/pia_pass`)                                                         | Required |
 | `PIA_LOCATIONS` | Comma-separated locations (e.g., `ca_ontario,ca_toronto`). Tests latency and selects the best server. | `all`    |
+| `PIA_DIP_TOKEN` | PIA Dedicated IP token (or use `/run/secrets/pia_dip_token`)                                          | None     |
 | `LOG_LEVEL`     | Logging verbosity: `error`, `info`, `debug`, `trace`                                                  | `info`   |
 | `TZ`            | Changes logging timestamps from UTC to a specified timezone (e.g., `America/New_York`)                | None     |
 | `WG_BACKEND`    | WireGuard implementation: `kernel` (faster) or `userspace` (wireguard-go). Auto-detected if not set.  | Auto     |

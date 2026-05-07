@@ -38,6 +38,7 @@ type PIA struct {
 	User     string
 	Pass     string
 	Location string
+	DIPToken string
 	CN       string
 	IP       string
 }
@@ -84,6 +85,7 @@ func loadPIAConfig() PIA {
 		User:     getEnvOrSecret("PIA_USER", ""),
 		Pass:     getEnvOrSecret("PIA_PASS", ""),
 		Location: getEnv("PIA_LOCATIONS", "all"),
+		DIPToken: getEnvOrSecret("PIA_DIP_TOKEN", ""),
 		CN:       getEnv("PIA_CN", ""),
 		IP:       getEnv("PIA_IP", ""),
 	}
