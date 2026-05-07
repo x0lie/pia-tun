@@ -15,6 +15,7 @@ A feature-rich and reliable VPN container image for PIA + WireGuard
 - **Smart server selection** - Chooses the lowest-latency server from selected location(s), or from all locations
 - **Minimal host support** - Supports WireGuard userspace (wireguard-go) and iptables-legacy auto-fallback
 - **No manual auth token** - Auth token acquired automatically and kept fresh
+- **Dedicated IP support** - Connect to a reserved PIA IP using your dedicated IP token
 - **Multi-architecture images** - amd64, arm64, and armv7
 
 ---
@@ -30,7 +31,7 @@ A feature-rich and reliable VPN container image for PIA + WireGuard
 
 Versions: `latest`, `develop`, and semantic (v1, v1.0, v1.0.0)
 
-**Copy-Paste Examples**: 
+**Copy-Paste Examples**:
 - [qbittorrent](https://github.com/x0lie/pia-tun/blob/main/docs/compose-examples/qbittorrent.md)
 - [reverse-proxy (traefik)](https://github.com/x0lie/pia-tun/blob/main/docs/compose-examples/traefik.md)
 - [legacy machines](https://github.com/x0lie/pia-tun/blob/main/docs/compose-examples/legacy-machines.md)

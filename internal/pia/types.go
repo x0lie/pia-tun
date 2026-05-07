@@ -18,6 +18,13 @@ type Server struct {
 	PF         bool   `json:"pf"`
 }
 
+// DIPInfo contains the dedicated server details returned by PIA's DIP API.
+type DIPInfo struct {
+	CN     string
+	IP     string
+	Region string
+}
+
 // AddKeyResponse contains the WireGuard tunnel parameters returned by
 // PIA's addKey API after registering a client public key.
 type AddKeyResponse struct {

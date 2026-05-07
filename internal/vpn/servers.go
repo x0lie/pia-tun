@@ -17,32 +17,38 @@ import (
 	"github.com/x0lie/pia-tun/internal/pia"
 )
 
-// selectServer fetches the server list, merges with cache, and selects by latency.
-// Flow: fetch fresh (cached IP or DNS) → merge with cache → filter → latency test
+// getServers fetches the serverlist and merges with the existing cache
+func getServers(ctx context.Context, fw *firewall.Firewall, cache *cacher.Cache, resolver *dns.Resolver, logger *log.Logger) error {
+	// If no cached ips, resolve
+	if cache.ServerListIPs == nil {
+		ips, err := resolver.Resolve(ctx, pia.ServerlistHostname)
+		if err != nil {
+			return err
+		}
+		cache.MergeServerListIPs(ips)
+		logger.Debug("Serverlist IPs resolved and cached")
+	}
+
+	// Gather and cache servers, clear IPs if failure
+	servers, err := tryServerListIPs(ctx, cache.ServerListIPs, fw, logger)
+	if err != nil {
+		cache.ClearServerListIPs()
+		log.Warning("Cleared cached serverlist IPs")
+		return err
+	}
+	logger.Debug("Servers fetched and cached")
+	cache.MergeServers(servers)
+
+	return nil
+}
+
+// selectServer filters server selection by config and verifies result, returns lowest latency endpoint
 func selectServer(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *dns.Resolver, logger *log.Logger) (pia.Server, time.Duration, error) {
 	if cfg.Location == "all" {
 		log.Step("Selecting best server globally...")
 	} else {
 		log.Step("Selecting best server from %s...", cfg.Location)
 	}
-
-	// If no cached ips, resolve
-	if cache.ServerListIPs == nil {
-		ips, err := resolver.Resolve(ctx, pia.ServerlistHostname)
-		if err != nil {
-			return pia.Server{}, 0, err
-		}
-		cache.MergeServerListIPs(ips)
-	}
-
-	// Gather and cache servers, clear IPs if failure
-	servers, err := tryServerListIPs(ctx, cache.ServerListIPs, fw, logger)
-	if err != nil {
-		log.Warning("Cleared cached serverlist IPs")
-		cache.ClearServerListIPs()
-		return pia.Server{}, 0, err
-	}
-	cache.MergeServers(servers)
 
 	var candidates []pia.Server
 	if cfg.Location != "all" {
