@@ -1,6 +1,6 @@
 module github.com/x0lie/pia-tun
 
-go 1.26.2
+go 1.26.3
 
 require (
 	github.com/coreos/go-iptables v0.8.0
