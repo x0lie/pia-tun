@@ -104,15 +104,6 @@ func Run(ctx context.Context, cache *Cache, piaUser string, piaPass string) erro
 
 	logger.Debug("Starting with refresh interval: %v", cfg.refreshInterval)
 
-	// Initial refresh on startup
-	logger.Debug("Performing initial cache refresh")
-	if err := refreshAll(ctx, logger, cfg, cache); err != nil {
-		logger.Debug("Initial cache refresh failed: %v", err)
-	} else {
-		logger.Debug("Cache initialized")
-	}
-
-	// Periodic refresh
 	ticker := time.NewTicker(cfg.refreshInterval)
 	defer ticker.Stop()
 
