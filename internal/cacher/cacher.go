@@ -2,7 +2,12 @@ package cacher
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +18,7 @@ import (
 const (
 	maxCachedIPs = 5
 	maxTokenAge  = 23 * time.Hour
+	tokenFile    = "/run/pia-tun/token"
 	timeout      = 15 * time.Second
 )
 
@@ -33,6 +39,25 @@ type Cache struct {
 	AuthIPs       []string
 	ServerListIPs []string
 	Servers       []pia.Server
+}
+
+// New creates and returns a new Cache instance, loads persistent auth token into instance
+func New() *Cache {
+	token, timestamp, err := readTokenFile()
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Warning("Failed to load persisted token: %v", err)
+		}
+		return &Cache{}
+	}
+	if time.Since(timestamp) > maxTokenAge {
+		os.Remove(tokenFile)
+		return &Cache{}
+	}
+	return &Cache{
+		Token:     token,
+		TokenTime: timestamp,
+	}
 }
 
 func refreshAll(ctx context.Context, logger *log.Logger, cfg *config, c *Cache) error {
@@ -89,6 +114,7 @@ func refreshAll(ctx context.Context, logger *log.Logger, cfg *config, c *Cache) 
 	return lastErr
 }
 
+// Run starts the cacher process
 func Run(ctx context.Context, cache *Cache, piaUser string, piaPass string) error {
 	if cache == nil {
 		cache = &Cache{}
@@ -150,10 +176,12 @@ func resolveIPv4(ctx context.Context, hostname string) ([]string, error) {
 	return ips, nil
 }
 
+// MergeAuthIPs merges input IPs into existing Cache.AuthIPs
 func (c *Cache) MergeAuthIPs(newIPs []string) {
 	c.AuthIPs = mergeIPs(c.AuthIPs, newIPs, maxCachedIPs)
 }
 
+// MergeServerListIPs merges input IPs into existing Cache.ServerListIPs
 func (c *Cache) MergeServerListIPs(newIPs []string) {
 	c.ServerListIPs = mergeIPs(c.ServerListIPs, newIPs, maxCachedIPs)
 }
@@ -197,12 +225,14 @@ func (c *Cache) MergeServers(newServers []pia.Server) {
 	}
 }
 
+// GetToken returns the current auth token
 func (c *Cache) GetToken() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.Token
 }
 
+// TokenFresh returns true if token is < 23 hours old
 func (c *Cache) TokenFresh() (bool, time.Duration) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -210,18 +240,46 @@ func (c *Cache) TokenFresh() (bool, time.Duration) {
 	return c.Token != "" && age < maxTokenAge, age
 }
 
+// SetToken writes the input token and current time to /run/pia-tun/token, and sets the values in Cache.Token and Cache.TokenTime
 func (c *Cache) SetToken(token string) {
+	content := token + "\n" + strconv.FormatInt(time.Now().Unix(), 10) + "\n"
+	if err := os.WriteFile(tokenFile, []byte(content), 0600); err != nil {
+		log.Warning("Failed to persist token: %v", err)
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Token = token
 	c.TokenTime = time.Now()
 }
 
+// ClearToken removes /run/pia-tun/token, and clears Cache.Token and Cache.TokenTime
 func (c *Cache) ClearToken() {
+	os.Remove(tokenFile)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.Token = ""
 	c.TokenTime = time.Time{}
 }
 
+// ClearServerListIPs removes all cached ServerListIPs
 func (c *Cache) ClearServerListIPs() {
 	c.ServerListIPs = nil
+}
+
+func readTokenFile() (string, time.Time, error) {
+	data, err := os.ReadFile(tokenFile)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	lines := strings.SplitN(strings.TrimSpace(string(data)), "\n", 2)
+	if len(lines) != 2 {
+		return "", time.Time{}, fmt.Errorf("malformed token file")
+	}
+	unixSec, err := strconv.ParseInt(lines[1], 10, 64)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("invalid timestamp: %w", err)
+	}
+	return lines[0], time.Unix(unixSec, 0), nil
 }

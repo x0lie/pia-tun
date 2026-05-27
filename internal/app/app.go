@@ -49,9 +49,8 @@ type App struct {
 // reconnection, and cleanup.
 func Run(ctx context.Context) error {
 	a := &App{
-		cfg:   LoadConfig(),
-		log:   log.New("app"),
-		cache: &cacher.Cache{},
+		cfg: LoadConfig(),
+		log: log.New("app"),
 	}
 	a.logConfig()
 	if err := a.cfg.validate(); err != nil {
@@ -163,6 +162,9 @@ func (a *App) initialize(ctx context.Context) error {
 	if a.cfg.GetRealIP {
 		a.preVPNIP = a.captureRealIP(ctx)
 	}
+
+	// Set up cache; load token from file into *cacher.Cache
+	a.cache = cacher.New()
 
 	return nil
 }
