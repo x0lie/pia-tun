@@ -189,6 +189,10 @@ func authenticate(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 		if errors.Is(err, apperrors.ErrFatal) {
 			return "", fmt.Errorf("%w\n    Check PIA_USER/PASS or secrets pia_user/pass", err)
 		}
+		// Check for rate limited
+		if errors.Is(err, apperrors.ErrRateLimited) {
+			return "", fmt.Errorf("%w\n    To avoid future rate limiting make the token persist:\n    volumes:\n      - ./pia-tun:/run/pia-tun/", err)
+		}
 		logger.Debug("Auth via %s failed: %v", ip, err)
 	}
 
@@ -209,6 +213,10 @@ func authenticate(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 		// Check for auth errors (fatal, don't retry)
 		if errors.Is(err, apperrors.ErrFatal) {
 			return "", fmt.Errorf("%w\n    Check PIA_USER/PASS or secrets pia_user/pass", err)
+		}
+		// Check for rate limited
+		if errors.Is(err, apperrors.ErrRateLimited) {
+			return "", fmt.Errorf("%w\n    To avoid future rate limiting make the token persist:\n    volumes:\n      - ./pia-tun:/run/pia-tun/", err)
 		}
 		logger.Debug("Auth via %s failed: %v", ip, err)
 	}

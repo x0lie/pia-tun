@@ -65,6 +65,9 @@ func GenerateToken(ctx context.Context, timeout time.Duration, ip, user, pass st
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return "", fmt.Errorf("%w: invalid credentials (HTTP %d)", apperrors.ErrFatal, resp.StatusCode)
 	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return "", fmt.Errorf("%w (HTTP %d)", apperrors.ErrRateLimited, resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
