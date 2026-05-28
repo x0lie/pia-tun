@@ -334,6 +334,19 @@ func (a *App) retryWithWANCheck(ctx context.Context, fn func(context.Context) er
 			return err
 		}
 
+		// Rate limited
+		if errors.Is(err, apperrors.ErrRateLimited) {
+			log.Warning("%s", err.Error())
+			log.Info("")
+			log.Warning("Sleeping for 1h to avoid extending ban...")
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(1 * time.Hour):
+			}
+			continue
+		}
+
 		// Non-fatal errors
 		log.Warning("%s", err.Error())
 		if !wan.Check(ctx) {
