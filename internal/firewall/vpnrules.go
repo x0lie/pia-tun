@@ -40,7 +40,6 @@ func (fw *Firewall) AddExemption(ip, port, proto, comment string) error {
 	// Append Rule to chain
 	if err := fw.ipt4.Append(tableFilter, chainExempt,
 		"-d", ip, "-p", proto, "--dport", port,
-		"-m", "comment", "--comment", comment,
 		"-j", "ACCEPT",
 	); err != nil {
 		return fmt.Errorf("%s: append exemption: %w", chainExempt, err)
@@ -59,7 +58,6 @@ func (fw *Firewall) AddExemptions(specs ...Exemption) error {
 	for _, s := range specs {
 		if err := fw.ipt4.Append(tableFilter, chainExempt,
 			"-d", s.IP, "-p", s.Proto, "--dport", s.Port,
-			"-m", "comment", "--comment", s.Comment,
 			"-j", "ACCEPT",
 		); err != nil {
 			fw.log.Debug("Failed to add exemption %s: %v", s.Comment, err)
