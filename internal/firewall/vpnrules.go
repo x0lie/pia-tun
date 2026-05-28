@@ -89,23 +89,20 @@ func (fw *Firewall) RemoveExemptions() {
 
 // addVPN inserts VPN interface rules into the killswitch.
 func (fw *Firewall) addVPN(ipv6Enabled bool) error {
-	ifaceComment := "vpn_interface"
-	fwmarkComment := "vpn_fwmark"
-
-	fwmarkSpec := []string{"-m", "mark", "--mark", fwmark, "-m", "comment", "--comment", fwmarkComment, "-j", "ACCEPT"}
+	fwmarkSpec := []string{"-m", "mark", "--mark", fwmark, "-j", "ACCEPT"}
 	if err := fw.ipt4.Insert(tableFilter, ChainOut, vpnInsertPos, fwmarkSpec...); err != nil {
 		return fmt.Errorf("insert VPN interface rule: %w", err)
 	}
 	fw.log.Debug("fwmark ACCEPT added to %s", ChainOut)
 
-	ifaceSpec := []string{"-o", "pia0", "-m", "comment", "--comment", ifaceComment, "-j", "ACCEPT"}
+	ifaceSpec := []string{"-o", "pia0", "-j", "ACCEPT"}
 	if err := fw.ipt4.Insert(tableFilter, ChainOut, vpnInsertPos, ifaceSpec...); err != nil {
 		return fmt.Errorf("insert VPN interface rule: %w", err)
 	}
 	fw.log.Debug("pia0 ACCEPT added to %s", ChainOut)
 
 	if ipv6Enabled {
-		ifaceSpec6 := []string{"-o", "pia0", "-m", "comment", "--comment", ifaceComment, "-j", "ACCEPT"}
+		ifaceSpec6 := []string{"-o", "pia0", "-j", "ACCEPT"}
 		if err := fw.ipt6.Insert(tableFilter, chainOut6, vpnInsertPos, ifaceSpec6...); err != nil {
 			return fmt.Errorf("insert IPv6 VPN interface rule: %w", err)
 		}
