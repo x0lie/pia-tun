@@ -20,9 +20,10 @@ type Firewall struct {
 	ipt6    *iptables.IPTables
 	log     *log.Logger
 
-	// Killswitch state (protected by mu)
-	mu     sync.Mutex
-	active bool
+	// Killswitch state
+	mu         sync.Mutex
+	active     bool
+	activePort int
 }
 
 // New creates a Firewall with auto-detected or manually specified iptables backend.

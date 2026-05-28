@@ -2,11 +2,7 @@ package firewall
 
 import (
 	"fmt"
-	"os/exec"
-	"regexp"
-	"sort"
 	"strconv"
-	"strings"
 )
 
 const (
@@ -16,8 +12,6 @@ const (
 	tableFilter   = "filter"
 	chainExempt   = "VPN_EXEMPTIONS"
 )
-
-var PortForwardComments = []string{"port_forward_tcp", "port_forward_udp"}
 
 type Exemption struct {
 	IP, Port, Proto, Comment string
@@ -119,16 +113,15 @@ func (fw *Firewall) AllowForwardedPort(port int) error {
 	portStr := strconv.Itoa(port)
 
 	for _, proto := range []string{"tcp", "udp"} {
-		comment := "port_forward_" + proto
 		spec := []string{
 			"-i", "pia0", "-p", proto, "--dport", portStr,
 			"-j", "ACCEPT",
-			"-m", "comment", "--comment", comment,
 		}
 		if err := fw.ipt4.Insert(tableFilter, ChainIn, portInsertPos, spec...); err != nil {
 			return fmt.Errorf("insert port forward rule: %w", err)
 		}
 	}
+	fw.activePort = port
 
 	fw.log.Debug("Port forwarding rules added for %d (TCP+UDP)", port)
 	return nil
@@ -136,54 +129,10 @@ func (fw *Firewall) AllowForwardedPort(port int) error {
 
 // RemoveForwardedPort removes all port forwarding rules from VPN_IN.
 func (fw *Firewall) RemoveForwardedPort() {
-	fw.removeVPNRulesByComment(fw.ipt4Cmd, ChainIn, PortForwardComments)
-}
-
-// removeVPNRulesByComment finds rules containing any of the given comments
-// and deletes them by line number (highest first to avoid index shifting).
-func (fw *Firewall) removeVPNRulesByComment(iptables, chain string, comments []string) {
-	lineNumbers := fw.findRuleLineNumbers(iptables, chain, comments)
-	if len(lineNumbers) == 0 {
+	if fw.activePort == 0 {
 		return
 	}
-
-	// Sort descending so we delete from bottom up (avoids line number shifting)
-	sort.Sort(sort.Reverse(sort.IntSlice(lineNumbers)))
-
-	for _, lineNum := range lineNumbers {
-		// Use direct exec for deletion by line number - more reliable than go-iptables
-		cmd := exec.Command(iptables, "-t", "filter", "-D", chain, strconv.Itoa(lineNum))
-		if err := cmd.Run(); err != nil {
-			fw.log.Debug("Failed to remove rule at line %d: %v", lineNum, err)
-		}
-	}
-}
-
-// findRuleLineNumbers lists the chain and returns line numbers of rules containing any comment.
-func (fw *Firewall) findRuleLineNumbers(iptables, chain string, comments []string) []int {
-	cmd := exec.Command(iptables, "-t", "filter", "-L", chain, "--line-numbers", "-n")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil
-	}
-
-	var lineNumbers []int
-	// Regex to match line number at start: "1    ACCEPT..."
-	lineNumRegex := regexp.MustCompile(`^(\d+)\s+`)
-
-	for _, line := range strings.Split(string(output), "\n") {
-		for _, comment := range comments {
-			if strings.Contains(line, comment) {
-				matches := lineNumRegex.FindStringSubmatch(line)
-				if len(matches) >= 2 {
-					if num, err := strconv.Atoi(matches[1]); err == nil {
-						lineNumbers = append(lineNumbers, num)
-					}
-				}
-				break
-			}
-		}
-	}
-
-	return lineNumbers
+	portStr := strconv.Itoa(fw.activePort)
+	fw.ipt4.Delete(tableFilter, ChainIn, "-i", "pia0", "-p", "tcp", "--dport", portStr, "-j", "ACCEPT")
+	fw.ipt4.Delete(tableFilter, ChainIn, "-i", "pia0", "-p", "udp", "--dport", portStr, "-j", "ACCEPT")
 }
