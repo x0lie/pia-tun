@@ -35,7 +35,6 @@ const (
 	monitorTimeout = monitor.Timeout
 	chainIn        = firewall.ChainIn
 	chainOut       = firewall.ChainOut
-	bypassComment  = firewall.BypassComment
 
 	// test configurations
 	imageName     = "pia-tun:test"
@@ -195,19 +194,16 @@ func (c *container) deleteInterface(t *testing.T) {
 	log.Success("%s deleted", ifaceName)
 }
 
-// emulateWANDown simulates ISP outage by removing iptables rules by comment bypassRoutes
+// emulateWANDown simulates ISP outage by removing firewall.WANCheckIPs
 func (c *container) emulateWANDown(t *testing.T) {
 	t.Helper()
-
-	c.exec(t, "sh", "-c", fmt.Sprintf(
-		`while true; do
-			num=$(iptables -L %s --line-numbers -n | grep -m 1 "%s" | awk '{print $1}')
-			[ -z "$num" ] && break
-			iptables -D %s "$num" 2>/dev/null || break
-		done`,
-		chainOut, bypassComment, chainOut,
-	))
-	log.Success("bypass_routes removed from %s", chainOut)
+	for _, ip := range firewall.WANCheckIPs {
+		c.exec(t, "sh", "-c", fmt.Sprintf(
+			`num=$(iptables -L %s --line-numbers -n | grep -m 1 %s | awk '{print $1}'); iptables -D %s "$num"`,
+			chainOut, ip, chainOut,
+		))
+	}
+	log.Success("WAN check IPs removed from %s", chainOut)
 }
 
 var ipServices = []string{
