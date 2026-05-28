@@ -253,10 +253,11 @@ func (c *container) verifyPort(t *testing.T) {
 	}
 	log.Success("metrics port matches port file")
 
-	rules := c.exec(t, "iptables", "-L", chainIn, "-n")
-	for _, comment := range firewall.PortForwardComments {
-		if !strings.Contains(rules, comment) || !strings.Contains(rules, portFromFile) {
-			fatal(t, "%s missing %s rule for port %s", chainIn, comment, portFromFile)
+	rules := c.exec(t, "iptables", "-S", chainIn)
+	for _, proto := range []string{"tcp", "udp"} {
+		rule := fmt.Sprintf("-p %s -m %s --dport %s", proto, proto, portFromFile)
+		if !strings.Contains(rules, rule) {
+			fatal(t, "%s missing %s ACCEPT rule for port %s", chainIn, proto, portFromFile)
 		}
 	}
 	log.Success("%s has tcp+udp ACCEPT rules for port %s", chainIn, portFromFile)
