@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CommunityApplications>
+  <Profile>
+    pia-tun - a feature-rich, zero-leak PIA + WireGuard VPN gateway
+  </Profile>
+  <Icon>https://github.com/x0lie.png</Icon>
+  <WebPage>https://github.com/x0lie/pia-tun</WebPage>
+</CommunityApplications>

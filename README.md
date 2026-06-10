@@ -86,3 +86,7 @@ Built with:
 - [Alpine Linux](https://alpinelinux.org/) - Lightweight container base
 
 Not affiliated with Private Internet Access
+
+## Unraid
+
+Running on Unraid? See the [Unraid / Community Applications template](https://github.com/x0lie/pia-tun/blob/main/unraid/README.md).
