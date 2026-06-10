@@ -1,0 +1,89 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>pia-tun</Name>
+  <Repository>ghcr.io/x0lie/pia-tun:latest</Repository>
+  <Registry>https://github.com/x0lie/pia-tun/pkgs/container/pia-tun</Registry>
+  <Branch>
+    <Tag>latest</Tag>
+    <TagDescription>Latest stable release (multi-arch: amd64, arm64, armv7)</TagDescription>
+  </Branch>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/x0lie/pia-tun/issues</Support>
+  <Project>https://github.com/x0lie/pia-tun</Project>
+  <ReadMe>https://github.com/x0lie/pia-tun/blob/main/README.md</ReadMe>
+  <Overview>Feature-rich, zero-leak VPN gateway for Private Internet Access (PIA) over WireGuard. Run it as a network gateway and route other containers (qBittorrent, Deluge, Transmission, ...) through the tunnel so their traffic only ever leaves via PIA, protected by a strict killswitch.&#xD;
+&#xD;
+Features:&#xD;
+- Strict killswitch with fast engagement (zero-leak design)&#xD;
+- WireGuard speed (greater than 95% of line speed) with automatic MSS clamping&#xD;
+- Reliable reconnect that handles ISP outages gracefully&#xD;
+- PIA port forwarding with auto keepalive/refresh, synced to qBittorrent / Deluge / Transmission (or a custom script)&#xD;
+- Optional SOCKS5 + HTTP proxies so other machines can use the VPN&#xD;
+- Encrypted DNS (DoT) support&#xD;
+- Observability: /health, /ready, /metrics (Prometheus + JSON)&#xD;
+- Smart lowest-latency server selection, dedicated IP support, multi-arch (amd64/arm64/armv7)&#xD;
+- Auth token acquired automatically and kept fresh - no manual token needed&#xD;
+&#xD;
+Setup:&#xD;
+1. Set PIA_USER and PIA_PASS (your Private Internet Access account).&#xD;
+2. Set LOCAL_NETWORKS to your LAN CIDR (e.g. 192.168.1.0/24) so you keep LAN access to this host and its containers.&#xD;
+3. (Optional) Pick PIA_LOCATIONS, e.g. ca_ontario,ca_toronto - leave 'all' to auto-pick the lowest-latency server.&#xD;
+&#xD;
+Routing another container through the VPN (gateway pattern):&#xD;
+- On the downstream container (e.g. qBittorrent), set Network Type to 'Container' and pick 'pia-tun' under Container Network (equivalent to --network=container:pia-tun).&#xD;
+- Remove that container's own port mappings and instead publish those ports HERE, on pia-tun (add them as Port mappings on this template - a qBittorrent WebUI 8080 example is included).&#xD;
+- Start pia-tun first; start the downstream container after.&#xD;
+&#xD;
+Note: NET_ADMIN is granted via Extra Parameters (--cap-drop=ALL --cap-add=NET_ADMIN). Unraid has no WireGuard kernel module loaded for containers by default, so pia-tun automatically falls back to the userspace backend (wireguard-go) - no extra host configuration required. Not affiliated with Private Internet Access.</Overview>
+  <Category>Network:VPN Network:Privacy Network:Proxy</Category>
+  <WebUI/>
+  <TemplateURL>https://raw.githubusercontent.com/x0lie/pia-tun/main/unraid/pia-tun.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/x0lie/pia-tun/main/img/pia-tun-image.png</Icon>
+  <ExtraParams>--cap-drop=ALL --cap-add=NET_ADMIN</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Description>Feature-rich and reliable VPN container for PIA + WireGuard, designed to act as a network gateway for other containers.&#xD;
+&#xD;
+PIA_USER and PIA_PASS are the only required values. Everything else is optional and most defaults are fine for typical use. See the full variable reference at https://github.com/x0lie/pia-tun/blob/main/docs/env.md and copy-paste compose examples at https://github.com/x0lie/pia-tun/tree/main/docs/compose-examples.&#xD;
+&#xD;
+The qBittorrent WebUI port (8080) below is included as an example of the gateway pattern: it is published on pia-tun so a qBittorrent container started with --network=container:pia-tun is reachable from your LAN while its traffic flows through the tunnel.</Description>
+  <Config Name="PIA_USER" Target="PIA_USER" Default="" Mode="" Description="REQUIRED. Your Private Internet Access username (typically starts with p)." Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="PIA_PASS" Target="PIA_PASS" Default="" Mode="" Description="REQUIRED. Your Private Internet Access password." Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="PIA_LOCATIONS" Target="PIA_LOCATIONS" Default="all" Mode="" Description="Comma-separated PIA region IDs (e.g. ca_ontario,ca_toronto). pia-tun tests latency and connects to the best one. Leave 'all' to consider every region. Region IDs: https://serverlist.piaservers.net/vpninfo/servers/v6" Type="Variable" Display="always" Required="false" Mask="false">all</Config>
+  <Config Name="LOCAL_NETWORKS" Target="LOCAL_NETWORKS" Default="" Mode="" Description="CIDR range(s) allowed to bypass the tunnel so you keep LAN access to this host and its containers (e.g. 192.168.1.0/24). Comma-separated, IPv4/IPv6. Use 'all' for all private ranges, 'none' to disable. The attached container network is auto-included unless set to 'none'." Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="qBittorrent WebUI (example)" Target="8080" Default="8080" Mode="tcp" Description="Example downstream port: publish here the WebUI/ports of any container you route through pia-tun with --network=container:pia-tun (here, qBittorrent's 8080). Remove or change if you are not running qBittorrent behind the VPN." Type="Port" Display="always" Required="false" Mask="false">8080</Config>
+  <Config Name="PS_CLIENT" Target="PS_CLIENT" Default="" Mode="" Description="Auto-sync the forwarded port to a torrent client: qbittorrent, transmission, or deluge. Enables PIA port forwarding automatically. Leave empty if unused (use PS_SCRIPT for unsupported clients)." Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="PS_USER" Target="PS_USER" Default="" Mode="" Description="Username for the PS_CLIENT API. For qBittorrent you can instead enable 'Bypass authentication for clients on localhost' and leave this empty." Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="PS_PASS" Target="PS_PASS" Default="" Mode="" Description="Password for the PS_CLIENT API (see PS_USER note)." Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="PS_URL" Target="PS_URL" Default="" Mode="" Description="PS_CLIENT API endpoint. Auto-set to http://localhost:{8080 qbittorrent | 9091 transmission | 8112 deluge}. Override only if the client listens on a non-default port, e.g. http://localhost:8081" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="PS_SCRIPT" Target="PS_SCRIPT" Default="" Mode="" Description="Path to a custom script run after each port refresh (for clients PS_CLIENT does not support). See https://github.com/x0lie/pia-tun/blob/main/docs/compose-examples/ps-script.md" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="PF_ENABLED" Target="PF_ENABLED" Default="false" Mode="" Description="Enable PIA port forwarding manually. Automatically enabled when PS_CLIENT or PS_SCRIPT is set." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="PIA_DIP_TOKEN" Target="PIA_DIP_TOKEN" Default="" Mode="" Description="PIA Dedicated IP token to connect to your reserved PIA IP. Leave empty for standard servers." Type="Variable" Display="advanced" Required="false" Mask="true"/>
+  <Config Name="TZ" Target="TZ" Default="" Mode="" Description="Timezone for log timestamps, e.g. America/New_York or Europe/Paris. Defaults to UTC." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="LOG_LEVEL" Target="LOG_LEVEL" Default="info" Mode="" Description="Logging verbosity: error, info, debug, trace." Type="Variable" Display="advanced" Required="false" Mask="false">info</Config>
+  <Config Name="DNS" Target="DNS" Default="pia" Mode="" Description="DNS resolver: 'pia', 'system', DoT (e.g. tls://one.one.one.one,dns.mullvad.net), or Do53 (e.g. 1.1.1.1,8.8.8.8). Avoid 'system' unless you understand your host resolver (DNS leak risk)." Type="Variable" Display="advanced" Required="false" Mask="false">pia</Config>
+  <Config Name="BOOTSTRAP_DNS" Target="BOOTSTRAP_DNS" Default="" Mode="" Description="Do53-only resolver used to bootstrap PIA hostnames. Leave empty for the default (149.112.112.9, 149.112.112.11). Must not overlap with DNS." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="MTU" Target="MTU" Default="1420" Mode="" Description="Max packet size for the WireGuard interface (pia0). Lower it only if you have MTU issues on your link." Type="Variable" Display="advanced" Required="false" Mask="false">1420</Config>
+  <Config Name="WG_BACKEND" Target="WG_BACKEND" Default="" Mode="" Description="WireGuard implementation: 'kernel' (faster) or 'userspace' (wireguard-go). Auto-detected if empty; on Unraid this is typically userspace." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="IPT_BACKEND" Target="IPT_BACKEND" Default="" Mode="" Description="iptables backend: 'nft' or 'legacy'. Auto-detected if empty." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="SOCKS5_ENABLED" Target="SOCKS5_ENABLED" Default="false" Mode="" Description="Enable the SOCKS5 proxy so other machines/containers can use the VPN. If enabled, also add a Port mapping for SOCKS5_PORT (1080)." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="SOCKS5 Port" Target="1080" Default="1080" Mode="tcp" Description="SOCKS5 proxy listen port. Only relevant when SOCKS5_ENABLED=true." Type="Port" Display="advanced" Required="false" Mask="false">1080</Config>
+  <Config Name="HTTP_PROXY_ENABLED" Target="HTTP_PROXY_ENABLED" Default="false" Mode="" Description="Enable the HTTP proxy so other machines/containers can use the VPN. If enabled, also add a Port mapping for HTTP_PROXY_PORT (8888)." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="HTTP Proxy Port" Target="8888" Default="8888" Mode="tcp" Description="HTTP proxy listen port. Only relevant when HTTP_PROXY_ENABLED=true." Type="Port" Display="advanced" Required="false" Mask="false">8888</Config>
+  <Config Name="PROXY_USER" Target="PROXY_USER" Default="" Mode="" Description="Optional username to require authentication on the SOCKS5/HTTP proxies." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="PROXY_PASS" Target="PROXY_PASS" Default="" Mode="" Description="Optional password for proxy authentication." Type="Variable" Display="advanced" Required="false" Mask="true"/>
+  <Config Name="METRICS_ENABLED" Target="METRICS_ENABLED" Default="true" Mode="" Description="Serve /health, /ready, /metrics and /metrics?format=json. Disable to turn off the metrics server entirely." Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="Metrics Port" Target="9090" Default="9090" Mode="tcp" Description="Port serving /health, /ready and /metrics (Prometheus). Only needed if you scrape metrics or want to reach the health endpoints from outside." Type="Port" Display="advanced" Required="false" Mask="false">9090</Config>
+  <Config Name="METRICS_PORT" Target="METRICS_PORT" Default="9090" Mode="" Description="Internal port for the metrics/health server. Only change if you also change the Metrics Port mapping above." Type="Variable" Display="advanced" Required="false" Mask="false">9090</Config>
+  <Config Name="INSTANCE_NAME" Target="INSTANCE_NAME" Default="" Mode="" Description="Prometheus label to distinguish multiple pia-tun containers. Leave empty if you run only one." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="HC_INTERVAL" Target="HC_INTERVAL" Default="10" Mode="" Description="Health check frequency in seconds (probes 1.1.1.1, 8.8.8.8, 9.9.9.9 through the tunnel). Default is fine for most." Type="Variable" Display="advanced" Required="false" Mask="false">10</Config>
+  <Config Name="HC_FAILURE_WINDOW" Target="HC_FAILURE_WINDOW" Default="30" Mode="" Description="Seconds of continuously failing health checks before triggering a reconnect. Increase if your ISP drops briefly and triggers reconnects too eagerly." Type="Variable" Display="advanced" Required="false" Mask="false">30</Config>
+  <Config Name="GET_REAL_IP" Target="GET_REAL_IP" Default="true" Mode="" Description="Fetch and log your pre-VPN public IP on startup (useful to confirm the tunnel changed it). Set false for a minimal-egress setup." Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+</Container>
