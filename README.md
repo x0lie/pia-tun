@@ -18,6 +18,8 @@ A feature-rich and reliable VPN container image for PIA + WireGuard
 - **Dedicated IP support** - Connect to a reserved PIA IP using your dedicated IP token
 - **Multi-architecture images** - amd64, arm64, and armv7
 
+⚠️ PIA is making changes that affect private tracker rules. If you use a private tracker, read [this](https://github.com/x0lie/pia-tun/blob/main/docs/rotating-ip.md).
+
 ---
 <img src="https://raw.githubusercontent.com/x0lie/pia-tun/main/img/pia-tun-image.png" alt="Title image" width="57%">
 
@@ -62,7 +64,7 @@ Image also available as `ghcr.io/x0lie/pia-tun`
 
 ## More Documentation
 
-- [environment variables](https://github.com/x0lie/pia-tun/tree/main/docs/env.md)
+- [environment variables](https://github.com/x0lie/pia-tun/blob/main/docs/env.md)
 - [firewall behavior](https://github.com/x0lie/pia-tun/blob/main/docs/firewall.md)
 - [dependent restarts](https://github.com/x0lie/pia-tun/blob/main/docs/dependent-restarts.md)
 - [troubleshooting](https://github.com/x0lie/pia-tun/blob/main/docs/troubleshooting.md)
