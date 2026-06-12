@@ -26,7 +26,7 @@ There are really only two solutions:
   ```
   - Presumably these will disappear eventually
 
-It may also be possible for the trackers accommodate this, but they are very opaque groups that are hard to speak with.
+It may also be possible for the trackers to accommodate this, but they are very opaque groups that are hard to speak with.
 
 It's an unfortunate change - I'm not sure if PIA just overlooked this scenario or if they think it's worthwhile regardless of the pains for those with private trackers.
 
@@ -44,17 +44,13 @@ docker exec pia-tun curl -s ifconfig.me
 The common names seem to have changed with the new infra as well:
 - ontario401 (old) vs Server-12706-0a (new)
 
-You can also look through the common names + IPs on the serverlist with this:
+You can see the remaining old infra (port-forwarding capable, WireGuard, discluding "Server-*" common names) with this command:
 ```bash
-curl -s https://serverlist.piaservers.net/vpninfo/servers/v6 | head -1 | jq '.regions[] | {id, name, wg: .servers.wg}'
-```
-Or this for specific locations:
-```bash
-curl -s https://serverlist.piaservers.net/vpninfo/servers/v6 | head -1 | jq '.regions[] | select(.id | IN("ca_ontario", "ca_ontario-so", "ca_toronto")) | {id, name, wg: .servers.wg}'
+curl -s https://serverlist.piaservers.net/vpninfo/servers/v6 | head -1 | jq -c '.regions[] | select(.port_forward == true) | .id as $r | (.servers.wg[]? | select(.cn | startswith("Server-") | not) | {region: $r, cn, ip})'
 ```
 - This list rotates - they don't show all of their endpoints at once
 
-The known good endpoints in ontario/toronto include these:
+Some known good endpoints in ontario/toronto:
 ```
 ontario401   66.56.80.11
 ontario401   66.56.80.22
