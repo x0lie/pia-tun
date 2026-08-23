@@ -279,7 +279,7 @@ func (c *container) testSocks5(t *testing.T) {
 	if _, ok := c.tryExec("nc", "-z", "localhost", socksPort); !ok {
 		fatal(t, "SOCKS5 not listening on :%s", socksPort)
 	}
-	socksIP, ok := c.tryExec("curl", "-sf", "--max-time", "10", "--socks5", socksTarget, "ifconfig.me")
+	socksIP, ok := c.tryExec("curl", "-sf", "--max-time", "10", "--socks5-hostname", socksTarget, "ifconfig.me")
 	if !ok {
 		fatal(t, "failed to curl through SOCKS5 proxy")
 	}
@@ -289,7 +289,7 @@ func (c *container) testSocks5(t *testing.T) {
 		log.Success("SOCKS5 routes through VPN (%s)", socksIP)
 	}
 	if authEnabled {
-		if _, ok := c.tryExec("curl", "-sf", "--max-time", "5", "--socks5", "localhost:"+socksPort, "ifconfig.me"); ok {
+		if _, ok := c.tryExec("curl", "-sf", "--max-time", "5", "--socks5-hostname", "localhost:"+socksPort, "ifconfig.me"); ok {
 			fatal(t, "SOCKS5 accepted unauthenticated connection")
 		} else {
 			log.Success("SOCKS5 auth enforced")
