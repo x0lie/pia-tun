@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/coreos/go-iptables v0.8.0
 	github.com/prometheus/client_golang v1.24.1
-	golang.org/x/sync v0.21.0
+	golang.org/x/sync v0.22.0
 	golang.zx2c4.com/wireguard v0.0.0-20250521234502-f333402bd9cb
 )
 
