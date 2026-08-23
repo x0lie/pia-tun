@@ -37,6 +37,7 @@
       "description": "Go dependencies - automerge patch",
       "matchManagers": ["gomod"],
       "matchUpdateTypes": ["patch"],
+      "groupName": "Go dependencies (patch)",
       "automerge": true,
       "labels": ["go", "automerge"]
     },
@@ -50,6 +51,7 @@
       "description": "GitHub Actions - automerge patch/minor",
       "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "GitHub Actions (patch/minor)",
       "automerge": true,
       "labels": ["github-actions", "automerge"]
     },
