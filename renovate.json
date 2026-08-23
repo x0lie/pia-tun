@@ -60,6 +60,13 @@
       "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["major"],
       "labels": ["github-actions", "review-required"]
+    },
+    {
+      "description": "Go version",
+      "matchDepNames": ["go", "golang"],
+      "groupName": "Go version",
+      "automerge": false,
+      "labels": ["go", "review-required"]
     }
   ],
   "vulnerabilityAlerts": {
