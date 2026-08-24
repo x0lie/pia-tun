@@ -39,12 +39,14 @@
       "matchUpdateTypes": ["patch"],
       "groupName": "Go dependencies (patch)",
       "automerge": true,
+      "postUpdateOptions": ["gomodTidy"],
       "labels": ["go", "automerge"]
     },
     {
       "description": "Go dependencies - minor/major",
       "matchManagers": ["gomod"],
       "matchUpdateTypes": ["minor", "major"],
+      "postUpdateOptions": ["gomodTidy"],
       "labels": ["go", "review-required"]
     },
     {
@@ -66,6 +68,7 @@
       "matchDepNames": ["go", "golang"],
       "groupName": "Go version",
       "automerge": false,
+      "postUpdateOptions": ["gomodTidy"],
       "labels": ["go", "review-required"]
     }
   ],
