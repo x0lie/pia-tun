@@ -31,6 +31,7 @@ jobs:
             METRICS_PORT: "9091"
 
           - config: legacy
+            PIA_LOCATIONS: "ca_ontario, ca_ontario-so, ca_toronto"
             DNS: "system"
             PF_ENABLED: true
             SOCKS5_ENABLED: true
