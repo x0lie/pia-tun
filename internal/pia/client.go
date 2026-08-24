@@ -179,7 +179,7 @@ func AddKey(ctx context.Context, serverIP, cn, token, pubkey string) (*AddKeyRes
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("token rejected (HTTP %d)", resp.StatusCode)
+			return nil, fmt.Errorf("%w (HTTP %d)", apperrors.ErrTokenRejected, resp.StatusCode)
 		}
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
@@ -195,7 +195,7 @@ func AddKey(ctx context.Context, serverIP, cn, token, pubkey string) (*AddKeyRes
 	}
 
 	if result.Status != "OK" {
-		return nil, fmt.Errorf("token rejected (status: %s)", result.Status)
+		return nil, fmt.Errorf("%w (status: %s)", apperrors.ErrTokenRejected, result.Status)
 	}
 
 	return &result, nil
@@ -288,7 +288,7 @@ func AddKeyDIP(ctx context.Context, serverIP, cn, dipToken, pubkey string) (*Add
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("DIP token rejected (HTTP %d)", resp.StatusCode)
+			return nil, fmt.Errorf("DIP %w (HTTP %d)", apperrors.ErrTokenRejected, resp.StatusCode)
 		}
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
@@ -303,7 +303,7 @@ func AddKeyDIP(ctx context.Context, serverIP, cn, dipToken, pubkey string) (*Add
 		return nil, fmt.Errorf("parse response: %w", err)
 	}
 	if result.Status != "OK" {
-		return nil, fmt.Errorf("DIP token rejected (status: %s)", result.Status)
+		return nil, fmt.Errorf("DIP %w (status: %s)", apperrors.ErrTokenRejected, result.Status)
 	}
 
 	return &result, nil
