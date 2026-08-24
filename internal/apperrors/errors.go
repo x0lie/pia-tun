@@ -5,7 +5,8 @@ import (
 )
 
 var (
-	ErrReconnect   = errors.New("reconnect requested")
-	ErrFatal       = errors.New("fatal")
-	ErrRateLimited = errors.New("rate-limited")
+	ErrReconnect     = errors.New("reconnect requested")
+	ErrFatal         = errors.New("fatal")
+	ErrRateLimited   = errors.New("rate-limited")
+	ErrTokenRejected = errors.New("token rejected")
 )
