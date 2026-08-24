@@ -124,7 +124,9 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher
 	}
 	fw.RemoveExemptions()
 	if err != nil {
-		cache.ClearToken()
+		if errors.Is(err, apperrors.ErrTokenRejected) {
+			cache.ClearToken()
+		}
 		return nil, err
 	}
 	logger.Debug("Server accepted public key, peer IP: %s", addKeyResp.PeerIP)
