@@ -178,7 +178,7 @@ func AddKey(ctx context.Context, serverIP, cn, token, pubkey string) (*AddKeyRes
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusUnauthorized {
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			return nil, fmt.Errorf("%w (HTTP %d)", apperrors.ErrTokenRejected, resp.StatusCode)
 		}
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
@@ -287,7 +287,7 @@ func AddKeyDIP(ctx context.Context, serverIP, cn, dipToken, pubkey string) (*Add
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusUnauthorized {
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			return nil, fmt.Errorf("DIP %w (HTTP %d)", apperrors.ErrTokenRejected, resp.StatusCode)
 		}
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
