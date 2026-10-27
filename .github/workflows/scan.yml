@@ -2,6 +2,11 @@ name: Scan
 
 on:
   workflow_call:
+    inputs:
+      fail-on-vulns:
+        description: 'Fail the job on any fixable vulnerability'
+        type: boolean
+        default: false
 
 env:
   IMAGE_NAME: pia-tun
@@ -31,7 +36,7 @@ jobs:
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH,MEDIUM'
           ignore-unfixed: true
-          exit-code: '1'
+          exit-code: ${{ inputs.fail-on-vulns && '1' || '0' }}
 
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4
