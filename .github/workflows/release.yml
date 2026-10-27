@@ -12,6 +12,8 @@ env:
 jobs:
   scan:
     uses: ./.github/workflows/scan.yml
+    with:
+      fail-on-vulns: true
     permissions:
       security-events: write
       actions: read
