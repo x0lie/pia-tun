@@ -13,7 +13,7 @@
   "automergeType": "pr",
   "automergeStrategy": "squash",
   "schedule": ["before 6am on monday"],
-  "rebaseWhen": "behind-base-branch",
+  "rebaseWhen": "conflicted",
   "timezone": "America/New_York",
   "rangeStrategy": "bump",
   "minimumReleaseAge": "2 days",
