@@ -77,7 +77,7 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher
 		region = "unknown"
 	case cfg.DIPToken != "":
 		logger.Debug("Using DIP token for server selection")
-		if dipInfo, err = resolveDIP(ctx, cfg, fw, cache, token, logger); err != nil {
+		if dipInfo, err = resolveDIP(ctx, cfg, fw, cache, resolver, token, logger); err != nil {
 			return nil, err
 		}
 		serverIP = dipInfo.IP
@@ -239,7 +239,7 @@ func tryAuth(ctx context.Context, ip, user, pass string, fw *firewall.Firewall) 
 }
 
 // resolveDIP resolves a DIP token to its server details using cached or resolved auth IPs.
-func resolveDIP(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, token string, logger *log.Logger) (*pia.DIPInfo, error) {
+func resolveDIP(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *dns.Resolver, token string, logger *log.Logger) (*pia.DIPInfo, error) {
 	for _, ip := range cache.AuthIPs {
 		if err := fw.AddExemption(ip, "443", "tcp", "dip"); err != nil {
 			return nil, fmt.Errorf("dip: %w", err)
@@ -254,5 +254,29 @@ func resolveDIP(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *c
 		}
 		logger.Debug("DIP resolve via %s failed: %v", ip, err)
 	}
+
+	// Fall back to DNS resolution
+	ips, err := resolver.Resolve(ctx, pia.AuthHostname)
+	if err != nil {
+		return nil, err
+	}
+
+	cache.MergeAuthIPs(ips)
+
+	for _, ip := range ips {
+		if err := fw.AddExemption(ip, "443", "tcp", "dip"); err != nil {
+			return nil, fmt.Errorf("dip: %w", err)
+		}
+		info, err := pia.ResolveDIP(ctx, apiTimeout, ip, token, cfg.DIPToken)
+		fw.RemoveExemptions()
+		if err == nil {
+			return info, nil
+		}
+		if errors.Is(err, apperrors.ErrFatal) {
+			return nil, err
+		}
+		logger.Debug("DIP resolve via %s failed: %v", ip, err)
+	}
+
 	return nil, fmt.Errorf("dip: all endpoints failed")
 }
