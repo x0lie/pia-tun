@@ -193,13 +193,13 @@ func connect(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cach
 	}
 	fw.RemoveExemptions()
 	if err != nil {
-		if errors.Is(err, apperrors.ErrTokenRejected) {
+		if cfg.DIPToken == "" && errors.Is(err, apperrors.ErrTokenRejected) {
 			cache.ClearToken()
 		}
 		return nil, err
 	}
 	logger.Debug("Server accepted public key, peer IP: %s", addKeyResp.PeerIP)
-	log.Success("Auth token accepted")
+	log.Success("Key registered with %s", t.CN)
 
 	// Bring up WireGuard tunnel
 	wgCfg := wg.Config{
