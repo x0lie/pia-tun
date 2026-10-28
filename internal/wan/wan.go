@@ -47,7 +47,6 @@ func Check(ctx context.Context) bool {
 
 	logger.Trace("All WAN checks failed")
 	return false
-
 }
 
 func WaitForUp(ctx context.Context, metrics *metrics.Metrics) error {

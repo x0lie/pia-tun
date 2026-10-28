@@ -243,7 +243,7 @@ func (c *Cache) TokenFresh() (bool, time.Duration) {
 // SetToken writes the input token and current time to /run/pia-tun/token, and sets the values in Cache.Token and Cache.TokenTime
 func (c *Cache) SetToken(token string) {
 	content := token + "\n" + strconv.FormatInt(time.Now().Unix(), 10) + "\n"
-	if err := os.WriteFile(tokenFile, []byte(content), 0600); err != nil {
+	if err := os.WriteFile(tokenFile, []byte(content), 0o600); err != nil {
 		log.Warning("Failed to persist token: %v", err)
 	}
 
