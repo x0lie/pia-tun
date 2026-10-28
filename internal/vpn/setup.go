@@ -161,6 +161,7 @@ func Setup(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher
 // getToken returns a valid authentication token, using cache if fresh.
 func getToken(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *dns.Resolver, logger *log.Logger) (string, error) {
 	log.Step("Authenticating with PIA...")
+
 	// Use cached token if fresh
 	if fresh, tokenAge := cache.TokenFresh(); fresh {
 		logger.Debug("Using cached token (age: %v)", tokenAge)
@@ -168,18 +169,6 @@ func getToken(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cac
 		return cache.GetToken(), nil
 	}
 
-	token, err := authenticate(ctx, cfg, fw, cache, resolver, logger)
-	if err != nil {
-		return "", err
-	}
-	log.Success("Auth token acquired")
-
-	cache.SetToken(token)
-	return token, nil
-}
-
-// authenticate obtains a new token from PIA using cached or resolved auth IPs.
-func authenticate(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *dns.Resolver, logger *log.Logger) (string, error) {
 	token, err := tryAuthIPs(ctx, "auth", fw, cache, resolver, logger, func(ip string) (string, error) {
 		return pia.GenerateToken(ctx, apiTimeout, ip, cfg.PIAUser, cfg.PIAPass)
 	})
@@ -188,8 +177,13 @@ func authenticate(ctx context.Context, cfg Config, fw *firewall.Firewall, cache 
 		return "", fmt.Errorf("%w\n    Check PIA_USER/PASS or secrets pia_user/pass", err)
 	case errors.Is(err, apperrors.ErrRateLimited):
 		return "", fmt.Errorf("%w\n    To avoid future rate limiting make the token persist:\n    volumes:\n      - ./pia-tun:/run/pia-tun/", err)
+	case err != nil:
+		return "", err
 	}
-	return token, err
+
+	log.Success("Auth token acquired")
+	cache.SetToken(token)
+	return token, nil
 }
 
 // resolveDIP resolves a DIP token to its server details using cached or resolved auth IPs.
