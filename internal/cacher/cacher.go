@@ -268,6 +268,11 @@ func (c *Cache) ClearServerListIPs() {
 	c.ServerListIPs = nil
 }
 
+// ClearAuthIPs removes all cached AuthIPs
+func (c *Cache) ClearAuthIPs() {
+	c.AuthIPs = nil
+}
+
 func readTokenFile() (string, time.Time, error) {
 	data, err := os.ReadFile(tokenFile)
 	if err != nil {
