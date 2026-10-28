@@ -122,6 +122,9 @@ func dipTarget(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *ca
 		return pia.ResolveDIP(ctx, apiTimeout, ip, token, cfg.DIPToken)
 	})
 	if err != nil {
+		if errors.Is(err, apperrors.ErrTokenRejected) {
+			cache.ClearToken()
+		}
 		return target{}, err
 	}
 	log.Success("DIP token accepted")
@@ -252,7 +255,9 @@ func tryAuthIPs[T any](ctx context.Context, label string, fw *firewall.Firewall,
 		if err == nil {
 			return res, nil
 		}
-		if errors.Is(err, apperrors.ErrFatal) || errors.Is(err, apperrors.ErrRateLimited) {
+		if errors.Is(err, apperrors.ErrFatal) ||
+			errors.Is(err, apperrors.ErrRateLimited) ||
+			errors.Is(err, apperrors.ErrTokenRejected) {
 			return zero, err
 		}
 		logger.Debug("%s via %s failed: %v", label, ip, err)

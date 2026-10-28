@@ -233,7 +233,7 @@ func ResolveDIP(ctx context.Context, timeout time.Duration, authIP, authToken, d
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, fmt.Errorf("%w: DIP auth failed (HTTP %d): %s", apperrors.ErrFatal, resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("%w: DIP auth failed (HTTP %d): %s", apperrors.ErrTokenRejected, resp.StatusCode, string(respBody))
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
