@@ -6,8 +6,10 @@ import (
 	"strconv"
 )
 
-const priorityPIAGuard = 76
-const priorityPIA = 75
+const (
+	priorityPIAGuard = 76
+	priorityPIA      = 75
+)
 
 // addPIADNSRoutes adds routing rules for PIA's internal dns so it uses the VPN
 // table instead of being caught by the RFC1918 bypass at priority 100.
