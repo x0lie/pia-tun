@@ -155,6 +155,12 @@ func (c *Config) validate() error {
 	if c.PIA.User == "" || c.PIA.Pass == "" {
 		return fmt.Errorf("Set PIA_USER and PIA_PASS environment variables, or use Docker secrets at /run/secrets/pia_user and pia_pass")
 	}
+	if (c.PIA.CN == "") != (c.PIA.IP == "") {
+		return fmt.Errorf("PIA_CN and PIA_IP must be set together")
+	}
+	if c.PIA.CN != "" && c.PIA.DIPToken != "" {
+		return fmt.Errorf("PIA_DIP_TOKEN cannot be combined with PIA_CN/PIA_IP - use one or the other")
+	}
 	return nil
 }
 
