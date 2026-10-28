@@ -207,7 +207,7 @@ func (m *manager) announcePort() {
 
 	// Write Port to file
 	m.log.Debug("Writing port %d to %s", m.state.port, m.cfg.PortFile)
-	if err := os.WriteFile(m.cfg.PortFile, []byte(fmt.Sprintf("%d", m.state.port)), 0644); err != nil {
+	if err := os.WriteFile(m.cfg.PortFile, []byte(fmt.Sprintf("%d", m.state.port)), 0o644); err != nil {
 		log.Error("failed to write port file: %v", err)
 	}
 

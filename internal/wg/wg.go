@@ -238,13 +238,13 @@ func ensureTUN() error {
 	if _, err := os.Stat("/dev/net/tun"); err == nil {
 		return nil
 	}
-	if err := os.MkdirAll("/dev/net", 0755); err != nil {
+	if err := os.MkdirAll("/dev/net", 0o755); err != nil {
 		return fmt.Errorf("create /dev/net: %w", err)
 	}
 	if err := exec.Command("mknod", "/dev/net/tun", "c", "10", "200").Run(); err != nil {
 		return fmt.Errorf("create /dev/net/tun: %w (try '--device /dev/net/tun:/dev/net/tun' in docker run)", err)
 	}
-	if err := os.Chmod("/dev/net/tun", 0600); err != nil {
+	if err := os.Chmod("/dev/net/tun", 0o600); err != nil {
 		return fmt.Errorf("chmod /dev/net/tun: %w", err)
 	}
 	return nil
