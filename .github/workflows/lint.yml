@@ -17,3 +17,6 @@ jobs:
 
       - name: Vet
         run: go vet ./...
+
+      - name: gofumpt
+        run: test -z "$(go tool gofumpt -l .)" || { go tool gofumpt -l .; exit 1; }

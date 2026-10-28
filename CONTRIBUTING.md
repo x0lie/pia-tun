@@ -16,6 +16,7 @@ Open a [discussion](https://github.com/x0lie/pia-tun/discussions) before impleme
 ### Style
 
 - Follow [Conventional Commits](https://www.conventionalcommits.org/) for commit messages (`fix:`, `feat:`, `chore:`, etc.).
+- Format code with [gofumpt](https://github.com/mvdan/gofumpt) (`go tool gofumpt -w .`); CI enforces it.
 - Keep functions small and focused, files and packages well-scoped, and exports minimal. Prefer clarity over cleverness.
 
 ### Integration Tests
