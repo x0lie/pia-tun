@@ -178,83 +178,60 @@ func getToken(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cac
 	return token, nil
 }
 
-// authenticate obtains a new token from PIA.
+// authenticate obtains a new token from PIA using cached or resolved auth IPs.
 func authenticate(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *dns.Resolver, logger *log.Logger) (string, error) {
-	// If no cached ips, resolve
-	if cache.AuthIPs == nil {
-		ips, err := resolver.Resolve(ctx, pia.AuthHostname)
-		if err != nil {
-			return "", err
-		}
-		cache.MergeAuthIPs(ips)
-		logger.Debug("Auth IPs resolved and cached")
+	token, err := tryAuthIPs(ctx, "auth", fw, cache, resolver, logger, func(ip string) (string, error) {
+		return pia.GenerateToken(ctx, apiTimeout, ip, cfg.PIAUser, cfg.PIAPass)
+	})
+	switch {
+	case errors.Is(err, apperrors.ErrFatal):
+		return "", fmt.Errorf("%w\n    Check PIA_USER/PASS or secrets pia_user/pass", err)
+	case errors.Is(err, apperrors.ErrRateLimited):
+		return "", fmt.Errorf("%w\n    To avoid future rate limiting make the token persist:\n    volumes:\n      - ./pia-tun:/run/pia-tun/", err)
 	}
-
-	// Get token from auth endpoint
-	for _, ip := range cache.AuthIPs {
-		logger.Debug("Trying auth IP: %s", ip)
-		token, err := tryAuth(ctx, ip, cfg.PIAUser, cfg.PIAPass, fw)
-		if err == nil {
-			return token, nil
-		}
-		// Check for auth errors (fatal, don't retry)
-		if errors.Is(err, apperrors.ErrFatal) {
-			return "", fmt.Errorf("%w\n    Check PIA_USER/PASS or secrets pia_user/pass", err)
-		}
-		// Check for rate limited
-		if errors.Is(err, apperrors.ErrRateLimited) {
-			return "", fmt.Errorf("%w\n    To avoid future rate limiting make the token persist:\n    volumes:\n      - ./pia-tun:/run/pia-tun/", err)
-		}
-		logger.Debug("Auth via %s failed: %v", ip, err)
-	}
-	cache.ClearAuthIPs()
-	log.Warning("Cleared cached auth IPs")
-
-	return "", fmt.Errorf("auth: all endpoints failed")
-}
-
-// tryAuth attempts authentication with a single IP.
-func tryAuth(ctx context.Context, ip, user, pass string, fw *firewall.Firewall) (string, error) {
-	comment := "auth"
-	err := fw.AddExemption(ip, "443", "tcp", comment)
-	if err != nil {
-		return "", fmt.Errorf("auth: %w", err)
-	}
-	defer fw.RemoveExemptions()
-
-	return pia.GenerateToken(ctx, apiTimeout, ip, user, pass)
+	return token, err
 }
 
 // resolveDIP resolves a DIP token to its server details using cached or resolved auth IPs.
 func resolveDIP(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *dns.Resolver, token string, logger *log.Logger) (*pia.DIPInfo, error) {
+	info, err := tryAuthIPs(ctx, "dip", fw, cache, resolver, logger, func(ip string) (*pia.DIPInfo, error) {
+		return pia.ResolveDIP(ctx, apiTimeout, ip, token, cfg.DIPToken)
+	})
+	return info, err
+}
+
+// tryAuthIPs runs call against each auth IP behind a firewall exemption until one succeeds.
+// Resolves auth IPs if none are cached and clears them if all endpoints fail.
+func tryAuthIPs[T any](ctx context.Context, label string, fw *firewall.Firewall, cache *cacher.Cache, resolver *dns.Resolver, logger *log.Logger, call func(ip string) (T, error)) (T, error) {
+	var zero T
+
 	// If no cached ips, resolve
 	if cache.AuthIPs == nil {
 		ips, err := resolver.Resolve(ctx, pia.AuthHostname)
 		if err != nil {
-			return nil, err
+			return zero, err
 		}
 		cache.MergeAuthIPs(ips)
 		logger.Debug("Auth IPs resolved and cached")
 	}
 
-	// Get DIPInfo from auth endpoint
+	// Get T (token or DIPInfo) using AuthIPs
 	for _, ip := range cache.AuthIPs {
 		logger.Debug("Trying auth IP: %s", ip)
-		if err := fw.AddExemption(ip, "443", "tcp", "dip"); err != nil {
-			return nil, fmt.Errorf("dip: %w", err)
+		if err := fw.AddExemption(ip, "443", "tcp", label); err != nil {
+			return zero, fmt.Errorf("%s: %w", label, err)
 		}
-		info, err := pia.ResolveDIP(ctx, apiTimeout, ip, token, cfg.DIPToken)
+		res, err := call(ip)
 		fw.RemoveExemptions()
 		if err == nil {
-			return info, nil
+			return res, nil
 		}
-		if errors.Is(err, apperrors.ErrFatal) {
-			return nil, err
+		if errors.Is(err, apperrors.ErrFatal) || errors.Is(err, apperrors.ErrRateLimited) {
+			return zero, err
 		}
-		logger.Debug("DIP resolve via %s failed: %v", ip, err)
+		logger.Debug("%s via %s failed: %v", label, ip, err)
 	}
 	cache.ClearAuthIPs()
 	log.Warning("Cleared cached auth IPs")
-
-	return nil, fmt.Errorf("dip: all endpoints failed")
+	return zero, fmt.Errorf("%s: all endpoints failed", label)
 }
