@@ -31,7 +31,7 @@ PIA has reversed their position on rotating IPs. You can read more [here](https:
 
 ## Quick Start
 
-Versions: `latest`, `develop`, and semantic (v1, v1.0, v1.0.0)
+Versions: `latest`, `develop`, and semantic (1, 1.0, 1.0.0)
 
 **Copy-Paste Examples**:
 - [qbittorrent](https://github.com/x0lie/pia-tun/blob/main/docs/compose-examples/qbittorrent.md)
