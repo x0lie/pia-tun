@@ -45,6 +45,7 @@ Not affiliated with Private Internet Access.</Overview>
   <Category>Security: Network:VPN</Category>
   <ExtraSearchTerms>private internet access pia vpn wireguard killswitch qbit qbittorrent socks5 port forward forwarding sync syncing</ExtraSearchTerms>
   <TemplateURL>https://raw.githubusercontent.com/x0lie/pia-tun/main/unraid/pia-tun.xml</TemplateURL>
+  <Requires>An active PIA subscription</Requires>
   <Icon>https://raw.githubusercontent.com/x0lie/pia-tun/main/img/pia-tun-icon.png</Icon>
   <ExtraParams>--cap-drop=ALL --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tun</ExtraParams>
   <Config Name="PIA_USER" Target="PIA_USER" Default="" Mode="" Description="REQUIRED. Your Private Internet Access username (typically starts with p)." Type="Variable" Display="always" Required="true" Mask="false"/>
