@@ -45,7 +45,7 @@ Routing another container through the VPN (gateway pattern):&#xD;
 - Remove that container's own port mappings and instead publish those ports HERE, on pia-tun (add them as Port mappings on this template - a qBittorrent WebUI 8080 example is included).&#xD;
 - Start pia-tun first; start the downstream container after.&#xD;
 &#xD;
-Note: NET_ADMIN and the tun device are granted via Extra Parameters (--cap-drop=ALL --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tun). Unraid has no WireGuard kernel module loaded for containers by default, so pia-tun automatically falls back to the userspace backend (wireguard-go) - no extra host configuration required.&#xD;
+Note: NET_ADMIN and the tun device are granted via Extra Parameters (--cap-drop=ALL --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tun). pia-tun prefers the WireGuard kernel module but will fall back to wireguard-go if unavailable (tun device).&#xD;
 &#xD;
 Not affiliated with Private Internet Access.</Overview>
   <Category>Security: Network:VPN</Category>
@@ -81,7 +81,7 @@ The qBittorrent WebUI port (8080) below is included as an example of the gateway
   <Config Name="PIA_DIP_TOKEN" Target="PIA_DIP_TOKEN" Default="" Mode="" Description="PIA Dedicated IP token to connect to your reserved PIA IP. Leave empty for standard servers." Type="Variable" Display="advanced" Required="false" Mask="true"/>
   <Config Name="BOOTSTRAP_DNS" Target="BOOTSTRAP_DNS" Default="" Mode="" Description="Do53-only resolver used to bootstrap PIA hostnames. Leave empty for the default (149.112.112.9, 149.112.112.11). Must not overlap with DNS." Type="Variable" Display="advanced" Required="false" Mask="false"/>
   <Config Name="MTU" Target="MTU" Default="1420" Mode="" Description="Max packet size for the WireGuard interface (pia0). Lower it only if you have MTU issues on your link." Type="Variable" Display="advanced" Required="false" Mask="false">1420</Config>
-  <Config Name="WG_BACKEND" Target="WG_BACKEND" Default="" Mode="" Description="WireGuard implementation: 'kernel' (faster) or 'userspace' (wireguard-go). Auto-detected if empty; on Unraid this is typically userspace." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="WG_BACKEND" Target="WG_BACKEND" Default="" Mode="" Description="WireGuard implementation: 'kernel' (faster) or 'userspace' (wireguard-go). Auto-detected if empty (kernel preferred)." Type="Variable" Display="advanced" Required="false" Mask="false"/>
   <Config Name="IPT_BACKEND" Target="IPT_BACKEND" Default="" Mode="" Description="iptables backend: 'nft' or 'legacy'. Auto-detected if empty." Type="Variable" Display="advanced" Required="false" Mask="false"/>
   <Config Name="SOCKS5_ENABLED" Target="SOCKS5_ENABLED" Default="false" Mode="" Description="Enable the SOCKS5 proxy so other machines/containers can use the VPN. If enabled, also add a Port mapping for SOCKS5_PORT (1080)." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
   <Config Name="SOCKS5 Port" Target="1080" Default="1080" Mode="tcp" Description="SOCKS5 proxy listen port. Only relevant when SOCKS5_ENABLED=true." Type="Port" Display="advanced" Required="false" Mask="false">1080</Config>

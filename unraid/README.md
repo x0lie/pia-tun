@@ -29,6 +29,11 @@ pia-tun is a network gateway, not a web app. To send another container's traffic
 ## Notes
 
 - `NET_ADMIN` and the `tun` device are granted via Extra Parameters (`--cap-drop=ALL --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tun`), already set in the template.
-- Unraid does not load the WireGuard kernel module for containers by default, so pia-tun automatically uses the userspace backend (wireguard-go). No host configuration needed.
+- If the WireGuard kernel module is unavailable, pia-tun will fall back to wireguard-go (via the tun device) automatically.
+  - You can see which it's using in the logs here (kernel or userspace):
+    ```
+    ▶ Establishing connection to amsterdam404...
+      ✓ Tunnel configured (kernel)
+    ```
 - Unlike the Docker Compose examples, the Unraid template passes PIA credentials as masked environment variables rather than secret files.
 - Full variable reference: [`docs/env.md`](../docs/env.md). Compose examples: [`docs/compose-examples`](../docs/compose-examples).
