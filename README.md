@@ -38,6 +38,8 @@ Versions: `latest`, `develop`, and semantic (v1, v1.0, v1.0.0)
 - [reverse-proxy (traefik)](https://github.com/x0lie/pia-tun/blob/main/docs/compose-examples/traefik.md)
 - [legacy machines](https://github.com/x0lie/pia-tun/blob/main/docs/compose-examples/legacy-machines.md)
 
+Running on Unraid? See the [guide](https://github.com/x0lie/pia-tun/blob/main/unraid/README.md).
+
 ### Minimal Compose
 
 ```yaml
@@ -88,7 +90,3 @@ Built with:
 - [Alpine Linux](https://alpinelinux.org/) - Lightweight container base
 
 Not affiliated with Private Internet Access
-
-## Unraid
-
-Running on Unraid? See the [Unraid / Community Applications template](https://github.com/x0lie/pia-tun/blob/main/unraid/README.md).
