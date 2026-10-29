@@ -9,7 +9,7 @@
   </Branch>
   <Branch>
     <Tag>latest</Tag>
-    <TagDescription>Newest stable releases, including future major versions</TagDescription>
+    <TagDescription>Newest stable releases</TagDescription>
   </Branch>
   <Branch>
     <Tag>develop</Tag>
@@ -22,18 +22,7 @@
   <Support>https://github.com/x0lie/pia-tun/issues</Support>
   <Project>https://github.com/x0lie/pia-tun</Project>
   <ReadMe>https://github.com/x0lie/pia-tun/blob/main/README.md</ReadMe>
-  <Overview>Feature-rich, zero-leak VPN gateway for Private Internet Access (PIA) over WireGuard. Run it as a network gateway and route other containers (qBittorrent, Deluge, Transmission, ...) through the tunnel so their traffic only ever leaves via PIA, protected by a strict killswitch.&#xD;
-&#xD;
-Features:&#xD;
-- Strict killswitch with fast engagement (zero-leak design)&#xD;
-- WireGuard speed (greater than 95% of line speed) with automatic MSS clamping&#xD;
-- Reliable reconnect that handles ISP outages gracefully&#xD;
-- PIA port forwarding with auto keepalive/refresh, synced to qBittorrent / Deluge / Transmission (or a custom script)&#xD;
-- Optional SOCKS5 + HTTP proxies so other machines can use the VPN&#xD;
-- Encrypted DNS (DoT) support&#xD;
-- Observability: /health, /ready, /metrics (Prometheus + JSON)&#xD;
-- Smart lowest-latency server selection and dedicated IP support&#xD;
-- Auth token acquired automatically and kept fresh - no manual token needed&#xD;
+  <Overview>Feature-rich PIA + WireGuard VPN client/gateway with a strict killswitch and automatic port-syncing to qBittorrent, Deluge, or Transmission.&#xD;
 &#xD;
 Setup:&#xD;
 1. Set PIA_USER and PIA_PASS (your Private Internet Access credentials).&#xD;
@@ -55,6 +44,7 @@ Docs: full variable reference and compose examples on GitHub.&#xD;
 &#xD;
 Not affiliated with Private Internet Access.</Overview>
   <Category>Security: Network:VPN</Category>
+  <ExtraSearchTerms>private internet access pia vpn wireguard killswitch qbit qbittorrent socks5 port forward forwarding sync syncing</ExtraSearchTerms>
   <WebUI/>
   <TemplateURL>https://raw.githubusercontent.com/x0lie/pia-tun/main/unraid/pia-tun.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/x0lie/pia-tun/main/img/pia-tun-icon.png</Icon>
