@@ -71,7 +71,7 @@ func detectBackend(backend string, netRaw bool, logger *log.Logger) (string, err
 		if err := exec.Command("iptables-nft", "-L", "-n").Run(); err != nil {
 			return "", fmt.Errorf("iptables-nft not available: %w", err)
 		}
-		logger.Debug("IPT_BACKEND=legacy, using iptables-nft")
+		logger.Debug("IPT_BACKEND=nft, using iptables-nft")
 		return "nft", nil
 	case "legacy":
 		if err := exec.Command("iptables-legacy", "-L", "-n").Run(); err != nil {
