@@ -48,7 +48,7 @@ Routing another container through the VPN (gateway pattern):&#xD;
 Note: NET_ADMIN and the tun device are granted via Extra Parameters (--cap-drop=ALL --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tun). Unraid has no WireGuard kernel module loaded for containers by default, so pia-tun automatically falls back to the userspace backend (wireguard-go) - no extra host configuration required.&#xD;
 &#xD;
 Not affiliated with Private Internet Access.</Overview>
-  <Category>Security: Network:VPN Network:Proxy</Category>
+  <Category>Security: Network:VPN</Category>
   <WebUI/>
   <TemplateURL>https://raw.githubusercontent.com/x0lie/pia-tun/main/unraid/pia-tun.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/x0lie/pia-tun/main/img/pia-tun-icon.png</Icon>
