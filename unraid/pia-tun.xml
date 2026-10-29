@@ -43,7 +43,7 @@ Not affiliated with Private Internet Access.</Overview>
   <Category>Security: Network:VPN Network:Proxy</Category>
   <WebUI/>
   <TemplateURL>https://raw.githubusercontent.com/x0lie/pia-tun/main/unraid/pia-tun.xml</TemplateURL>
-  <Icon>https://raw.githubusercontent.com/x0lie/pia-tun/main/img/pia-tun-image.png</Icon>
+  <Icon>https://raw.githubusercontent.com/x0lie/pia-tun/main/img/pia-tun-icon.png</Icon>
   <ExtraParams>--cap-drop=ALL --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tun</ExtraParams>
   <PostArgs/>
   <CPUset/>
