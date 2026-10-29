@@ -4,7 +4,7 @@ A [Community Applications](https://forums.unraid.net/topic/38582-plug-in-communi
 
 ## Install
 
-### From the template URL (now)
+### From the template URL
 
 1. In the Unraid UI, go to **Docker → Add Container**.
 2. In the **Template** field at the top, paste:
@@ -28,7 +28,7 @@ pia-tun is a network gateway, not a web app. To send another container's traffic
 
 ## Notes
 
-- `NET_ADMIN` is granted via Extra Parameters (`--cap-drop=ALL --cap-add=NET_ADMIN`), already set in the template.
+- `NET_ADMIN` and the `tun` device are granted via Extra Parameters (`--cap-drop=ALL --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tun`), already set in the template.
 - Unraid does not load the WireGuard kernel module for containers by default, so pia-tun automatically uses the userspace backend (wireguard-go). No host configuration needed.
 - Unlike the Docker Compose examples, the Unraid template passes PIA credentials as masked environment variables rather than secret files.
 - Full variable reference: [`docs/env.md`](../docs/env.md). Compose examples: [`docs/compose-examples`](../docs/compose-examples).
