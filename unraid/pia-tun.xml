@@ -16,45 +16,37 @@
     <TagDescription>Unreleased development builds - may be unstable</TagDescription>
   </Branch>
   <Network>bridge</Network>
-  <MyIP/>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
   <Support>https://github.com/x0lie/pia-tun/issues</Support>
   <Project>https://github.com/x0lie/pia-tun</Project>
   <ReadMe>https://github.com/x0lie/pia-tun/blob/main/README.md</ReadMe>
-  <Overview>Feature-rich PIA + WireGuard VPN client/gateway with a strict killswitch and automatic port-syncing to qBittorrent, Deluge, or Transmission.&#xD;
-&#xD;
-Setup:&#xD;
-1. Set PIA_USER and PIA_PASS (your Private Internet Access credentials).&#xD;
-2. Set LOCAL_NETWORKS to your LAN CIDR (e.g. 192.168.1.0/24) to access downstream WebUIs (e.g. qBittorrent).&#xD;
-3. Set PIA_LOCATIONS (e.g. ca_ontario,ca_toronto), or leave 'all' to auto-select the lowest-latency server. A specific location may provide better throughput than latency-based selection.&#xD;
-4. Set PS_CLIENT to qbittorrent, deluge, or transmission if applicable to sync the forwarded port automatically. May also require PS_USER, PS_PASS, and/or PS_URL depending on client and settings.&#xD;
-&#xD;
-Most other defaults are fine for typical use.&#xD;
-&#xD;
-To connect other containers:&#xD;
-- On the downstream container (e.g. qBittorrent), set Network Type to 'Container' and pick 'pia-tun' under Container Network (equivalent to --network=container:pia-tun).&#xD;
-- Remove that container's own port mappings and instead publish those ports HERE, on pia-tun (add them as Port mappings on this template). The included qBittorrent WebUI 8080 mapping is an example: it makes a qBittorrent container on pia-tun's network reachable from your LAN while its traffic flows through the tunnel.&#xD;
-- Start pia-tun first; start the downstream container after.&#xD;
-- If pia-tun is restarted, restart the downstream containers as well.&#xD;
-&#xD;
-Note: NET_ADMIN and the tun device are granted via Extra Parameters (--cap-drop=ALL --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tun). pia-tun prefers the WireGuard kernel module but will fall back to wireguard-go if unavailable (the tun device).&#xD;
-&#xD;
-Docs: full variable reference and compose examples on GitHub.&#xD;
-&#xD;
+  <Overview>Feature-rich PIA + WireGuard VPN client/gateway with a strict killswitch and automatic port-syncing to qBittorrent, Deluge, or Transmission.
+
+Setup:
+  1. Set PIA_USER and PIA_PASS (your Private Internet Access credentials).
+  2. Set LOCAL_NETWORKS to your LAN CIDR (e.g. 192.168.1.0/24) to access downstream WebUIs (e.g. qBittorrent).
+  3. Set PIA_LOCATIONS (e.g. ca_ontario,ca_toronto), or leave 'all' to auto-select the lowest-latency server. A specific location may provide better throughput than latency-based selection.
+  4. Set PS_CLIENT to qbittorrent, deluge, or transmission if applicable to sync the forwarded port automatically. May also require PS_USER, PS_PASS, and/or PS_URL depending on client and settings.
+
+Most other defaults are fine for typical use.
+
+To connect other containers:
+  - On the downstream container (e.g. qBittorrent), set Network Type to 'Container' and pick 'pia-tun' under Container Network (equivalent to --network=container:pia-tun).
+  - Remove that container's own port mappings and instead publish those ports HERE, on pia-tun (add them as Port mappings on this template). The included qBittorrent WebUI 8080 mapping is an example: it makes a qBittorrent container on pia-tun's network reachable from your LAN while its traffic flows through the tunnel.
+  - Start pia-tun first; start the downstream container after.
+  - If pia-tun is restarted, restart the downstream containers as well.
+
+Note: NET_ADMIN and the tun device are granted via Extra Parameters (--cap-drop=ALL --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tun). pia-tun prefers the WireGuard kernel module but will fall back to wireguard-go if unavailable (the tun device).
+
+Docs: full variable reference and compose examples on GitHub.
+
 Not affiliated with Private Internet Access.</Overview>
   <Category>Security: Network:VPN</Category>
   <ExtraSearchTerms>private internet access pia vpn wireguard killswitch qbit qbittorrent socks5 port forward forwarding sync syncing</ExtraSearchTerms>
-  <WebUI/>
   <TemplateURL>https://raw.githubusercontent.com/x0lie/pia-tun/main/unraid/pia-tun.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/x0lie/pia-tun/main/img/pia-tun-icon.png</Icon>
   <ExtraParams>--cap-drop=ALL --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tun</ExtraParams>
-  <PostArgs/>
-  <CPUset/>
-  <DateInstalled/>
-  <DonateText/>
-  <DonateLink/>
-  <Requires/>
   <Config Name="PIA_USER" Target="PIA_USER" Default="" Mode="" Description="REQUIRED. Your Private Internet Access username (typically starts with p)." Type="Variable" Display="always" Required="true" Mask="false"/>
   <Config Name="PIA_PASS" Target="PIA_PASS" Default="" Mode="" Description="REQUIRED. Your Private Internet Access password." Type="Variable" Display="always" Required="true" Mask="true"/>
   <Config Name="PIA_LOCATIONS" Target="PIA_LOCATIONS" Default="all" Mode="" Description="Comma-separated PIA region IDs (e.g. ca_ontario,ca_toronto). pia-tun tests latency and connects to the best one. Leave 'all' to consider every region. Region IDs: https://serverlist.piaservers.net/vpninfo/servers/v6" Type="Variable" Display="always" Required="false" Mask="false">all</Config>
