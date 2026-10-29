@@ -1,11 +1,19 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>pia-tun</Name>
-  <Repository>ghcr.io/x0lie/pia-tun:latest</Repository>
-  <Registry>https://github.com/x0lie/pia-tun/pkgs/container/pia-tun</Registry>
+  <Repository>x0lie/pia-tun:1</Repository>
+  <Registry>https://hub.docker.com/r/x0lie/pia-tun</Registry>
+  <Branch>
+    <Tag>1</Tag>
+    <TagDescription>Stable v1.x releases (recommended)</TagDescription>
+  </Branch>
   <Branch>
     <Tag>latest</Tag>
-    <TagDescription>Latest stable release (multi-arch: amd64, arm64, armv7)</TagDescription>
+    <TagDescription>Newest stable releases, including future major versions</TagDescription>
+  </Branch>
+  <Branch>
+    <Tag>develop</Tag>
+    <TagDescription>Unreleased development builds - may be unstable</TagDescription>
   </Branch>
   <Network>bridge</Network>
   <MyIP/>
