@@ -37,13 +37,14 @@ Features:&#xD;
 &#xD;
 Setup:&#xD;
 1. Set PIA_USER and PIA_PASS (your Private Internet Access account).&#xD;
-2. Set LOCAL_NETWORKS to your LAN CIDR (e.g. 192.168.1.0/24) so you keep LAN access to this host and its containers.&#xD;
+2. Set LOCAL_NETWORKS to your LAN CIDR (e.g. 192.168.1.0/24) so you can access downstream WebUIs like qBittorrent.&#xD;
 3. (Optional) Pick PIA_LOCATIONS, e.g. ca_ontario,ca_toronto - leave 'all' to auto-pick the lowest-latency server.&#xD;
 &#xD;
 Routing another container through the VPN (gateway pattern):&#xD;
 - On the downstream container (e.g. qBittorrent), set Network Type to 'Container' and pick 'pia-tun' under Container Network (equivalent to --network=container:pia-tun).&#xD;
 - Remove that container's own port mappings and instead publish those ports HERE, on pia-tun (add them as Port mappings on this template - a qBittorrent WebUI 8080 example is included).&#xD;
 - Start pia-tun first; start the downstream container after.&#xD;
+- If pia-tun is restarted, restart the downstream containers as well.&#xD;
 &#xD;
 Note: NET_ADMIN and the tun device are granted via Extra Parameters (--cap-drop=ALL --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tun). pia-tun prefers the WireGuard kernel module but will fall back to wireguard-go if unavailable (the tun device).&#xD;
 &#xD;
@@ -61,7 +62,7 @@ Not affiliated with Private Internet Access.</Overview>
   <Requires/>
   <Description>Feature-rich and reliable VPN container for PIA + WireGuard, designed to act as a network gateway for other containers.&#xD;
 &#xD;
-PIA_USER and PIA_PASS are the only required values. Everything else is optional and most defaults are fine for typical use. See the full variable reference at https://github.com/x0lie/pia-tun/blob/main/docs/env.md and copy-paste compose examples at https://github.com/x0lie/pia-tun/tree/main/docs/compose-examples.&#xD;
+PIA_USER and PIA_PASS are required, and you'll almost always want LOCAL_NETWORKS set to your home network. Most of the defaults are fine for typical use. Specifying a certain location may yield better throughput than latency-based selection. See the full variable reference at https://github.com/x0lie/pia-tun/blob/main/docs/env.md and copy-paste compose examples at https://github.com/x0lie/pia-tun/tree/main/docs/compose-examples.&#xD;
 &#xD;
 The qBittorrent WebUI port (8080) below is included as an example of the gateway pattern: it is published on pia-tun so a qBittorrent container started with --network=container:pia-tun is reachable from your LAN while its traffic flows through the tunnel.</Description>
   <Config Name="PIA_USER" Target="PIA_USER" Default="" Mode="" Description="REQUIRED. Your Private Internet Access username (typically starts with p)." Type="Variable" Display="always" Required="true" Mask="false"/>

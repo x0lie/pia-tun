@@ -26,6 +26,8 @@ pia-tun is a network gateway, not a web app. To send another container's traffic
    (This is the UI equivalent of `--network=container:pia-tun`, which you can also pass via Extra Parameters if you prefer.)
 3. Remove that container's own port mappings and publish those ports **on pia-tun** instead (the template ships a qBittorrent WebUI `8080` example). Reach the downstream WebUI at `http://<unraid-ip>:8080`.
 
+Note that if pia-tun is restarted, the downstream containers must be restarted as well.
+
 ## Notes
 
 - `NET_ADMIN` and the `tun` device are granted via Extra Parameters (`--cap-drop=ALL --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tun`), already set in the template.
