@@ -19,7 +19,7 @@
 
 | Variable         | Description                                                                                                                    | Default                         |
 |------------------|--------------------------------------------------------------------------------------------------------------------------------|---------------------------------|
-| `LOCAL_NETWORKS` | CIDR ranges for tunnel bypass. Supports IPv4 and IPv6 (e.g., `192.168.1.0/24,fd00::/64`) or `all` or `none`                    | `auto`                          |
+| `LOCAL_NETWORKS` | CIDR ranges for tunnel bypass. Supports IPv4 and IPv6 (e.g., `192.168.1.0/24,fd00::/64`) or `all` or `none`                    | Auto                            |
 | `IPT_BACKEND`    | iptables backend: `nft` or `legacy`. Auto-detected if not set.                                                                 | Auto                            |
 | `DNS`            | Supports `pia`, `system`, DoT (e.g., `tls://one.one.one.one,dns.mullvad.net`), or Do53 (e.g., `1.1.1.1,8.8.8.8`). Round-robin. | `pia`                           |
 | `BOOTSTRAP_DNS`  | Supports Do53 only. Do not set IPs that overlap with `DNS`.                                                                    | `149.112.112.9, 149.112.112.11` |
