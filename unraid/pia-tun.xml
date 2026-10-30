@@ -39,8 +39,6 @@ To connect other containers:
 
 Note: NET_ADMIN and the tun device are granted via Extra Parameters (--cap-drop=ALL --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tun). pia-tun prefers the WireGuard kernel module but will fall back to wireguard-go if unavailable (the tun device).
 
-Docs: full variable reference and compose examples on GitHub.
-
 Not affiliated with Private Internet Access.</Overview>
   <Category>Security: Network:VPN</Category>
   <ExtraSearchTerms>private internet access pia vpn wireguard killswitch qbit qbittorrent socks5 port forward forwarding sync syncing</ExtraSearchTerms>
