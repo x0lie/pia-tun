@@ -21,7 +21,7 @@
   <Support>https://github.com/x0lie/pia-tun/issues</Support>
   <Project>https://github.com/x0lie/pia-tun</Project>
   <ReadMe>https://github.com/x0lie/pia-tun/blob/main/README.md</ReadMe>
-  <Overview>Feature-rich PIA + WireGuard VPN client/gateway with a strict killswitch and automatic port-syncing to qBittorrent, Deluge, or Transmission.
+  <Overview>Feature-rich PIA + WireGuard VPN client with automatic port-syncing to qBittorrent, Deluge, or Transmission.
 
 Setup:
   1. Set PIA_USER and PIA_PASS (your Private Internet Access credentials).
