@@ -30,7 +30,7 @@ Note that if pia-tun is restarted, the downstream containers must be restarted a
 
 ## Notes
 
-- `NET_ADMIN` and the `tun` device are granted via Extra Parameters (`--cap-drop=ALL --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tun`), already set in the template.
+- `NET_ADMIN`, `NET_RAW`, and the `tun` device are granted via Extra Parameters (`--cap-drop=ALL --cap-add=NET_ADMIN --cap-add=NET_RAW --device=/dev/net/tun:/dev/net/tun`), already set in the template.
 - If the WireGuard kernel module is unavailable, pia-tun will fall back to wireguard-go (via the tun device) automatically.
   - You can see which it's using in the logs here (kernel or userspace):
     ```
