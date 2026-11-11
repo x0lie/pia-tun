@@ -37,7 +37,7 @@ To connect other containers:
   - Start pia-tun first; start the downstream container after.
   - If pia-tun is restarted, restart the downstream containers as well.
 
-Note: NET_ADMIN and the tun device are granted via Extra Parameters (--cap-drop=ALL --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tun). pia-tun prefers the WireGuard kernel module but will fall back to wireguard-go if unavailable (the tun device).
+Note: NET_ADMIN, NET_RAW, and the tun device are granted via Extra Parameters (--cap-drop=ALL --cap-add=NET_ADMIN --cap-add=NET_RAW --device=/dev/net/tun:/dev/net/tun). pia-tun prefers the WireGuard kernel module but will fall back to wireguard-go if unavailable (the tun device).
 
 Not affiliated with Private Internet Access.</Overview>
   <Category>Security: Network:VPN</Category>
@@ -45,7 +45,7 @@ Not affiliated with Private Internet Access.</Overview>
   <TemplateURL>https://raw.githubusercontent.com/x0lie/pia-tun/main/unraid/pia-tun.xml</TemplateURL>
   <Requires>An active PIA subscription</Requires>
   <Icon>https://raw.githubusercontent.com/x0lie/pia-tun/main/img/pia-tun-icon.png</Icon>
-  <ExtraParams>--cap-drop=ALL --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tun</ExtraParams>
+  <ExtraParams>--cap-drop=ALL --cap-add=NET_ADMIN --cap-add=NET_RAW --device=/dev/net/tun:/dev/net/tun</ExtraParams>
   <Config Name="PIA_USER" Target="PIA_USER" Default="" Mode="" Description="REQUIRED. Your Private Internet Access username (typically starts with p)." Type="Variable" Display="always" Required="true" Mask="false"/>
   <Config Name="PIA_PASS" Target="PIA_PASS" Default="" Mode="" Description="REQUIRED. Your Private Internet Access password." Type="Variable" Display="always" Required="true" Mask="true"/>
   <Config Name="PIA_LOCATIONS" Target="PIA_LOCATIONS" Default="all" Mode="" Description="Comma-separated PIA region IDs (e.g. ca_ontario,ca_toronto). pia-tun tests latency and connects to the best one. Leave 'all' to consider every region. Region IDs: https://serverlist.piaservers.net/vpninfo/servers/v6" Type="Variable" Display="always" Required="false" Mask="false">all</Config>
@@ -63,7 +63,7 @@ Not affiliated with Private Internet Access.</Overview>
   <Config Name="BOOTSTRAP_DNS" Target="BOOTSTRAP_DNS" Default="" Mode="" Description="Do53-only resolver used to bootstrap PIA hostnames. Leave empty for the default (149.112.112.9, 149.112.112.11). Must not overlap with DNS." Type="Variable" Display="advanced" Required="false" Mask="false"/>
   <Config Name="MTU" Target="MTU" Default="1420" Mode="" Description="Max packet size for the WireGuard interface (pia0). Lower it only if you have MTU issues on your link." Type="Variable" Display="advanced" Required="false" Mask="false">1420</Config>
   <Config Name="WG_BACKEND" Target="WG_BACKEND" Default="" Mode="" Description="WireGuard implementation: 'kernel' (faster) or 'userspace' (wireguard-go). Auto-detected if empty (kernel preferred)." Type="Variable" Display="advanced" Required="false" Mask="false"/>
-  <Config Name="IPT_BACKEND" Target="IPT_BACKEND" Default="" Mode="" Description="iptables backend: 'nft' or 'legacy'. Auto-detected if empty." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="IPT_BACKEND" Target="IPT_BACKEND" Default="" Mode="" Description="iptables backend: 'nft' or 'legacy'. Auto-detected if empty. 'legacy' requires NET_RAW (included in Extra Parameters by default)." Type="Variable" Display="advanced" Required="false" Mask="false"/>
   <Config Name="SOCKS5_ENABLED" Target="SOCKS5_ENABLED" Default="false|true" Mode="" Description="Enable the SOCKS5 proxy so other machines/containers can use the VPN. If enabled, also add a Port mapping for SOCKS5_PORT (1080)." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
   <Config Name="SOCKS5_PORT" Target="SOCKS5_PORT" Default="1080" Mode="" Description="Internal SOCKS5 proxy listen port. Useful to avoid a clash with a container sharing the pia-tun network." Type="Variable" Display="advanced" Required="false" Mask="false">1080</Config>
   <Config Name="HTTP_PROXY_ENABLED" Target="HTTP_PROXY_ENABLED" Default="false|true" Mode="" Description="Enable the HTTP proxy so other machines/containers can use the VPN. If enabled, also add a Port mapping for HTTP_PROXY_PORT (8888)." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
