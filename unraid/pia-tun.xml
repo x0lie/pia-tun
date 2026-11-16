@@ -4,12 +4,12 @@
   <Repository>x0lie/pia-tun:1</Repository>
   <Registry>https://hub.docker.com/r/x0lie/pia-tun</Registry>
   <Branch>
-    <Tag>1</Tag>
-    <TagDescription>Stable v1.x releases (recommended)</TagDescription>
-  </Branch>
-  <Branch>
     <Tag>latest</Tag>
     <TagDescription>Newest stable releases</TagDescription>
+  </Branch>
+  <Branch>
+    <Tag>1</Tag>
+    <TagDescription>Stable v1.x releases</TagDescription>
   </Branch>
   <Branch>
     <Tag>develop</Tag>
