@@ -1,32 +1,32 @@
-# Unraid template
-
-A [Community Applications](https://forums.unraid.net/topic/38582-plug-in-community-applications/) template for running pia-tun on Unraid.
+# Unraid
 
 ## Install
 
-### From the template URL
-
-1. In the Unraid UI, go to **Docker → Add Container**.
-2. In the **Template** field at the top, paste:
-   ```
-   https://raw.githubusercontent.com/x0lie/pia-tun/main/unraid/pia-tun.xml
-   ```
+1. In the Unraid UI, open the **Apps** tab and search for **pia-tun**.
+2. Click **Install** and pick a tag: `latest` (newest stable), `1` (stable v1.x, avoids breaking changes), or `develop` (unreleased, may be unstable).
 3. Set `PIA_USER` and `PIA_PASS`, set `LOCAL_NETWORKS` to your LAN CIDR (e.g. `192.168.1.0/24`), then **Apply**.
-
-### From Community Applications (once listed)
-
-Search for **pia-tun** in the **Apps** tab.
 
 ## Routing another container through the VPN (gateway pattern)
 
-pia-tun is a network gateway, not a web app. To send another container's traffic through the tunnel:
+pia-tun is a network gateway - not a web app. To send another container's traffic through the tunnel:
 
-1. Start **pia-tun** first.
-2. On the downstream container (e.g. qBittorrent), set **Network Type** to `Container`, then under **Container Network** select **pia-tun**.
+1. On the downstream container, set **Network Type** to `Container`, then under **Container Network** select **pia-tun**.
    (This is the UI equivalent of `--network=container:pia-tun`, which you can also pass via Extra Parameters if you prefer.)
-3. Remove that container's own port mappings and publish those ports **on pia-tun** instead (the template ships a qBittorrent WebUI `8080` example). Reach the downstream WebUI at `http://<unraid-ip>:8080`.
+2. Publish the ports of downstream containers (e.g. qBittorrent's WebUI at `8080`) on **pia-tun**. Published ports on downstream containers are ignored.
+3. Start **pia-tun**, then start the downstream container.
+4. Reach the downstream container's WebUI at `http://<unraid-ip>:8080` (note that setting `LOCAL_NETWORKS` is required for accessing from your home networks).
 
-Note that if pia-tun is restarted, the downstream containers must be restarted as well.
+Note that if the pia-tun container is restarted, the downstream containers must be restarted as well.
+
+## Port-syncing
+
+Do the above process, then:
+
+- Set `PS_CLIENT` to `qbittorrent`, `deluge`, or `transmission`
+- Set `PS_USER` and `PS_PASS` if necessary (deluge is pass-only, and you can disable auth for localhost in qBittorrent settings to allow pia-tun to connect without a user/pass)
+- Set `PS_URL` to http://localhost:{your-port} if using non-standard port (8080 for qBit, 8112 for Deluge, and 9091 for Transmission)
+
+`PS_SCRIPT` is also available if using something other than the three `PS_CLIENT` options
 
 ## Notes
 
