@@ -21,24 +21,13 @@
   <Support>https://github.com/x0lie/pia-tun/issues</Support>
   <Project>https://github.com/x0lie/pia-tun</Project>
   <ReadMe>https://github.com/x0lie/pia-tun/blob/main/README.md</ReadMe>
-  <Overview>Feature-rich PIA + WireGuard VPN client with automatic port-syncing to qBittorrent, Deluge, or Transmission.
-
-Setup:
-  1. Set PIA_USER and PIA_PASS (your Private Internet Access credentials).
-  2. Set LOCAL_NETWORKS to your LAN CIDR (e.g. 192.168.1.0/24) to access downstream WebUIs (e.g. qBittorrent).
-  3. Set PIA_LOCATIONS (e.g. ca_ontario,ca_toronto), or leave 'all' to auto-select the lowest-latency server. A specific location may provide better throughput than latency-based selection.
-  4. Set PS_CLIENT to qbittorrent, deluge, or transmission if applicable to sync the forwarded port automatically. May also require PS_USER, PS_PASS, and/or PS_URL depending on client and settings.
-
-Most other defaults are fine for typical use.
-
-To connect other containers:
-  - On the downstream container (e.g. qBittorrent), set Network Type to 'Container' and pick 'pia-tun' under Container Network (equivalent to --network=container:pia-tun).
-  - Remove that container's own port mappings and instead publish those ports HERE, on pia-tun (add them as Port mappings on this template). The included qBittorrent WebUI 8080 mapping is an example: it makes a qBittorrent container on pia-tun's network reachable from your LAN while its traffic flows through the tunnel.
-  - Start pia-tun first; start the downstream container after.
-  - If pia-tun is restarted, restart the downstream containers as well.
-
-Note: NET_ADMIN, NET_RAW, and the tun device are granted via Extra Parameters (--cap-drop=ALL --cap-add=NET_ADMIN --cap-add=NET_RAW --device=/dev/net/tun:/dev/net/tun). pia-tun prefers the WireGuard kernel module but will fall back to wireguard-go if unavailable (the tun device).
-
+  <Overview>PIA + WireGuard VPN client with automatic port-syncing to qBittorrent, Deluge, or Transmission.[br]
+[br]
+Route other containers through the tunnel, and pia-tun keeps their forwarded port in sync.[br]
+[br]
+See the Unraid guide here:[br]
+https://github.com/x0lie/pia-tun/blob/main/unraid/README.md[br]
+[br]
 Not affiliated with Private Internet Access.</Overview>
   <Category>Security: Network:VPN</Category>
   <ExtraSearchTerms>private internet access pia vpn wireguard killswitch qbit qbittorrent socks5 port forward forwarding sync syncing</ExtraSearchTerms>
