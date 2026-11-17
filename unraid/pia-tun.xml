@@ -26,7 +26,7 @@
 Route other containers through the tunnel, and pia-tun keeps their forwarded port in sync.[br]
 [br]
 See the Unraid guide here:[br]
-https://github.com/x0lie/pia-tun/blob/main/unraid/README.md[br]
+https://github.com/x0lie/pia-tun/blob/main/%75nraid/README.md[br]
 [br]
 Not affiliated with Private Internet Access.</Overview>
   <Category>Security: Network:VPN</Category>
