@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>pia-tun</Name>
-  <Repository>x0lie/pia-tun:1</Repository>
+  <Repository>x0lie/pia-tun</Repository>
   <Registry>https://hub.docker.com/r/x0lie/pia-tun</Registry>
   <Branch>
     <Tag>latest</Tag>
