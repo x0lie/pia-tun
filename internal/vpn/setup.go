@@ -135,14 +135,16 @@ func dipTarget(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *ca
 				return target{}, err
 			}
 		}
-		var pfAvailable bool
+		var found, pfAvailable bool
 		for _, srv := range cache.Servers {
 			if srv.Region == dipInfo.Region {
-				pfAvailable = srv.PF
+				found, pfAvailable = true, srv.PF
 				break
 			}
 		}
-		if !pfAvailable {
+		if !found {
+			logger.Debug("DIP region %s not in serverlist, skipping PF capability check", dipInfo.Region)
+		} else if !pfAvailable {
 			return target{}, fmt.Errorf("%w: DIP location %s (%s) does not support port forwarding - either set PF_ENABLED=false or contact PIA about changing your DIP region", apperrors.ErrFatal, dipInfo.CN, dipInfo.Region)
 		}
 	}
