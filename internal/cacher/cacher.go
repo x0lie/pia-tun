@@ -208,18 +208,20 @@ func mergeIPs(existing, newIPs []string, max int) []string {
 	return merged
 }
 
-// mergeServers merges new servers into existing by CN, updating IP/PF/Region for
-// known servers and appending new ones.
+// MergeServers merges new servers into existing by (Region, CN),
+// updating IP/PF for known servers and appending new ones.
 func (c *Cache) MergeServers(newServers []pia.Server) {
-	byCN := make(map[string]int, len(c.Servers))
-	for i := range c.Servers {
-		byCN[c.Servers[i].CN] = i
+	type key struct{ region, cn string }
+	idx := make(map[key]int, len(c.Servers))
+	for i, srv := range c.Servers {
+		idx[key{srv.Region, srv.CN}] = i
 	}
 	for _, srv := range newServers {
-		if idx, ok := byCN[srv.CN]; ok {
-			c.Servers[idx] = srv
+		k := key{srv.Region, srv.CN}
+		if i, ok := idx[k]; ok {
+			c.Servers[i] = srv
 		} else {
-			byCN[srv.CN] = len(c.Servers)
+			idx[k] = len(c.Servers)
 			c.Servers = append(c.Servers, srv)
 		}
 	}
