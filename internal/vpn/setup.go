@@ -117,7 +117,7 @@ func manualTarget(cfg Config, logger *log.Logger) target {
 
 // dipTarget resolves the DIP token to its dedicated server and verifies PF support if required
 func dipTarget(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *cacher.Cache, resolver *dns.Resolver, token string, logger *log.Logger) (target, error) {
-	logger.Debug("Using DIP token for server selection")
+	log.Step("Resolving dedicated IP...")
 	dipInfo, err := tryAuthIPs(ctx, "dip", fw, cache, resolver, logger, func(ip string) (*pia.DIPInfo, error) {
 		return pia.ResolveDIP(ctx, apiTimeout, ip, token, cfg.DIPToken)
 	})
@@ -128,6 +128,7 @@ func dipTarget(ctx context.Context, cfg Config, fw *firewall.Firewall, cache *ca
 		return target{}, err
 	}
 	log.Success("DIP token accepted")
+	log.Success("Server: %s in %s", dipInfo.CN, dipInfo.Region)
 
 	if cfg.PFRequired {
 		if cache.Servers == nil {
